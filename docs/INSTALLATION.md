@@ -14,5 +14,5 @@
 ### 1. Клонирование репозитория
 
 ```bash
-git clone https://github.com/naumenis/autodialer-pro.git
+git clone https://github.com/naumenis-code/autodialer-pro.git
 cd autodialer-pro
