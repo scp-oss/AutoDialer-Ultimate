@@ -21,7 +21,7 @@ AutoDialer Pro - Система автоматического обзвона д
 
 ```bash
 # Клонирование
-git clone https://github.com/YOUR_USERNAME/autodialer-pro.git
+git clone https://github.com/naumenis-code/autodialer-pro.git
 cd autodialer-pro
 
 # Установка (от root)
