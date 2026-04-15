@@ -1,0 +1,21 @@
+[general]
+enabled = yes
+port = 5038
+bindaddr = 127.0.0.1
+displayconnects = no
+timestampevents = yes
+webenabled = no
+httptimeout = 60
+debug = off
+
+[autodialer]
+secret = ${AMI_PASSWORD}
+deny = 0.0.0.0/0.0.0.0
+permit = 127.0.0.1/255.255.255.255
+read = system,call,log,verbose,command,agent,user,dtmf,originate,cdr,reporting
+write = system,call,log,verbose,command,agent,user,dtmf,originate,cdr,reporting
+eventfilter=!Event: Newexten
+eventfilter=!Event: VarSet
+eventfilter=!Event: DTMFBegin
+eventfilter=!Event: DTMFEnd
+eventfilter=!Event: Newstate
