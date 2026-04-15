@@ -1,603 +1,822 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Authentication and Authorization Module
+Менеджер AMI (Asterisk Manager Interface)
 AutoDialer Ultimate v3.0.0
+
+Управляет подключением к Asterisk, инициирует звонки,
+обрабатывает события и сохраняет результаты.
 """
 
-import os
-import bcrypt
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
-from fastapi import HTTPException, Depends, Request, status
-from fastapi.security import HTTPBearer, HTTPBasic, HTTPBasicCredentials, OAuth2PasswordBearer
-from pydantic import BaseModel
-import jwt
-import secrets
+import asyncio
+import panoramisk
+import time
+import json
 import re
+import os
+from datetime import datetime, timedelta
+from typing import Dict, Optional, Set, Any
+from cachetools import TTLCache
 
 from logger import logger
+from rate_limiter import TokenBucket, GlobalRateLimiter
 
 
-# =============================================
-# Security Configuration
-# =============================================
-SECRET_KEY = os.getenv('JWT_SECRET')
-if not SECRET_KEY:
-    raise ValueError("JWT_SECRET environment variable is required")
-
-ALGORITHM = os.getenv('JWT_ALGORITHM', 'HS256')
-ACCESS_TOKEN_EXPIRE = int(os.getenv('ACCESS_TOKEN_EXPIRE', 3600))  # 1 hour
-REFRESH_TOKEN_EXPIRE = int(os.getenv('REFRESH_TOKEN_EXPIRE', 604800))  # 7 days
-
-# Security schemes
-security = HTTPBearer(auto_error=True)
-basic_security = HTTPBasic(auto_error=True)
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
-
-
-# =============================================
-# Password Utilities
-# =============================================
-def hash_password(password: str) -> str:
-    """Hash a password using bcrypt"""
-    if not password:
-        raise ValueError("Password cannot be empty")
+class DialerManager:
+    """
+    Менеджер дозвона через Asterisk AMI.
     
-    salt = bcrypt.gensalt(rounds=12)
-    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash"""
-    if not plain_password or not hashed_password:
-        return False
+    Отвечает за:
+    - Подключение к AMI
+    - Инициирование звонков через очередь
+    - Обработку событий (DialBegin, Hangup, UserEvent)
+    - Сохранение результатов в БД
+    - Планирование повторных попыток
+    - Контроль активных каналов
+    """
     
-    try:
-        return bcrypt.checkpw(
-            plain_password.encode('utf-8'),
-            hashed_password.encode('utf-8')
+    def __init__(self, db_pool, redis_client):
+        """
+        Инициализация менеджера.
+        
+        Args:
+            db_pool: Пул соединений с PostgreSQL
+            redis_client: Клиент Redis
+        """
+        self.db_pool = db_pool
+        self.redis = redis_client
+        
+        # =============================================
+        # Загрузка конфигурации из переменных окружения
+        # =============================================
+        ami_host = os.getenv('AMI_HOST', '127.0.0.1')
+        ami_port = int(os.getenv('AMI_PORT', 5038))
+        ami_user = os.getenv('AMI_USER', 'autodialer')
+        ami_password = os.getenv('AMI_PASSWORD')
+        
+        if not ami_password:
+            raise ValueError("AMI_PASSWORD не задан в переменных окружения")
+        
+        # Номер extension на FreePBX (настраиваемый!)
+        self.freepbx_extension = os.getenv('FREEPBX_EXTENSION', '291')
+        
+        # =============================================
+        # Инициализация подключения к AMI
+        # =============================================
+        self.manager = panoramisk.Manager(
+            host=ami_host,
+            port=ami_port,
+            username=ami_user,
+            secret=ami_password,
+            ssl=False
         )
-    except Exception:
-        return False
-
-
-def validate_password_strength(password: str) -> tuple[bool, Optional[str]]:
-    """Validate password strength"""
-    if len(password) < 8:
-        return False, "Password must be at least 8 characters long"
+        
+        # =============================================
+        # Настройки дозвона
+        # =============================================
+        self.max_calls = int(os.getenv('MAX_CALLS', 50))
+        self.caller_id = os.getenv('CALLER_ID', 'AutoDialer')
+        self.call_timeout = int(os.getenv('CALL_TIMEOUT', 30))
+        self.max_retries = int(os.getenv('MAX_RETRIES', 3))
+        
+        # =============================================
+        # Ключи Redis
+        # =============================================
+        self.active_channels_key = "active_channels"
+        self.channels_hash_key = "channels"
+        self.dial_queue_key = "dial_queue"
+        
+        # =============================================
+        # Состояние
+        # =============================================
+        self.channel_map: Dict[str, str] = {}      # unique_id -> channel
+        self.call_start_times: Dict[str, datetime] = {}
+        self.contact_map: Dict[str, int] = {}      # phone -> contact_id
+        
+        # =============================================
+        # Дедупликация событий
+        # =============================================
+        self.processed_events = TTLCache(maxsize=100000, ttl=300)
+        self.hangup_events = TTLCache(maxsize=50000, ttl=60)
+        
+        # =============================================
+        # Состояние работы
+        # =============================================
+        self.running = True
+        self.connected = False
+        self.reconnect_attempts = 0
+        self.max_reconnect_attempts = 10
+        
+        # =============================================
+        # Ограничители скорости
+        # =============================================
+        self.cps_limiter = TokenBucket(rate=int(os.getenv('DEFAULT_CPS', 5)))
+        self.global_limiter = GlobalRateLimiter(redis_client, "global_cps", rate=100)
+        
+        # =============================================
+        # Регистрация обработчиков событий
+        # =============================================
+        self.manager.register_event('*', self.handle_ami_event)
+        
+        # =============================================
+        # Запуск фоновых задач
+        # =============================================
+        asyncio.create_task(self.watchdog_stale_calls())
+        asyncio.create_task(self.queue_worker())
+        asyncio.create_task(self.reconcile_channels())
+        asyncio.create_task(self.load_state_from_redis())
+        asyncio.create_task(self.health_check())
+        
+        logger.info(f"DialerManager инициализирован (extension: {self.freepbx_extension})")
     
-    if not re.search(r'[A-Z]', password):
-        return False, "Password must contain at least one uppercase letter"
+    # =============================================
+    # Управление подключением
+    # =============================================
+    async def ensure_connected(self):
+        """Обеспечивает подключение к AMI с повторными попытками."""
+        while not self.connected and self.reconnect_attempts < self.max_reconnect_attempts:
+            try:
+                await self.manager.connect()
+                self.connected = True
+                self.reconnect_attempts = 0
+                logger.info("✅ AMI подключён успешно")
+                
+                # Подписка на все события
+                await self.manager.send_action(panoramisk.message.Action('Events', {'EventMask': 'on'}))
+                
+            except Exception as e:
+                self.reconnect_attempts += 1
+                wait_time = min(2 ** self.reconnect_attempts, 60)
+                logger.warning(f"Ошибка подключения к AMI (попытка {self.reconnect_attempts}/{self.max_reconnect_attempts}): {e}")
+                logger.info(f"Повтор через {wait_time} сек...")
+                await asyncio.sleep(wait_time)
+        
+        if not self.connected:
+            logger.error("Не удалось подключиться к AMI после максимального количества попыток")
+            raise Exception("AMI connection failed")
     
-    if not re.search(r'[a-z]', password):
-        return False, "Password must contain at least one lowercase letter"
+    async def health_check(self):
+        """Периодическая проверка здоровья подключения."""
+        while True:
+            await asyncio.sleep(30)
+            
+            if not self.connected:
+                logger.warning("AMI отключён, попытка переподключения...")
+                await self.ensure_connected()
+                continue
+            
+            try:
+                action = panoramisk.message.Action('Ping')
+                response = await asyncio.wait_for(
+                    self.manager.send_action(action),
+                    timeout=5.0
+                )
+                if not response or response.get('response') != 'Success':
+                    raise Exception("Ping failed")
+            except Exception as e:
+                logger.error(f"Проверка здоровья AMI не пройдена: {e}")
+                self.connected = False
+                await self.ensure_connected()
     
-    if not re.search(r'\d', password):
-        return False, "Password must contain at least one digit"
+    # =============================================
+    # Восстановление состояния
+    # =============================================
+    async def load_state_from_redis(self):
+        """Восстановление состояния из Redis после перезапуска."""
+        await asyncio.sleep(2)
+        
+        try:
+            channels = await self.redis.hgetall(self.channels_hash_key)
+            self.channel_map = dict(channels)
+            
+            for unique_id in self.channel_map:
+                self.call_start_times[unique_id] = datetime.now()
+            
+            logger.info(f"Восстановлено {len(self.channel_map)} каналов из Redis")
+            
+            # Восстановление кэша контактов
+            contact_keys = await self.redis.keys("contact:*")
+            for key in contact_keys:
+                phone = key.replace("contact:", "")
+                contact_id = await self.redis.get(key)
+                if contact_id:
+                    self.contact_map[phone] = int(contact_id)
+            
+            logger.info(f"Восстановлено {len(self.contact_map)} контактов из кэша")
+            
+        except Exception as e:
+            logger.error(f"Ошибка восстановления состояния из Redis: {e}")
     
-    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
-        return False, "Password must contain at least one special character"
+    async def reconcile_channels(self):
+        """Периодическая сверка состояния каналов с Asterisk."""
+        while True:
+            await asyncio.sleep(300)  # Каждые 5 минут
+            
+            if not self.running or not self.connected:
+                continue
+            
+            try:
+                redis_count = await self.redis.scard(self.active_channels_key)
+                local_count = len(self.channel_map)
+                
+                if abs(redis_count - local_count) > max(5, redis_count * 0.1):
+                    logger.warning(f"Расхождение каналов: Redis={redis_count}, Local={local_count}")
+                    await self._sync_channels_from_asterisk()
+            except Exception as e:
+                logger.error(f"Ошибка сверки каналов: {e}")
     
-    return True, None
-
-
-# =============================================
-# JWT Token Utilities
-# =============================================
-class TokenData(BaseModel):
-    """Token payload data structure"""
-    username: str
-    role: str
-    user_id: int
-    exp: Optional[datetime] = None
-    jti: Optional[str] = None
-    type: Optional[str] = None
-
-
-def create_token(
-    data: Dict[str, Any],
-    expires_delta: Optional[int] = None,
-    token_type: str = "access"
-) -> str:
-    """Create a JWT token"""
-    to_encode = data.copy()
-    
-    if expires_delta is None:
-        expires_delta = ACCESS_TOKEN_EXPIRE if token_type == "access" else REFRESH_TOKEN_EXPIRE
-    
-    expire = datetime.utcnow() + timedelta(seconds=expires_delta)
-    
-    # Add standard claims
-    to_encode.update({
-        "exp": expire,
-        "iat": datetime.utcnow(),
-        "type": token_type,
-        "jti": secrets.token_hex(16)
-    })
-    
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-
-def decode_token(token: str) -> Dict[str, Any]:
-    """Decode and validate a JWT token"""
-    try:
-        payload = jwt.decode(
-            token,
-            SECRET_KEY,
-            algorithms=[ALGORITHM],
-            options={"verify_exp": True, "verify_signature": True}
-        )
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except jwt.InvalidTokenError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {str(e)}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-
-def create_access_token(data: Dict[str, Any]) -> str:
-    """Create an access token"""
-    return create_token(data, ACCESS_TOKEN_EXPIRE, "access")
-
-
-def create_refresh_token(data: Dict[str, Any]) -> str:
-    """Create a refresh token"""
-    return create_token(data, REFRESH_TOKEN_EXPIRE, "refresh")
-
-
-def decode_access_token(token: str) -> TokenData:
-    """Decode and validate an access token"""
-    payload = decode_token(token)
-    
-    if payload.get("type") != "access":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type, expected access token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    return TokenData(
-        username=payload["sub"],
-        role=payload["role"],
-        user_id=payload["user_id"],
-        exp=datetime.fromtimestamp(payload["exp"]),
-        jti=payload.get("jti"),
-        type=payload.get("type")
-    )
-
-
-def decode_refresh_token(token: str) -> TokenData:
-    """Decode and validate a refresh token"""
-    payload = decode_token(token)
-    
-    if payload.get("type") != "refresh":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type, expected refresh token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    return TokenData(
-        username=payload["sub"],
-        role=payload["role"],
-        user_id=payload["user_id"],
-        exp=datetime.fromtimestamp(payload["exp"]),
-        jti=payload.get("jti"),
-        type=payload.get("type")
-    )
-
-
-# =============================================
-# Dependency Injection for FastAPI
-# =============================================
-async def get_current_user(
-    credentials: HTTPBearer.Depends = Depends(security)
-) -> TokenData:
-    """Get current authenticated user from access token"""
-    if not credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    token = credentials.credentials
-    return decode_access_token(token)
-
-
-async def get_current_user_optional(
-    credentials: Optional[HTTPBearer.Depends] = Depends(security)
-) -> Optional[TokenData]:
-    """Get current user if authenticated, otherwise None"""
-    if not credentials:
-        return None
-    
-    try:
-        token = credentials.credentials
-        return decode_access_token(token)
-    except HTTPException:
-        return None
-
-
-async def get_current_active_user(
-    current_user: TokenData = Depends(get_current_user)
-) -> TokenData:
-    """Get current active user"""
-    # Additional checks can be added here (e.g., check if user is active in DB)
-    return current_user
-
-
-async def require_role(required_roles: list[str]):
-    """Factory for role-based access control"""
-    async def role_checker(current_user: TokenData = Depends(get_current_user)):
-        if current_user.role not in required_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied. Required roles: {', '.join(required_roles)}"
+    async def _sync_channels_from_asterisk(self):
+        """Полная синхронизация каналов с Asterisk через CoreShowChannels."""
+        try:
+            action = panoramisk.message.Action('CoreShowChannels')
+            response = await asyncio.wait_for(
+                self.manager.send_action(action),
+                timeout=10.0
             )
-        return current_user
-    return role_checker
-
-
-# Pre-defined role checkers
-require_admin = require_role(["admin"])
-require_operator = require_role(["admin", "operator"])
-require_any_role = require_role(["admin", "operator", "viewer"])
-
-
-# =============================================
-# Metrics Authentication
-# =============================================
-def verify_metrics_auth(credentials: HTTPBasicCredentials = Depends(basic_security)) -> bool:
-    """Verify credentials for metrics endpoint"""
-    expected_username = os.getenv('METRICS_USER', 'admin')
-    expected_password = os.getenv('METRICS_PASS', '')
+            
+            await self.redis.delete(self.active_channels_key)
+            await self.redis.delete(self.channels_hash_key)
+            self.channel_map.clear()
+            self.call_start_times.clear()
+            
+            for event in response.events:
+                if event.get('event') == 'CoreShowChannel':
+                    channel = event.get('channel')
+                    unique_id = event.get('uniqueid')
+                    
+                    if channel and channel.startswith('Local/'):
+                        key = f"{channel}:{unique_id}"
+                        await self.redis.sadd(self.active_channels_key, key)
+                        await self.redis.hset(self.channels_hash_key, unique_id, channel)
+                        self.channel_map[unique_id] = channel
+                        self.call_start_times[unique_id] = datetime.now()
+            
+            synced_count = await self.redis.scard(self.active_channels_key)
+            logger.info(f"Синхронизировано {synced_count} каналов с Asterisk")
+            
+            await self.redis.set("active_calls", synced_count)
+            await self.redis.expire("active_calls", 120)
+            
+        except Exception as e:
+            logger.error(f"Ошибка синхронизации каналов: {e}")
     
-    if not expected_password:
-        logger.warning("METRICS_PASS not set, metrics endpoint is unprotected")
-        return True
-    
-    is_correct_username = secrets.compare_digest(
-        credentials.username.encode('utf-8'),
-        expected_username.encode('utf-8')
-    )
-    is_correct_password = secrets.compare_digest(
-        credentials.password.encode('utf-8'),
-        expected_password.encode('utf-8')
-    )
-    
-    if not (is_correct_username and is_correct_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-            headers={"WWW-Authenticate": "Basic"},
-        )
-    
-    return True
-
-
-# =============================================
-# API Key Authentication (for external integrations)
-# =============================================
-async def verify_api_key(api_key: str) -> Optional[TokenData]:
-    """Verify API key and return user data"""
-    # This would check against database
-    # Placeholder implementation
-    return None
-
-
-class APIKeyHeader(HTTPBearer):
-    """API Key authentication scheme"""
-    def __init__(self):
-        super().__init__(scheme_name="API Key", description="API Key for external access")
-
-
-async def get_user_from_api_key(
-    credentials: HTTPBearer.Depends = Depends(APIKeyHeader())
-) -> TokenData:
-    """Authenticate using API key"""
-    if not credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key required",
-        )
-    
-    api_key = credentials.credentials
-    user_data = await verify_api_key(api_key)
-    
-    if not user_data:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-        )
-    
-    return user_data
-
-
-# =============================================
-# Token Blacklist (for logout)
-# =============================================
-class TokenBlacklist:
-    """Manage blacklisted tokens (for logout)"""
-    
-    def __init__(self, redis_client):
-        self.redis = redis_client
-        self.prefix = "blacklist:token"
-    
-    async def add(self, jti: str, expires_at: datetime) -> bool:
-        """Add token to blacklist"""
-        ttl = int((expires_at - datetime.utcnow()).total_seconds())
-        if ttl > 0:
-            await self.redis.setex(f"{self.prefix}:{jti}", ttl, "1")
-            return True
-        return False
-    
-    async def is_blacklisted(self, jti: str) -> bool:
-        """Check if token is blacklisted"""
-        return await self.redis.exists(f"{self.prefix}:{jti}") > 0
-    
-    async def remove(self, jti: str) -> bool:
-        """Remove token from blacklist"""
-        return await self.redis.delete(f"{self.prefix}:{jti}") > 0
-
-
-# =============================================
-# Refresh Token Storage
-# =============================================
-class RefreshTokenStorage:
-    """Manage refresh tokens in Redis"""
-    
-    def __init__(self, redis_client):
-        self.redis = redis_client
-        self.prefix = "refresh"
-    
-    async def store(self, jti: str, user_id: int, ttl: int = REFRESH_TOKEN_EXPIRE) -> None:
-        """Store refresh token"""
-        await self.redis.setex(f"{self.prefix}:{jti}", ttl, str(user_id))
-    
-    async def validate(self, jti: str) -> Optional[int]:
-        """Validate refresh token and return user_id"""
-        user_id = await self.redis.get(f"{self.prefix}:{jti}")
-        if user_id:
-            return int(user_id)
+    # =============================================
+    # Нормализация номера телефона
+    # =============================================
+    def normalize_phone(self, phone: str) -> Optional[str]:
+        """
+        Нормализация номера телефона в международный формат.
+        
+        Args:
+            phone: Исходный номер телефона
+            
+        Returns:
+            Нормализованный номер или None, если номер невалидный
+        """
+        if not phone:
+            return None
+        
+        # Удаление всех нецифровых символов
+        phone = re.sub(r'[^\d]', '', phone)
+        
+        # Российские номера
+        if len(phone) == 11 and phone.startswith('7'):
+            return phone
+        elif len(phone) == 11 and phone.startswith('8'):
+            return '7' + phone[1:]
+        elif len(phone) == 10 and phone.startswith('9'):
+            return '7' + phone
+        
+        # Международные номера (10+ цифр)
+        if len(phone) >= 10:
+            return phone
+        
+        logger.warning(f"Невалидный формат номера: {phone}")
         return None
     
-    async def revoke(self, jti: str) -> bool:
-        """Revoke refresh token"""
-        return await self.redis.delete(f"{self.prefix}:{jti}") > 0
-    
-    async def revoke_all_for_user(self, user_id: int) -> int:
-        """Revoke all refresh tokens for a user"""
-        # Find all tokens for user
-        pattern = f"{self.prefix}:*"
-        keys = await self.redis.keys(pattern)
-        revoked = 0
+    async def get_or_create_contact(self, phone: str) -> Optional[int]:
+        """
+        Получение или создание контакта по номеру телефона.
         
-        for key in keys:
-            stored_user_id = await self.redis.get(key)
-            if stored_user_id and int(stored_user_id) == user_id:
-                await self.redis.delete(key)
-                revoked += 1
+        Args:
+            phone: Нормализованный номер телефона
+            
+        Returns:
+            ID контакта или None
+        """
+        normalized = self.normalize_phone(phone)
+        if not normalized:
+            return None
         
-        return revoked
-
-
-# =============================================
-# Login Attempt Rate Limiting
-# =============================================
-class LoginRateLimiter:
-    """Rate limiting for login attempts"""
-    
-    def __init__(self, redis_client):
-        self.redis = redis_client
-        self.prefix = "login_attempts"
-        self.max_attempts = 5
-        self.block_duration = 300  # 5 minutes
-    
-    async def check(self, username: str) -> bool:
-        """Check if user is rate limited"""
-        key = f"{self.prefix}:{username}"
-        attempts = await self.redis.get(key)
+        # Проверка кэша в памяти
+        if normalized in self.contact_map:
+            return self.contact_map[normalized]
         
-        if attempts and int(attempts) >= self.max_attempts:
-            return False
-        return True
-    
-    async def increment(self, username: str) -> int:
-        """Increment failed attempt counter"""
-        key = f"{self.prefix}:{username}"
-        count = await self.redis.incr(key)
-        await self.redis.expire(key, self.block_duration)
-        return count
-    
-    async def reset(self, username: str) -> None:
-        """Reset counter on successful login"""
-        key = f"{self.prefix}:{username}"
-        await self.redis.delete(key)
-    
-    async def get_remaining_attempts(self, username: str) -> int:
-        """Get remaining attempts"""
-        key = f"{self.prefix}:{username}"
-        attempts = await self.redis.get(key)
-        current = int(attempts) if attempts else 0
-        return max(0, self.max_attempts - current)
-
-
-# =============================================
-# Session Management
-# =============================================
-class SessionManager:
-    """Manage user sessions"""
-    
-    def __init__(self, redis_client):
-        self.redis = redis_client
-        self.prefix = "session"
-        self.session_ttl = 3600  # 1 hour
-    
-    async def create(self, user_id: int, metadata: Dict[str, Any] = None) -> str:
-        """Create a new session"""
-        session_id = secrets.token_hex(32)
-        key = f"{self.prefix}:{session_id}"
+        # Проверка кэша Redis
+        cached = await self.redis.get(f"contact:{normalized}")
+        if cached:
+            contact_id = int(cached)
+            self.contact_map[normalized] = contact_id
+            return contact_id
         
-        data = {
-            "user_id": user_id,
-            "created_at": datetime.utcnow().isoformat(),
-            "metadata": metadata or {}
+        # Запрос к базе данных
+        try:
+            async with self.db_pool.acquire() as conn:
+                result = await conn.fetchrow(
+                    """INSERT INTO contacts (phone) VALUES ($1) 
+                       ON CONFLICT (phone) DO UPDATE SET phone = EXCLUDED.phone 
+                       RETURNING id""",
+                    normalized
+                )
+                contact_id = result['id']
+                
+                # Кэширование в Redis (1 час)
+                await self.redis.setex(f"contact:{normalized}", 3600, contact_id)
+                self.contact_map[normalized] = contact_id
+                
+                return contact_id
+        except Exception as e:
+            logger.error(f"Ошибка получения/создания контакта {normalized}: {e}")
+            return None
+    
+    # =============================================
+    # Инициирование звонков
+    # =============================================
+    async def start_call(self, phone: str, campaign_id: int, retry: int = 0):
+        """
+        Постановка звонка в очередь.
+        
+        Args:
+            phone: Номер телефона
+            campaign_id: ID кампании
+            retry: Счётчик повторных попыток
+        """
+        normalized = self.normalize_phone(phone)
+        if not normalized:
+            logger.warning(f"Пропуск невалидного номера: {phone}")
+            return
+        
+        # Проверка чёрного списка
+        blacklisted = await self.redis.sismember("blacklist:phones", normalized)
+        if blacklisted:
+            logger.info(f"Пропуск номера из чёрного списка: {normalized}")
+            return
+        
+        # Добавление в очередь
+        await self.redis.rpush(self.dial_queue_key, json.dumps({
+            "phone": normalized,
+            "campaign_id": campaign_id,
+            "retry": retry,
+            "queued_at": datetime.now().isoformat()
+        }))
+        
+        queue_size = await self.redis.llen(self.dial_queue_key)
+        logger.debug(f"Звонок в очереди: {normalized} (кампания {campaign_id}), размер очереди: {queue_size}")
+    
+    async def queue_worker(self):
+        """Фоновый обработчик очереди звонков."""
+        logger.info("Обработчик очереди запущен")
+        
+        while self.running:
+            try:
+                result = await self.redis.blpop(self.dial_queue_key, timeout=1)
+                
+                if result:
+                    _, job_data = result
+                    data = json.loads(job_data)
+                    await self._start_call(
+                        data['phone'],
+                        data['campaign_id'],
+                        data.get('retry', 0)
+                    )
+                    
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Ошибка обработчика очереди: {e}")
+                await asyncio.sleep(1)
+        
+        logger.info("Обработчик очереди остановлен")
+    
+    async def _start_call(self, phone: str, campaign_id: int, retry: int):
+        """
+        Внутренний метод инициации звонка.
+        
+        Args:
+            phone: Нормализованный номер
+            campaign_id: ID кампании
+            retry: Счётчик повторных попыток
+        """
+        # Проверка состояния системы
+        if not self.running:
+            logger.debug("Дозвон остановлен, пропуск звонка")
+            return
+        
+        enabled = await self.redis.get("system_enabled") or "true"
+        if enabled != "true":
+            logger.debug("Система отключена, пропуск звонка")
+            return
+        
+        # Проверка глобального CPS
+        if not await self.global_limiter.acquire():
+            await asyncio.sleep(0.1)
+            await self.redis.rpush(self.dial_queue_key, json.dumps({
+                "phone": phone,
+                "campaign_id": campaign_id,
+                "retry": retry
+            }))
+            return
+        
+        normalized = self.normalize_phone(phone)
+        if not normalized:
+            return
+        
+        # Повторная проверка чёрного списка
+        blacklisted = await self.redis.sismember("blacklist:phones", normalized)
+        if blacklisted:
+            logger.info(f"Пропуск номера из чёрного списка: {normalized}")
+            return
+        
+        # Проверка лимита каналов
+        active = await self.redis.scard(self.active_channels_key)
+        if active >= self.max_calls:
+            await self.redis.rpush(self.dial_queue_key, json.dumps({
+                "phone": normalized,
+                "campaign_id": campaign_id,
+                "retry": retry
+            }))
+            logger.debug(f"Достигнут лимит каналов ({active}/{self.max_calls}), возврат в очередь")
+            return
+        
+        # Проверка, не звоним ли уже на этот номер
+        for channel in self.channel_map.values():
+            if normalized in channel:
+                logger.debug(f"Уже звоним на {normalized}, пропуск")
+                return
+        
+        # Подготовка и отправка Originate
+        timeout_ms = self.call_timeout * 1000
+        
+        action = panoramisk.message.Action('Originate', {
+            'Channel': f'Local/{normalized}@dialer_bridge/n',
+            'Async': 'true',
+            'Timeout': str(timeout_ms),
+            'CallerID': f'"Camp_{campaign_id}" <{self.caller_id}>',
+            'Setvar': f'__CAMPAIGN_ID={campaign_id},__RETRY_COUNT={retry},__ORIGINAL_PHONE={normalized}',
+            'ActionID': f'call_{campaign_id}_{normalized}_{int(time.time()*1000)}'
+        })
+        
+        try:
+            response = await self.manager.send_action(action)
+            
+            if response and response.get('response') == 'Success':
+                unique_id = response.get('uniqueid')
+                self.call_start_times[unique_id] = datetime.now()
+                logger.info(f"📞 Originate OK: {unique_id} -> {normalized} (кампания {campaign_id}, попытка {retry})")
+                
+                # Обновление метрик
+                try:
+                    from prometheus_client import Counter
+                    calls_counter = Counter('autodialer_calls_initiated', 'Calls initiated', ['campaign_id'])
+                    calls_counter.labels(campaign_id=str(campaign_id)).inc()
+                except ImportError:
+                    pass
+                
+            else:
+                error_msg = response.get('message', 'Unknown error') if response else 'No response'
+                logger.error(f"Originate не удался для {normalized}: {error_msg}")
+                
+                await self.save_call_result(campaign_id, normalized, 'failed', None, None, retry)
+                
+                if retry < 1:
+                    await self.schedule_retry(campaign_id, normalized, retry + 1, 'failed')
+                    
+        except Exception as e:
+            logger.error(f"Исключение при originate для {normalized}: {e}")
+            await self.save_call_result(campaign_id, normalized, 'failed', None, None, retry)
+    
+    # =============================================
+    # Обработка событий AMI
+    # =============================================
+    async def handle_ami_event(self, manager, event):
+        """
+        Обработчик событий AMI.
+        
+        Args:
+            manager: Экземпляр менеджера
+            event: Событие AMI
+        """
+        event_name = event.name
+        channel = event.get('channel', '')
+        unique_id = event.get('uniqueid')
+        linked_id = event.get('linkedid')
+        
+        # Пропуск не наших каналов
+        if channel and not channel.startswith('Local/'):
+            return
+        
+        # Дедупликация событий
+        event_key = f"{event_name}_{unique_id}"
+        if event_key in self.processed_events:
+            return
+        self.processed_events[event_key] = True
+        
+        try:
+            if event_name == 'DialBegin':
+                await self._handle_dial_begin(event, channel, unique_id)
+                
+            elif event_name == 'DialEnd':
+                await self._handle_dial_end(event, unique_id)
+                
+            elif event_name == 'BridgeEnter':
+                await self._handle_bridge_enter(event, unique_id, linked_id)
+                
+            elif event_name == 'Hangup':
+                await self._handle_hangup(event, channel, unique_id, linked_id)
+                
+            elif event_name == 'UserEvent':
+                await self._handle_user_event(event, linked_id)
+                
+            elif event_name == 'VarSet':
+                await self._handle_var_set(event, unique_id)
+                
+        except Exception as e:
+            logger.error(f"Ошибка обработки события {event_name}: {e}", exc_info=True)
+    
+    async def _handle_dial_begin(self, event, channel: str, unique_id: str):
+        """Обработка события DialBegin."""
+        if not channel.startswith('Local/'):
+            return
+        
+        key = f"{channel}:{unique_id}"
+        
+        await self.redis.sadd(self.active_channels_key, key)
+        await self.redis.hset(self.channels_hash_key, unique_id, channel)
+        await self.redis.expire(self.active_channels_key, 120)
+        
+        self.channel_map[unique_id] = channel
+        
+        active = await self.redis.scard(self.active_channels_key)
+        await self.redis.set("active_calls", active)
+        await self.redis.expire("active_calls", 120)
+        
+        logger.debug(f"DialBegin: {unique_id} на {channel}, активно: {active}")
+    
+    async def _handle_dial_end(self, event, unique_id: str):
+        """Обработка события DialEnd."""
+        dial_status = event.get('dialstatus', 'UNKNOWN')
+        logger.debug(f"DialEnd: {unique_id}, статус: {dial_status}")
+    
+    async def _handle_bridge_enter(self, event, unique_id: str, linked_id: str):
+        """Обработка события BridgeEnter (абонент ответил)."""
+        logger.info(f"✅ Абонент ответил: {unique_id} (linked: {linked_id})")
+        
+        if unique_id in self.call_start_times:
+            del self.call_start_times[unique_id]
+    
+    async def _handle_hangup(self, event, channel: str, unique_id: str, linked_id: str):
+        """Обработка события Hangup."""
+        # Дедупликация через Redis
+        hangup_key = f"hangup_{unique_id}"
+        if hangup_key in self.hangup_events:
+            return
+        self.hangup_events[hangup_key] = True
+        
+        redis_hangup_key = f"hangup:{unique_id}"
+        if not await self.redis.set(redis_hangup_key, "1", ex=10, nx=True):
+            return
+        
+        cause = event.get('cause', '0')
+        cause_txt = event.get('cause-txt', 'UNKNOWN')
+        
+        if unique_id in self.channel_map:
+            channel = self.channel_map[unique_id]
+            key = f"{channel}:{unique_id}"
+            
+            await self.redis.srem(self.active_channels_key, key)
+            await self.redis.hdel(self.channels_hash_key, unique_id)
+            del self.channel_map[unique_id]
+        
+        if unique_id in self.call_start_times:
+            del self.call_start_times[unique_id]
+        
+        active = await self.redis.scard(self.active_channels_key)
+        await self.redis.set("active_calls", active)
+        
+        logger.info(f"📴 Hangup: {unique_id}, причина: {cause_txt} ({cause}), активно: {active}")
+    
+    async def _handle_user_event(self, event, linked_id: str):
+        """Обработка пользовательских событий из диалплана."""
+        userevent = event.get('userevent')
+        
+        if userevent == 'DialerResult':
+            status = event.get('status', 'unknown')
+            campaign_id = event.get('campaign', '0')
+            phone = event.get('phone', '')
+            retry_count = int(event.get('retrycount', '0'))
+            
+            logger.info(f"🎯 DialerResult: кампания={campaign_id}, телефон={phone}, статус={status}, попытка={retry_count}")
+            
+            await self.save_call_result(campaign_id, phone, status, linked_id, None, retry_count)
+            
+            if status in ['noanswer', 'busy', 'failed']:
+                await self.schedule_retry(campaign_id, phone, retry_count + 1, status)
+            
+            # Обновление метрик
+            try:
+                from prometheus_client import Counter
+                result_counter = Counter('autodialer_call_results', 'Call results', ['status', 'campaign_id'])
+                result_counter.labels(status=status, campaign_id=campaign_id).inc()
+            except ImportError:
+                pass
+            
+        elif userevent == 'DialerHangup':
+            channel = event.get('channel', '')
+            status = event.get('status', '')
+            logger.debug(f"DialerHangup: {channel}, статус: {status}")
+    
+    async def _handle_var_set(self, event, unique_id: str):
+        """Обработка события VarSet."""
+        variable = event.get('variable', '')
+        value = event.get('value', '')
+        
+        if variable == 'CAMPAIGN_ID' and unique_id:
+            logger.debug(f"VarSet: {unique_id} campaign={value}")
+    
+    # =============================================
+    # Сохранение результатов
+    # =============================================
+    async def save_call_result(
+        self,
+        campaign_id: str,
+        phone: str,
+        status: str,
+        linked_id: Optional[str],
+        unique_id: Optional[str],
+        retry: int
+    ):
+        """
+        Сохранение результата звонка в базу данных.
+        
+        Args:
+            campaign_id: ID кампании
+            phone: Номер телефона
+            status: Статус звонка
+            linked_id: LinkedID из AMI
+            unique_id: UniqueID из AMI
+            retry: Счётчик попыток
+        """
+        try:
+            contact_id = await self.get_or_create_contact(phone)
+            if not contact_id:
+                logger.error(f"Не удалось получить/создать контакт для {phone}")
+                return
+            
+            async with self.db_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO call_results 
+                    (campaign_id, contact_id, linked_id, unique_id, status, retry_count)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                """, int(campaign_id), contact_id, linked_id, unique_id, status, retry)
+                
+                await conn.execute("""
+                    UPDATE campaign_contacts 
+                    SET retry_count = $1, last_call_at = NOW()
+                    WHERE campaign_id = $2 AND contact_id = $3
+                """, retry, int(campaign_id), contact_id)
+                
+                logger.debug(f"Результат сохранён: кампания={campaign_id}, телефон={phone}, статус={status}")
+                
+        except Exception as e:
+            logger.error(f"Ошибка сохранения результата: {e}")
+    
+    async def schedule_retry(self, campaign_id: str, phone: str, retry_count: int, status: str):
+        """
+        Планирование повторного звонка.
+        
+        Args:
+            campaign_id: ID кампании
+            phone: Номер телефона
+            retry_count: Текущий счётчик попыток
+            status: Статус, вызвавший повтор
+        """
+        strategies = {
+            'busy': {'max': 2, 'delay': 120},
+            'noanswer': {'max': 3, 'delay': 300},
+            'failed': {'max': 1, 'delay': 60},
+            'timeout': {'max': 1, 'delay': 60}
         }
         
-        await self.redis.setex(key, self.session_ttl, json.dumps(data))
-        return session_id
-    
-    async def validate(self, session_id: str) -> Optional[int]:
-        """Validate session and return user_id"""
-        key = f"{self.prefix}:{session_id}"
-        data = await self.redis.get(key)
+        strategy = strategies.get(status, {'max': 1, 'delay': 60})
         
-        if data:
-            session_data = json.loads(data)
-            return session_data["user_id"]
-        return None
-    
-    async def revoke(self, session_id: str) -> bool:
-        """Revoke a session"""
-        key = f"{self.prefix}:{session_id}"
-        return await self.redis.delete(key) > 0
-    
-    async def extend(self, session_id: str) -> bool:
-        """Extend session TTL"""
-        key = f"{self.prefix}:{session_id}"
-        return await self.redis.expire(key, self.session_ttl) > 0
-
-
-# =============================================
-# Permission Checking Utilities
-# =============================================
-class PermissionChecker:
-    """Advanced permission checking"""
-    
-    @staticmethod
-    def can_manage_campaigns(user: TokenData) -> bool:
-        return user.role in ["admin", "operator"]
-    
-    @staticmethod
-    def can_manage_users(user: TokenData) -> bool:
-        return user.role == "admin"
-    
-    @staticmethod
-    def can_manage_settings(user: TokenData) -> bool:
-        return user.role == "admin"
-    
-    @staticmethod
-    def can_view_stats(user: TokenData) -> bool:
-        return True  # All roles can view stats
-    
-    @staticmethod
-    def can_manage_audio(user: TokenData) -> bool:
-        return user.role in ["admin", "operator"]
-    
-    @staticmethod
-    def can_manage_contacts(user: TokenData) -> bool:
-        return user.role in ["admin", "operator"]
-    
-    @staticmethod
-    def can_start_campaign(user: TokenData) -> bool:
-        return user.role in ["admin", "operator"]
-    
-    @staticmethod
-    def can_stop_campaign(user: TokenData) -> bool:
-        return user.role == "admin"
-    
-    @staticmethod
-    def can_delete_campaign(user: TokenData) -> bool:
-        return user.role == "admin"
-    
-    @staticmethod
-    def can_manage_blacklist(user: TokenData) -> bool:
-        return user.role in ["admin", "operator"]
-    
-    @staticmethod
-    def can_enable_system(user: TokenData) -> bool:
-        return user.role == "admin"
-    
-    @staticmethod
-    def can_disable_system(user: TokenData) -> bool:
-        return user.role == "admin"
-
-
-# =============================================
-# Audit Logging for Auth Events
-# =============================================
-class AuthAuditLogger:
-    """Log authentication events"""
-    
-    def __init__(self, db_pool):
-        self.db_pool = db_pool
-    
-    async def log_login_success(self, user_id: int, username: str, ip_address: str, user_agent: str = None):
-        """Log successful login"""
+        if retry_count >= strategy['max']:
+            logger.info(f"Достигнут максимум попыток ({strategy['max']}) для {phone} (статус: {status})")
+            return
+        
         try:
+            contact_id = await self.get_or_create_contact(phone)
+            if not contact_id:
+                return
+            
+            next_retry = datetime.now() + timedelta(seconds=strategy['delay'])
+            
             async with self.db_pool.acquire() as conn:
                 await conn.execute("""
-                    INSERT INTO audit_log (user_id, action, entity_type, details, ip_address, user_agent)
-                    VALUES ($1, $2, $3, $4, $5, $6)
-                """, user_id, 'login_success', 'user', json.dumps({"username": username}), ip_address, user_agent)
+                    UPDATE campaign_contacts 
+                    SET next_retry_at = $1
+                    WHERE campaign_id = $2 AND contact_id = $3
+                """, next_retry, int(campaign_id), contact_id)
+            
+            logger.info(f"⏰ Запланирован повтор {retry_count}/{strategy['max']} для {phone} через {strategy['delay']}с")
+            
         except Exception as e:
-            logger.error(f"Failed to log login success: {e}")
+            logger.error(f"Ошибка планирования повтора: {e}")
     
-    async def log_login_failure(self, username: str, ip_address: str, reason: str, user_agent: str = None):
-        """Log failed login attempt"""
-        try:
-            async with self.db_pool.acquire() as conn:
-                await conn.execute("""
-                    INSERT INTO audit_log (action, entity_type, details, ip_address, user_agent)
-                    VALUES ($1, $2, $3, $4, $5)
-                """, 'login_failure', 'user', json.dumps({"username": username, "reason": reason}), ip_address, user_agent)
-        except Exception as e:
-            logger.error(f"Failed to log login failure: {e}")
+    # =============================================
+    # Watchdog и очистка
+    # =============================================
+    async def watchdog_stale_calls(self):
+        """Убийство зависших звонков."""
+        logger.info("Watchdog запущен")
+        
+        while self.running:
+            await asyncio.sleep(15)
+            
+            now = datetime.now()
+            stale_timeout = timedelta(seconds=90)
+            
+            for unique_id, start_time in list(self.call_start_times.items()):
+                if now - start_time > stale_timeout:
+                    channel = self.channel_map.get(unique_id)
+                    if channel:
+                        logger.warning(f"⚠️ Watchdog убивает зависший звонок: {unique_id} на {channel} (возраст: {(now - start_time).seconds}с)")
+                        
+                        try:
+                            action = panoramisk.message.Action('Hangup', {'Channel': channel})
+                            await self.manager.send_action(action)
+                        except Exception as e:
+                            logger.error(f"Ошибка watchdog hangup для {unique_id}: {e}")
+                    
+                    if unique_id in self.call_start_times:
+                        del self.call_start_times[unique_id]
     
-    async def log_logout(self, user_id: int, username: str, ip_address: str):
-        """Log user logout"""
-        try:
-            async with self.db_pool.acquire() as conn:
-                await conn.execute("""
-                    INSERT INTO audit_log (user_id, action, entity_type, details, ip_address)
-                    VALUES ($1, $2, $3, $4, $5)
-                """, user_id, 'logout', 'user', json.dumps({"username": username}), ip_address)
-        except Exception as e:
-            logger.error(f"Failed to log logout: {e}")
+    async def stop_all_calls(self) -> int:
+        """
+        Экстренная остановка всех звонков.
+        
+        Returns:
+            Количество убитых звонков
+        """
+        killed = 0
+        
+        for unique_id, channel in list(self.channel_map.items()):
+            try:
+                action = panoramisk.message.Action('Hangup', {'Channel': channel})
+                await self.manager.send_action(action)
+                killed += 1
+                logger.info(f"Принудительно завершён звонок: {unique_id} на {channel}")
+            except Exception as e:
+                logger.error(f"Ошибка принудительного завершения {unique_id}: {e}")
+        
+        await self.redis.delete(self.active_channels_key)
+        await self.redis.delete(self.channels_hash_key)
+        await self.redis.set("active_calls", "0")
+        
+        self.channel_map.clear()
+        self.call_start_times.clear()
+        
+        logger.warning(f"Экстренная остановка завершена, убито {killed} звонков")
+        return killed
     
-    async def log_password_change(self, user_id: int, username: str, ip_address: str):
-        """Log password change"""
-        try:
-            async with self.db_pool.acquire() as conn:
-                await conn.execute("""
-                    INSERT INTO audit_log (user_id, action, entity_type, details, ip_address)
-                    VALUES ($1, $2, $3, $4, $5)
-                """, user_id, 'password_change', 'user', json.dumps({"username": username}), ip_address)
-        except Exception as e:
-            logger.error(f"Failed to log password change: {e}")
+    # =============================================
+    # Статус и мониторинг
+    # =============================================
+    def get_status(self) -> dict:
+        """Получение текущего статуса дозвонщика."""
+        return {
+            "connected": self.connected,
+            "running": self.running,
+            "active_calls": len(self.channel_map),
+            "max_calls": self.max_calls,
+            "queue_size": 0,
+            "cps_rate": self.cps_limiter.rate,
+            "reconnect_attempts": self.reconnect_attempts,
+            "freepbx_extension": self.freepbx_extension
+        }
     
-    async def log_token_refresh(self, user_id: int, username: str, ip_address: str):
-        """Log token refresh"""
-        try:
-            async with self.db_pool.acquire() as conn:
-                await conn.execute("""
-                    INSERT INTO audit_log (user_id, action, entity_type, details, ip_address)
-                    VALUES ($1, $2, $3, $4, $5)
-                """, user_id, 'token_refresh', 'user', json.dumps({"username": username}), ip_address)
-        except Exception as e:
-            logger.error(f"Failed to log token refresh: {e}")
-
-
-# =============================================
-# Import json for audit logging
-# =============================================
-import json
+    async def get_queue_size(self) -> int:
+        """Получение размера очереди."""
+        return await self.redis.llen(self.dial_queue_key)
+    
+    async def get_active_channels(self) -> list:
+        """Получение списка активных каналов."""
+        channels = []
+        for unique_id, channel in self.channel_map.items():
+            start_time = self.call_start_times.get(unique_id)
+            channels.append({
+                "unique_id": unique_id,
+                "channel": channel,
+                "started_at": start_time.isoformat() if start_time else None,
+                "duration": (datetime.now() - start_time).seconds if start_time else 0
+            })
+        return channels
