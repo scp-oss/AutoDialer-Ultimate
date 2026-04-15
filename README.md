@@ -10,11 +10,12 @@ sudo ./install.sh
 ```
 
 📋 Системные требования
+```bash
 Debian 12 (Bookworm)
 Минимум 4GB RAM, 2 vCPU
 Доступ к FreePBX серверу (Server-1)
 Открытые порты: 80, 443, 5060/udp, 10000-20000/udp
-
+```
 🏗️ Архитектура
 ```bash
 [Server-2: AutoDialer]
