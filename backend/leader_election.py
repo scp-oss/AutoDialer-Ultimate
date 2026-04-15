@@ -1,59 +1,61 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Leader Election Module - Distributed Locking and Leadership
 AutoDialer Ultimate v3.0.0
 
-Provides distributed leader election using Redis for coordinating
-background tasks across multiple instances.
+Предоставляет распределённое лидерство с использованием Redis.
+Координирует фоновые задачи между несколькими экземплярами.
+
+ВКЛЮЧЕНЫ ВСЕ ИСПРАВЛЕНИЯ:
+- Safe distributed lock с owner check
+- Heartbeat loop с автоматическим восстановлением
+- Graceful release с проверкой владельца
+- Health checking с автоматическим отказом
+- Реестр для управления множеством выборов
+- Task runner для автоматического запуска задач
+- Контекстный менеджер
 """
 
 import asyncio
 import socket
 import uuid
+import time
 from datetime import datetime, timedelta
-from typing import Optional, Callable, Any, Dict, Set
+from typing import Optional, Callable, Any, Dict, Set, List
 from contextlib import asynccontextmanager
+from enum import Enum
 
 from logger import logger
-
-
-# =============================================
-# Leader Election Configuration
-# =============================================
-class LeaderConfig:
-    """Configuration for leader election"""
-    
-    def __init__(
-        self,
-        lock_key: str,
-        ttl: int = 30,
-        renew_interval: int = 10,
-        retry_interval: int = 5,
-        max_retries: int = 10
-    ):
-        self.lock_key = lock_key
-        self.ttl = ttl
-        self.renew_interval = renew_interval
-        self.retry_interval = retry_interval
-        self.max_retries = max_retries
 
 
 # =============================================
 # Leader Election Exception
 # =============================================
 class LeaderElectionError(Exception):
-    """Base exception for leader election"""
+    """Базовое исключение для leader election."""
     pass
 
 
 class NotLeaderError(LeaderElectionError):
-    """Raised when operation requires leadership"""
+    """Операция требует лидерства."""
     pass
 
 
 class LockAcquisitionError(LeaderElectionError):
-    """Raised when lock cannot be acquired"""
+    """Не удалось захватить блокировку."""
     pass
+
+
+# =============================================
+# Leadership Status Enum
+# =============================================
+class LeadershipStatus(Enum):
+    """Статус лидерства."""
+    LEADER = "leader"
+    FOLLOWER = "follower"
+    CANDIDATE = "candidate"
+    UNKNOWN = "unknown"
 
 
 # =============================================
@@ -61,9 +63,15 @@ class LockAcquisitionError(LeaderElectionError):
 # =============================================
 class LeaderElection:
     """
-    Distributed leader election using Redis SET NX.
+    Распределённое лидерство через Redis SET NX.
     
-    Ensures only one instance performs leader-only tasks.
+    Обеспечивает выполнение задач только на одном экземпляре.
+    
+    Особенности:
+    - Безопасная блокировка с проверкой владельца
+    - Heartbeat с автоматическим восстановлением
+    - Graceful release
+    - Статистика
     """
     
     def __init__(
@@ -72,36 +80,44 @@ class LeaderElection:
         lock_key: str,
         ttl: int = 30,
         instance_id: Optional[str] = None,
+        renew_interval: Optional[int] = None,
         on_leader_start: Optional[Callable] = None,
-        on_leader_stop: Optional[Callable] = None
+        on_leader_stop: Optional[Callable] = None,
+        on_leader_lost: Optional[Callable] = None
     ):
         """
-        Initialize leader election.
+        Инициализация leader election.
         
         Args:
-            redis_client: Redis client instance
-            lock_key: Unique key for the lock
-            ttl: Lock TTL in seconds
-            instance_id: Unique instance identifier (auto-generated if None)
-            on_leader_start: Callback when leadership is acquired
-            on_leader_stop: Callback when leadership is lost
+            redis_client: Клиент Redis
+            lock_key: Уникальный ключ блокировки
+            ttl: TTL блокировки в секундах
+            instance_id: Уникальный ID экземпляра (авто-генерация если None)
+            renew_interval: Интервал продления (по умолчанию ttl // 3)
+            on_leader_start: Callback при получении лидерства
+            on_leader_stop: Callback при добровольной потере лидерства
+            on_leader_lost: Callback при непредвиденной потере лидерства
         """
         self.redis = redis_client
         self.lock_key = f"leader:{lock_key}"
         self.ttl = ttl
+        self.renew_interval = renew_interval or max(1, ttl // 3)
         self.instance_id = instance_id or f"{socket.gethostname()}:{uuid.uuid4().hex[:8]}"
         
         # Callbacks
         self.on_leader_start = on_leader_start
         self.on_leader_stop = on_leader_stop
+        self.on_leader_lost = on_leader_lost
         
-        # State
+        # Состояние
         self.is_leader = False
+        self.status = LeadershipStatus.FOLLOWER
         self._renew_task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
         self._running = False
+        self._acquired_at: Optional[datetime] = None
         
-        # Statistics
+        # Статистика
         self._stats = {
             'acquire_attempts': 0,
             'acquire_successes': 0,
@@ -115,99 +131,170 @@ class LeaderElection:
             'last_lost': None
         }
         
-        logger.info(f"LeaderElection initialized: {self.lock_key} (instance: {self.instance_id}, ttl: {ttl}s)")
+        # Lua скрипты
+        self._init_lua_scripts()
+        
+        logger.info(
+            f"LeaderElection initialized: {self.lock_key} "
+            f"(instance: {self.instance_id}, ttl: {ttl}s, renew: {self.renew_interval}s)"
+        )
+    
+    def _init_lua_scripts(self):
+        """Инициализация Lua скриптов для атомарных операций."""
+        
+        # Продление блокировки с проверкой владельца
+        self.RENEW_LUA = """
+            local key = KEYS[1]
+            local expected_owner = ARGV[1]
+            local ttl = tonumber(ARGV[2])
+            
+            local current = redis.call('GET', key)
+            if current == expected_owner then
+                return redis.call('EXPIRE', key, ttl)
+            end
+            return 0
+        """
+        
+        # Освобождение блокировки с проверкой владельца
+        self.RELEASE_LUA = """
+            local key = KEYS[1]
+            local expected_owner = ARGV[1]
+            
+            local current = redis.call('GET', key)
+            if current == expected_owner then
+                return redis.call('DEL', key)
+            end
+            return 0
+        """
+        
+        # Захват блокировки с TTL
+        self.ACQUIRE_LUA = """
+            local key = KEYS[1]
+            local owner = ARGV[1]
+            local ttl = tonumber(ARGV[2])
+            
+            return redis.call('SET', key, owner, 'NX', 'EX', ttl)
+        """
     
     @property
     def leader_id(self) -> Optional[str]:
-        """Get current leader's instance ID"""
+        """ID текущего лидера (если это мы)."""
         return self.instance_id if self.is_leader else None
+    
+    @property
+    def leadership_duration(self) -> Optional[float]:
+        """Длительность текущего лидерства в секундах."""
+        if self._acquired_at:
+            return (datetime.now() - self._acquired_at).total_seconds()
+        return None
     
     async def try_acquire(self) -> bool:
         """
-        Try to acquire leadership.
+        Попытаться захватить лидерство.
         
         Returns:
-            True if leadership acquired, False otherwise
+            True если лидерство получено, False иначе
         """
         async with self._lock:
             if self.is_leader:
                 return True
             
             self._stats['acquire_attempts'] += 1
+            self.status = LeadershipStatus.CANDIDATE
             
             try:
-                # Try to set lock with NX (only if not exists)
-                acquired = await self.redis.set(
+                # 🔥 Атомарный захват с TTL
+                result = await self.redis.eval(
+                    self.ACQUIRE_LUA,
+                    1,
                     self.lock_key,
                     self.instance_id,
-                    ex=self.ttl,
-                    nx=True
+                    self.ttl
                 )
                 
-                if acquired:
+                if result:
                     self.is_leader = True
+                    self.status = LeadershipStatus.LEADER
+                    self._acquired_at = datetime.now()
                     self._stats['acquire_successes'] += 1
-                    self._stats['last_acquired'] = datetime.now()
+                    self._stats['last_acquired'] = self._acquired_at
                     
-                    logger.info(f"✅ Leadership acquired: {self.lock_key} by {self.instance_id}")
+                    logger.info(f"✅ Лидерство получено: {self.lock_key} by {self.instance_id}")
                     
-                    # Start renewal task
+                    # Запускаем heartbeat
                     self._running = True
-                    self._renew_task = asyncio.create_task(self._renew_loop())
+                    self._renew_task = asyncio.create_task(self._heartbeat_loop())
                     
-                    # Call callback
+                    # Вызываем callback
                     if self.on_leader_start:
                         try:
-                            await self.on_leader_start()
+                            if asyncio.iscoroutinefunction(self.on_leader_start):
+                                await self.on_leader_start()
+                            else:
+                                self.on_leader_start()
                         except Exception as e:
                             logger.error(f"on_leader_start callback failed: {e}")
                     
                     return True
                 else:
                     self._stats['acquire_failures'] += 1
+                    self.status = LeadershipStatus.FOLLOWER
                     
-                    # Check who is the current leader
+                    # Проверяем, кто текущий лидер
                     current_leader = await self.redis.get(self.lock_key)
-                    logger.debug(f"Leadership not acquired, current leader: {current_leader}")
+                    logger.debug(f"Лидерство не получено, текущий лидер: {current_leader}")
                     return False
                     
             except Exception as e:
                 self._stats['acquire_failures'] += 1
-                logger.error(f"Failed to acquire leadership: {e}")
+                self.status = LeadershipStatus.UNKNOWN
+                logger.error(f"Ошибка при захвате лидерства: {e}")
                 return False
     
-    async def _renew_loop(self):
-        """Background task to renew leadership"""
-        renew_interval = max(1, self.ttl // 3)  # Renew at 1/3 of TTL
+    async def _heartbeat_loop(self):
+        """Надёжный heartbeat с автоматическим восстановлением."""
+        consecutive_failures = 0
+        max_consecutive_failures = 3
         
         while self._running and self.is_leader:
-            await asyncio.sleep(renew_interval)
-            
-            if not self.is_leader:
+            try:
+                success = await self._renew()
+                
+                if success:
+                    consecutive_failures = 0
+                    self._stats['renew_successes'] += 1
+                else:
+                    consecutive_failures += 1
+                    self._stats['renew_failures'] += 1
+                    logger.warning(f"Не удалось продлить лидерство (попытка {consecutive_failures})")
+                    
+                    if consecutive_failures >= max_consecutive_failures:
+                        logger.error("Потеряно лидерство после нескольких неудачных продлений")
+                        await self._handle_leadership_lost()
+                        break
+                    
+                    # Пытаемся перезахватить
+                    if await self.try_acquire():
+                        consecutive_failures = 0
+                        logger.info("Лидерство перезахвачено")
+                    else:
+                        logger.warning("Не удалось перезахватить лидерство")
+                
+            except asyncio.CancelledError:
                 break
+            except Exception as e:
+                consecutive_failures += 1
+                logger.error(f"Ошибка в heartbeat: {e}")
             
-            success = await self._renew()
-            if not success:
-                logger.error(f"Failed to renew leadership, stepping down")
-                await self._step_down()
-                break
+            await asyncio.sleep(self.renew_interval)
     
     async def _renew(self) -> bool:
-        """Renew the leadership lock"""
+        """Продление блокировки с проверкой владельца."""
         self._stats['renew_attempts'] += 1
         
         try:
-            # Use Lua script to ensure we only renew our own lock
-            lua_script = """
-                local current = redis.call('GET', KEYS[1])
-                if current == ARGV[1] then
-                    return redis.call('EXPIRE', KEYS[1], ARGV[2])
-                end
-                return 0
-            """
-            
             result = await self.redis.eval(
-                lua_script,
+                self.RENEW_LUA,
                 1,
                 self.lock_key,
                 self.instance_id,
@@ -215,37 +302,36 @@ class LeaderElection:
             )
             
             if result:
-                self._stats['renew_successes'] += 1
-                logger.debug(f"Leadership renewed: {self.lock_key}")
+                logger.debug(f"Лидерство продлено: {self.lock_key}")
                 return True
             else:
-                self._stats['renew_failures'] += 1
-                logger.warning(f"Failed to renew leadership (lock held by someone else)")
+                logger.warning(f"Не удалось продлить лидерство (блокировка у другого)")
                 return False
                 
         except Exception as e:
-            self._stats['renew_failures'] += 1
-            logger.error(f"Renewal error: {e}")
+            logger.error(f"Ошибка продления: {e}")
             return False
     
-    async def _step_down(self):
-        """Voluntarily step down from leadership"""
+    async def _handle_leadership_lost(self):
+        """Обработка потери лидерства."""
         async with self._lock:
             if not self.is_leader:
                 return
             
-            logger.info(f"Stepping down from leadership: {self.lock_key}")
+            logger.warning(f"Потеря лидерства: {self.lock_key}")
             
             self._running = False
             self.is_leader = False
+            self.status = LeadershipStatus.FOLLOWER
             self._stats['leadership_lost_count'] += 1
             self._stats['last_lost'] = datetime.now()
             
-            if self._stats['last_acquired']:
-                delta = (datetime.now() - self._stats['last_acquired']).total_seconds()
+            if self._acquired_at:
+                delta = (datetime.now() - self._acquired_at).total_seconds()
                 self._stats['total_leadership_time'] += delta
+                self._acquired_at = None
             
-            # Cancel renewal task
+            # Отменяем heartbeat задачу
             if self._renew_task and not self._renew_task.done():
                 self._renew_task.cancel()
                 try:
@@ -254,85 +340,124 @@ class LeaderElection:
                     pass
                 self._renew_task = None
             
-            # Release lock if we still hold it
+            # Вызываем callback
+            if self.on_leader_lost:
+                try:
+                    if asyncio.iscoroutinefunction(self.on_leader_lost):
+                        await self.on_leader_lost()
+                    else:
+                        self.on_leader_lost()
+                except Exception as e:
+                    logger.error(f"on_leader_lost callback failed: {e}")
+    
+    async def release(self):
+        """Добровольное освобождение лидерства."""
+        async with self._lock:
+            if not self.is_leader:
+                return
+            
+            logger.info(f"Добровольное освобождение лидерства: {self.lock_key}")
+            
+            self._running = False
+            self.is_leader = False
+            self.status = LeadershipStatus.FOLLOWER
+            self._stats['last_lost'] = datetime.now()
+            
+            if self._acquired_at:
+                delta = (datetime.now() - self._acquired_at).total_seconds()
+                self._stats['total_leadership_time'] += delta
+                self._acquired_at = None
+            
+            # Отменяем heartbeat задачу
+            if self._renew_task and not self._renew_task.done():
+                self._renew_task.cancel()
+                try:
+                    await self._renew_task
+                except asyncio.CancelledError:
+                    pass
+                self._renew_task = None
+            
+            # 🔥 Безопасное освобождение с проверкой владельца
             await self._release_lock()
             
-            # Call callback
+            # Вызываем callback
             if self.on_leader_stop:
                 try:
-                    await self.on_leader_stop()
+                    if asyncio.iscoroutinefunction(self.on_leader_stop):
+                        await self.on_leader_stop()
+                    else:
+                        self.on_leader_stop()
                 except Exception as e:
                     logger.error(f"on_leader_stop callback failed: {e}")
     
     async def _release_lock(self):
-        """Release the lock if we hold it"""
+        """Освобождение блокировки с проверкой владельца."""
         try:
-            lua_script = """
-                local current = redis.call('GET', KEYS[1])
-                if current == ARGV[1] then
-                    return redis.call('DEL', KEYS[1])
-                end
-                return 0
-            """
-            
             await self.redis.eval(
-                lua_script,
+                self.RELEASE_LUA,
                 1,
                 self.lock_key,
                 self.instance_id
             )
-            logger.debug(f"Lock released: {self.lock_key}")
+            logger.debug(f"Блокировка освобождена: {self.lock_key}")
         except Exception as e:
-            logger.error(f"Failed to release lock: {e}")
-    
-    async def release(self):
-        """Release leadership (alias for step_down)"""
-        await self._step_down()
+            logger.error(f"Ошибка освобождения блокировки: {e}")
     
     async def wait_for_leadership(self, timeout: Optional[float] = None) -> bool:
         """
-        Wait until leadership is acquired.
+        Ожидать получения лидерства.
         
         Args:
-            timeout: Maximum time to wait in seconds
+            timeout: Максимальное время ожидания в секундах
         
         Returns:
-            True if leadership acquired, False on timeout
+            True если лидерство получено, False по таймауту
         """
-        start_time = datetime.now()
+        start_time = time.monotonic()
         
         while True:
             if await self.try_acquire():
                 return True
             
             if timeout:
-                elapsed = (datetime.now() - start_time).total_seconds()
+                elapsed = time.monotonic() - start_time
                 if elapsed >= timeout:
                     return False
             
             await asyncio.sleep(1)
     
     def require_leader(self):
-        """Decorator to require leadership for a function"""
+        """
+        Декоратор для функций, требующих лидерства.
+        
+        Usage:
+            @election.require_leader()
+            async def leader_only_task():
+                pass
+        """
         def decorator(func: Callable) -> Callable:
+            @wraps(func)
             async def wrapper(*args, **kwargs):
                 if not self.is_leader:
-                    raise NotLeaderError(f"Operation requires leadership: {self.lock_key}")
+                    raise NotLeaderError(f"Операция требует лидерства: {self.lock_key}")
                 return await func(*args, **kwargs)
             return wrapper
         return decorator
     
     async def get_current_leader(self) -> Optional[str]:
-        """Get the current leader's instance ID"""
+        """Получить ID текущего лидера."""
         return await self.redis.get(self.lock_key)
     
     def get_stats(self) -> Dict[str, Any]:
-        """Get leadership statistics"""
+        """Получить статистику лидерства."""
         stats = self._stats.copy()
         stats['is_leader'] = self.is_leader
+        stats['status'] = self.status.value
         stats['instance_id'] = self.instance_id
         stats['lock_key'] = self.lock_key
         stats['ttl'] = self.ttl
+        stats['renew_interval'] = self.renew_interval
+        stats['leadership_duration'] = self.leadership_duration
         
         if self._stats['last_acquired']:
             stats['last_acquired'] = self._stats['last_acquired'].isoformat()
@@ -340,6 +465,21 @@ class LeaderElection:
             stats['last_lost'] = self._stats['last_lost'].isoformat()
         
         return stats
+    
+    def reset_stats(self):
+        """Сбросить статистику."""
+        self._stats = {
+            'acquire_attempts': 0,
+            'acquire_successes': 0,
+            'acquire_failures': 0,
+            'renew_attempts': 0,
+            'renew_successes': 0,
+            'renew_failures': 0,
+            'leadership_lost_count': 0,
+            'total_leadership_time': 0.0,
+            'last_acquired': None,
+            'last_lost': None
+        }
 
 
 # =============================================
@@ -347,9 +487,9 @@ class LeaderElection:
 # =============================================
 class HealthCheckingLeaderElection(LeaderElection):
     """
-    Leader election with additional health checking.
+    Leader election с проверкой здоровья.
     
-    Performs periodic health checks and steps down if unhealthy.
+    Автоматически отказывается от лидерства при проблемах со здоровьем.
     """
     
     def __init__(
@@ -360,20 +500,32 @@ class HealthCheckingLeaderElection(LeaderElection):
         instance_id: Optional[str] = None,
         health_check: Optional[Callable[[], bool]] = None,
         health_check_interval: int = 10,
+        unhealthy_threshold: int = 3,
         on_leader_start: Optional[Callable] = None,
-        on_leader_stop: Optional[Callable] = None
+        on_leader_stop: Optional[Callable] = None,
+        on_leader_lost: Optional[Callable] = None
     ):
+        """
+        Инициализация с проверкой здоровья.
+        
+        Args:
+            health_check: Функция проверки здоровья (должна возвращать bool)
+            health_check_interval: Интервал проверки в секундах
+            unhealthy_threshold: Количество последовательных неудач для отказа
+        """
         super().__init__(
             redis_client, lock_key, ttl, instance_id,
-            on_leader_start, on_leader_stop
+            on_leader_start, on_leader_stop, on_leader_lost
         )
         self.health_check = health_check
         self.health_check_interval = health_check_interval
+        self.unhealthy_threshold = unhealthy_threshold
         self._health_check_task: Optional[asyncio.Task] = None
         self._healthy = True
+        self._consecutive_failures = 0
     
     async def try_acquire(self) -> bool:
-        """Try to acquire leadership with health check"""
+        """Захват лидерства с запуском проверки здоровья."""
         acquired = await super().try_acquire()
         
         if acquired and self.health_check:
@@ -382,27 +534,35 @@ class HealthCheckingLeaderElection(LeaderElection):
         return acquired
     
     async def _health_check_loop(self):
-        """Background health checking"""
+        """Фоновая проверка здоровья."""
         while self._running and self.is_leader:
             await asyncio.sleep(self.health_check_interval)
             
             if self.health_check:
                 try:
-                    healthy = await self.health_check() if asyncio.iscoroutinefunction(self.health_check) else self.health_check()
+                    if asyncio.iscoroutinefunction(self.health_check):
+                        healthy = await self.health_check()
+                    else:
+                        healthy = self.health_check()
                     
-                    if not healthy and self._healthy:
-                        self._healthy = False
-                        logger.warning(f"Instance became unhealthy, stepping down")
-                        await self._step_down()
-                    elif healthy and not self._healthy:
-                        self._healthy = True
-                        logger.info(f"Instance became healthy again")
-                        
+                    if healthy:
+                        self._consecutive_failures = 0
+                        if not self._healthy:
+                            self._healthy = True
+                            logger.info(f"Экземпляр снова здоров: {self.instance_id}")
+                    else:
+                        self._consecutive_failures += 1
+                        if self._healthy and self._consecutive_failures >= self.unhealthy_threshold:
+                            self._healthy = False
+                            logger.warning(f"Экземпляр стал нездоровым, отказ от лидерства")
+                            await self._handle_leadership_lost()
+                            
                 except Exception as e:
-                    logger.error(f"Health check failed: {e}")
+                    self._consecutive_failures += 1
+                    logger.error(f"Ошибка проверки здоровья: {e}")
     
-    async def _step_down(self):
-        """Step down and stop health check"""
+    async def _handle_leadership_lost(self):
+        """Обработка потери лидерства с остановкой проверки здоровья."""
         if self._health_check_task and not self._health_check_task.done():
             self._health_check_task.cancel()
             try:
@@ -411,14 +571,26 @@ class HealthCheckingLeaderElection(LeaderElection):
                 pass
             self._health_check_task = None
         
-        await super()._step_down()
+        await super()._handle_leadership_lost()
+    
+    async def release(self):
+        """Освобождение лидерства с остановкой проверки здоровья."""
+        if self._health_check_task and not self._health_check_task.done():
+            self._health_check_task.cancel()
+            try:
+                await self._health_check_task
+            except asyncio.CancelledError:
+                pass
+            self._health_check_task = None
+        
+        await super().release()
 
 
 # =============================================
 # Leader Election Registry
 # =============================================
 class LeaderElectionRegistry:
-    """Registry for managing multiple leader elections"""
+    """Реестр для управления несколькими leader election."""
     
     def __init__(self, redis_client):
         self.redis = redis_client
@@ -430,45 +602,67 @@ class LeaderElectionRegistry:
         name: str,
         ttl: int = 30,
         instance_id: Optional[str] = None,
+        health_check: Optional[Callable] = None,
         **kwargs
     ) -> LeaderElection:
-        """Create or get a leader election instance"""
+        """
+        Создать или получить leader election.
+        
+        Args:
+            name: Уникальное имя
+            ttl: TTL блокировки
+            instance_id: ID экземпляра
+            health_check: Функция проверки здоровья
+            **kwargs: Дополнительные аргументы
+        
+        Returns:
+            Экземпляр LeaderElection
+        """
         async with self._lock:
             if name not in self._elections:
-                self._elections[name] = LeaderElection(
-                    self.redis,
-                    lock_key=name,
-                    ttl=ttl,
-                    instance_id=instance_id,
-                    **kwargs
-                )
+                if health_check:
+                    self._elections[name] = HealthCheckingLeaderElection(
+                        self.redis, name, ttl, instance_id,
+                        health_check=health_check, **kwargs
+                    )
+                else:
+                    self._elections[name] = LeaderElection(
+                        self.redis, name, ttl, instance_id, **kwargs
+                    )
             return self._elections[name]
     
     def get(self, name: str) -> Optional[LeaderElection]:
-        """Get a leader election instance by name"""
+        """Получить leader election по имени."""
         return self._elections.get(name)
     
     async def try_acquire_all(self) -> Dict[str, bool]:
-        """Try to acquire all registered elections"""
+        """Попытаться захватить все зарегистрированные выборы."""
         results = {}
         for name, election in self._elections.items():
             results[name] = await election.try_acquire()
         return results
     
     async def release_all(self):
-        """Release all elections"""
+        """Освободить все выборы."""
         for election in self._elections.values():
             await election.release()
     
     def get_all_stats(self) -> Dict[str, Any]:
-        """Get statistics for all elections"""
+        """Получить статистику всех выборов."""
         return {
             name: election.get_stats()
             for name, election in self._elections.items()
         }
     
+    def get_leaders(self) -> List[str]:
+        """Получить список имён, где мы лидеры."""
+        return [
+            name for name, election in self._elections.items()
+            if election.is_leader
+        ]
+    
     async def remove(self, name: str) -> bool:
-        """Remove an election from registry"""
+        """Удалить выборы из реестра."""
         async with self._lock:
             if name in self._elections:
                 election = self._elections[name]
@@ -484,9 +678,9 @@ class LeaderElectionRegistry:
 # =============================================
 class LeaderTaskRunner:
     """
-    Run tasks only when instance is the leader.
+    Запуск задач только когда экземпляр является лидером.
     
-    Automatically starts/stops tasks based on leadership status.
+    Автоматически запускает/останавливает задачи при смене статуса.
     """
     
     def __init__(self, election: LeaderElection):
@@ -497,20 +691,33 @@ class LeaderTaskRunner:
         self._monitor_task: Optional[asyncio.Task] = None
     
     def add_task(self, name: str, factory: Callable[[], asyncio.Task]):
-        """Add a task to run when leader"""
+        """
+        Добавить задачу для запуска при лидерстве.
+        
+        Args:
+            name: Имя задачи
+            factory: Фабрика, возвращающая asyncio.Task
+        """
         self._task_factories[name] = factory
+        logger.debug(f"Добавлена задача лидера: {name}")
+    
+    def remove_task(self, name: str):
+        """Удалить задачу."""
+        if name in self._task_factories:
+            del self._task_factories[name]
+            logger.debug(f"Удалена задача лидера: {name}")
     
     async def start(self):
-        """Start monitoring leadership and running tasks"""
+        """Запустить мониторинг лидерства."""
         if self._running:
             return
         
         self._running = True
         self._monitor_task = asyncio.create_task(self._monitor_loop())
-        logger.info(f"LeaderTaskRunner started for {self.election.lock_key}")
+        logger.info(f"LeaderTaskRunner запущен для {self.election.lock_key}")
     
     async def stop(self):
-        """Stop monitoring and all tasks"""
+        """Остановить мониторинг и все задачи."""
         self._running = False
         
         if self._monitor_task and not self._monitor_task.done():
@@ -522,38 +729,38 @@ class LeaderTaskRunner:
             self._monitor_task = None
         
         await self._stop_all_tasks()
-        logger.info(f"LeaderTaskRunner stopped for {self.election.lock_key}")
+        logger.info(f"LeaderTaskRunner остановлен для {self.election.lock_key}")
     
     async def _monitor_loop(self):
-        """Monitor leadership status and start/stop tasks"""
+        """Мониторинг статуса лидерства."""
         was_leader = False
         
         while self._running:
             is_leader = self.election.is_leader
             
             if is_leader and not was_leader:
-                logger.info(f"Became leader, starting tasks")
+                logger.info(f"Стали лидером, запуск задач")
                 await self._start_all_tasks()
             elif not is_leader and was_leader:
-                logger.info(f"Lost leadership, stopping tasks")
+                logger.info(f"Потеряли лидерство, остановка задач")
                 await self._stop_all_tasks()
             
             was_leader = is_leader
             await asyncio.sleep(5)
     
     async def _start_all_tasks(self):
-        """Start all registered tasks"""
+        """Запустить все зарегистрированные задачи."""
         for name, factory in self._task_factories.items():
             try:
                 task = factory()
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
-                logger.info(f"Started leader task: {name}")
+                logger.info(f"Запущена задача лидера: {name}")
             except Exception as e:
-                logger.error(f"Failed to start task {name}: {e}")
+                logger.error(f"Ошибка запуска задачи {name}: {e}")
     
     async def _stop_all_tasks(self):
-        """Stop all running tasks"""
+        """Остановить все запущенные задачи."""
         for task in list(self._tasks):
             if not task.done():
                 task.cancel()
@@ -562,8 +769,12 @@ class LeaderTaskRunner:
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:
-                    logger.error(f"Error stopping task: {e}")
+                    logger.error(f"Ошибка остановки задачи: {e}")
         self._tasks.clear()
+    
+    def get_running_tasks(self) -> List[str]:
+        """Получить список имён запущенных задач."""
+        return list(self._task_factories.keys()) if self.election.is_leader else []
 
 
 # =============================================
@@ -578,12 +789,12 @@ async def leader_context(
     wait_timeout: Optional[float] = None
 ):
     """
-    Context manager for temporary leadership.
+    Контекстный менеджер для временного лидерства.
     
     Usage:
         async with leader_context(redis, "my-task") as is_leader:
             if is_leader:
-                # Perform leader-only work
+                # Выполняем работу, требующую лидерства
                 pass
     """
     election = LeaderElection(redis_client, lock_key, ttl, instance_id)
@@ -616,18 +827,18 @@ async def run_as_leader(
     **kwargs
 ) -> Any:
     """
-    Run a function only if this instance is the leader.
+    Выполнить функцию только если этот экземпляр лидер.
     
     Args:
-        redis_client: Redis client
-        lock_key: Lock key
-        func: Function to run
-        ttl: Lock TTL
-        wait: Whether to wait for leadership
-        wait_timeout: Max wait time
+        redis_client: Клиент Redis
+        lock_key: Ключ блокировки
+        func: Функция для выполнения
+        ttl: TTL блокировки
+        wait: Ждать лидерства
+        wait_timeout: Таймаут ожидания
     
     Returns:
-        Result of function, or None if not leader
+        Результат функции или None если не лидер
     """
     election = LeaderElection(redis_client, lock_key, ttl)
     
@@ -640,7 +851,7 @@ async def run_as_leader(
         if acquired:
             return await func(*args, **kwargs)
         else:
-            logger.debug(f"Not leader, skipping execution: {lock_key}")
+            logger.debug(f"Не лидер, пропуск выполнения: {lock_key}")
             return None
             
     finally:
@@ -654,8 +865,18 @@ async def get_or_create_leader(
     ttl: int = 30,
     instance_id: Optional[str] = None
 ) -> LeaderElection:
-    """Get or create a singleton leader election for a key"""
-    # Simple singleton cache
+    """
+    Получить или создать синглтон leader election для ключа.
+    
+    Args:
+        redis_client: Клиент Redis
+        lock_key: Ключ блокировки
+        ttl: TTL блокировки
+        instance_id: ID экземпляра
+    
+    Returns:
+        Экземпляр LeaderElection
+    """
     if not hasattr(get_or_create_leader, '_cache'):
         get_or_create_leader._cache = {}
     
@@ -665,3 +886,9 @@ async def get_or_create_leader(
         )
     
     return get_or_create_leader._cache[lock_key]
+
+
+# =============================================
+# Импорт для декоратора
+# =============================================
+from functools import wraps
