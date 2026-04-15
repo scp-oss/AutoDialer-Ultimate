@@ -1,14 +1,33 @@
 -- =============================================
--- AutoDialer Ultimate - Main Database Schema
--- Version: 3.0.0
+-- AutoDialer Ultimate - Database Schema
+-- Версия: 3.0.0
+-- =============================================
+-- ВКЛЮЧЕНЫ ВСЕ ИСПРАВЛЕНИЯ:
+-- - Полная схема с 14 таблицами
+-- - Индексы для производительности
+-- - Триггеры для updated_at
+-- - Дефолтные настройки и пользователи
+-- - ENUM типы через CHECK constraints
+-- - JSONB для гибких данных
 -- =============================================
 
--- Create extensions
+-- =============================================
+-- Расширения
+-- =============================================
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- =============================================
--- Users Table
+-- ENUM типы (через CHECK)
+-- =============================================
+-- Роли пользователей: admin, operator, viewer
+-- Статусы кампаний: draft, running, paused, stopped, completed, failed, scheduled
+-- Статусы контактов: active, inactive, blocked
+-- Статусы звонков: agreed, declined, busy, noanswer, failed, timeout, cancelled, machine
+-- Форматы аудио: sln, wav, mp3, gsm
+
+-- =============================================
+-- Таблица: users (Пользователи)
 -- =============================================
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
@@ -27,7 +46,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- =============================================
--- Campaigns Table
+-- Таблица: campaigns (Кампании)
 -- =============================================
 CREATE TABLE IF NOT EXISTS campaigns (
     id SERIAL PRIMARY KEY,
@@ -48,7 +67,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
 );
 
 -- =============================================
--- Contact Groups Table
+-- Таблица: contact_groups (Группы контактов)
 -- =============================================
 CREATE TABLE IF NOT EXISTS contact_groups (
     id SERIAL PRIMARY KEY,
@@ -60,7 +79,7 @@ CREATE TABLE IF NOT EXISTS contact_groups (
 );
 
 -- =============================================
--- Contacts Table
+-- Таблица: contacts (Контакты)
 -- =============================================
 CREATE TABLE IF NOT EXISTS contacts (
     id SERIAL PRIMARY KEY,
@@ -81,11 +100,11 @@ CREATE TABLE IF NOT EXISTS contacts (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Unique index on phone for non-blacklisted contacts
+-- Уникальный индекс на телефон (только для не-заблокированных)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_phone_active ON contacts(phone) WHERE NOT blacklisted;
 
 -- =============================================
--- Campaign Contacts Junction Table
+-- Таблица: campaign_contacts (Связь кампаний и контактов)
 -- =============================================
 CREATE TABLE IF NOT EXISTS campaign_contacts (
     id SERIAL PRIMARY KEY,
@@ -101,7 +120,7 @@ CREATE TABLE IF NOT EXISTS campaign_contacts (
 );
 
 -- =============================================
--- Call Results Table
+-- Таблица: call_results (Результаты звонков)
 -- =============================================
 CREATE TABLE IF NOT EXISTS call_results (
     id SERIAL PRIMARY KEY,
@@ -127,7 +146,7 @@ CREATE TABLE IF NOT EXISTS call_results (
 );
 
 -- =============================================
--- Settings Table
+-- Таблица: settings (Настройки системы)
 -- =============================================
 CREATE TABLE IF NOT EXISTS settings (
     key VARCHAR(100) PRIMARY KEY,
@@ -140,7 +159,7 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- =============================================
--- Audio Files Table
+-- Таблица: audio_files (Аудиофайлы)
 -- =============================================
 CREATE TABLE IF NOT EXISTS audio_files (
     id SERIAL PRIMARY KEY,
@@ -157,12 +176,12 @@ CREATE TABLE IF NOT EXISTS audio_files (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Add foreign key for campaigns.audio_id
+-- Добавляем внешний ключ для campaigns.audio_id
 ALTER TABLE campaigns ADD CONSTRAINT fk_campaigns_audio 
     FOREIGN KEY (audio_id) REFERENCES audio_files(id) ON DELETE SET NULL;
 
 -- =============================================
--- Audit Log Table
+-- Таблица: audit_log (Журнал аудита)
 -- =============================================
 CREATE TABLE IF NOT EXISTS audit_log (
     id SERIAL PRIMARY KEY,
@@ -178,7 +197,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 
 -- =============================================
--- Blacklist Table
+-- Таблица: blacklist (Чёрный список)
 -- =============================================
 CREATE TABLE IF NOT EXISTS blacklist (
     id SERIAL PRIMARY KEY,
@@ -189,7 +208,7 @@ CREATE TABLE IF NOT EXISTS blacklist (
 );
 
 -- =============================================
--- API Tokens Table
+-- Таблица: api_tokens (API токены)
 -- =============================================
 CREATE TABLE IF NOT EXISTS api_tokens (
     id SERIAL PRIMARY KEY,
@@ -202,60 +221,128 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 );
 
 -- =============================================
--- Indexes
+-- Таблица: schema_migrations (Миграции)
+-- =============================================
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    id SERIAL PRIMARY KEY,
+    version VARCHAR(255) NOT NULL UNIQUE,
+    name VARCHAR(255),
+    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =============================================
+-- Таблица: webhook_subscriptions (Webhook подписки)
+-- =============================================
+CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    url TEXT NOT NULL,
+    events TEXT[] NOT NULL DEFAULT '{}',
+    secret VARCHAR(255),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    last_triggered_at TIMESTAMP,
+    failure_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =============================================
+-- Таблица: webhook_deliveries (История доставки webhook)
+-- =============================================
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id SERIAL PRIMARY KEY,
+    subscription_id INTEGER REFERENCES webhook_subscriptions(id) ON DELETE CASCADE,
+    event_type VARCHAR(100) NOT NULL,
+    payload JSONB NOT NULL,
+    response_code INTEGER,
+    response_body TEXT,
+    duration_ms INTEGER,
+    status VARCHAR(50) DEFAULT 'pending',
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =============================================
+-- Индексы
 -- =============================================
 
--- Users indexes
+-- Users
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
+CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);
 
--- Campaigns indexes
+-- Campaigns
 CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status);
 CREATE INDEX IF NOT EXISTS idx_campaigns_created_by ON campaigns(created_by);
 CREATE INDEX IF NOT EXISTS idx_campaigns_created_at ON campaigns(created_at);
+CREATE INDEX IF NOT EXISTS idx_campaigns_started_at ON campaigns(started_at);
 
--- Contacts indexes
+-- Contacts
 CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone);
 CREATE INDEX IF NOT EXISTS idx_contacts_group ON contacts(group_id);
 CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status);
 CREATE INDEX IF NOT EXISTS idx_contacts_blacklisted ON contacts(blacklisted);
 CREATE INDEX IF NOT EXISTS idx_contacts_created_at ON contacts(created_at);
+CREATE INDEX IF NOT EXISTS idx_contacts_last_call ON contacts(last_call_at);
+CREATE INDEX IF NOT EXISTS idx_contacts_tags ON contacts USING gin(tags);
 
--- Campaign contacts indexes
+-- Contact groups
+CREATE INDEX IF NOT EXISTS idx_contact_groups_name ON contact_groups(name);
+
+-- Campaign contacts
 CREATE INDEX IF NOT EXISTS idx_campaign_contacts_campaign ON campaign_contacts(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_campaign_contacts_contact ON campaign_contacts(contact_id);
 CREATE INDEX IF NOT EXISTS idx_campaign_contacts_next_retry ON campaign_contacts(next_retry_at) WHERE next_retry_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_campaign_contacts_status ON campaign_contacts(status);
+CREATE INDEX IF NOT EXISTS idx_campaign_contacts_priority ON campaign_contacts(priority DESC);
 
--- Call results indexes
+-- Call results
 CREATE INDEX IF NOT EXISTS idx_call_results_campaign ON call_results(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_call_results_contact ON call_results(contact_id);
 CREATE INDEX IF NOT EXISTS idx_call_results_phone ON call_results(phone);
 CREATE INDEX IF NOT EXISTS idx_call_results_status ON call_results(status);
 CREATE INDEX IF NOT EXISTS idx_call_results_created ON call_results(created_at);
 CREATE INDEX IF NOT EXISTS idx_call_results_linked_id ON call_results(linked_id);
+CREATE INDEX IF NOT EXISTS idx_call_results_unique_id ON call_results(unique_id);
+CREATE INDEX IF NOT EXISTS idx_call_results_campaign_status ON call_results(campaign_id, status);
+CREATE INDEX IF NOT EXISTS idx_call_results_created_date ON call_results((created_at::DATE));
 
--- Audio files indexes
+-- Audio files
 CREATE INDEX IF NOT EXISTS idx_audio_files_campaign ON audio_files(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_audio_files_created_by ON audio_files(created_by);
+CREATE INDEX IF NOT EXISTS idx_audio_files_is_public ON audio_files(is_public);
+CREATE INDEX IF NOT EXISTS idx_audio_files_created_at ON audio_files(created_at);
 
--- Audit log indexes
+-- Audit log
 CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_username ON audit_log(username);
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 
--- Blacklist indexes
+-- Blacklist
 CREATE INDEX IF NOT EXISTS idx_blacklist_phone ON blacklist(phone);
+CREATE INDEX IF NOT EXISTS idx_blacklist_created_at ON blacklist(created_at);
 
--- API tokens indexes
+-- API tokens
 CREATE INDEX IF NOT EXISTS idx_api_tokens_token ON api_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_expires ON api_tokens(expires_at);
 
--- Settings indexes
+-- Settings
 CREATE INDEX IF NOT EXISTS idx_settings_category ON settings(category);
+CREATE INDEX IF NOT EXISTS idx_settings_is_public ON settings(is_public);
+
+-- Webhooks
+CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_is_active ON webhook_subscriptions(is_active);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_subscription ON webhook_deliveries(subscription_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_status ON webhook_deliveries(status);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at);
 
 -- =============================================
--- Default Settings
+-- Дефолтные настройки
 -- =============================================
 INSERT INTO settings (key, value, description, category) VALUES 
     ('system_enabled', 'true', 'Global system enable/disable', 'system'),
@@ -267,17 +354,33 @@ INSERT INTO settings (key, value, description, category) VALUES
     ('retry_busy_delay', '120', 'Delay for busy retry (seconds)', 'dialer'),
     ('retry_noanswer_max', '3', 'Max retries for no answer', 'dialer'),
     ('retry_noanswer_delay', '300', 'Delay for no answer retry', 'dialer'),
+    ('retry_failed_max', '1', 'Max retries for failed', 'dialer'),
+    ('retry_failed_delay', '60', 'Delay for failed retry (seconds)', 'dialer'),
     ('audio_retention_days', '30', 'Audio files retention period', 'storage'),
     ('max_upload_size_mb', '10', 'Maximum upload file size', 'storage'),
     ('recording_enabled', 'false', 'Enable call recording', 'features'),
-    ('amd_enabled', 'false', 'Enable answering machine detection', 'features')
+    ('recording_format', 'wav', 'Recording format (wav/mp3)', 'features'),
+    ('amd_enabled', 'false', 'Enable answering machine detection', 'features'),
+    ('amd_initial_silence', '2500', 'AMD initial silence (ms)', 'features'),
+    ('amd_greeting', '1500', 'AMD greeting timeout (ms)', 'features'),
+    ('amd_after_greeting_silence', '800', 'AMD after greeting silence (ms)', 'features'),
+    ('amd_total_analysis_time', '5000', 'AMD total analysis time (ms)', 'features'),
+    ('websocket_enabled', 'true', 'Enable WebSocket for real-time updates', 'features'),
+    ('metrics_enabled', 'true', 'Enable Prometheus metrics', 'monitoring'),
+    ('rate_limit_enabled', 'true', 'Enable rate limiting', 'security'),
+    ('rate_limit_requests', '100', 'Rate limit requests per window', 'security'),
+    ('rate_limit_window', '60', 'Rate limit window in seconds', 'security'),
+    ('login_rate_limit', '5', 'Login attempts before block', 'security'),
+    ('login_rate_window', '300', 'Login rate window in seconds', 'security'),
+    ('session_timeout', '3600', 'Session timeout in seconds', 'security')
 ON CONFLICT (key) DO NOTHING;
 
 -- =============================================
--- Default Admin User (password: admin)
+-- Дефолтный администратор (пароль: admin)
 -- =============================================
 INSERT INTO users (username, password_hash, email, full_name, role, force_password_change) VALUES (
     'admin',
+    -- bcrypt hash для 'admin' (12 rounds)
     '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYIqK0hVdGW',
     'admin@localhost',
     'System Administrator',
@@ -286,7 +389,7 @@ INSERT INTO users (username, password_hash, email, full_name, role, force_passwo
 ) ON CONFLICT (username) DO NOTHING;
 
 -- =============================================
--- Default Contact Groups
+-- Дефолтные группы контактов
 -- =============================================
 INSERT INTO contact_groups (name, description, color) VALUES 
     ('Default', 'Default contact group', '#667eea'),
@@ -295,10 +398,10 @@ INSERT INTO contact_groups (name, description, color) VALUES
 ON CONFLICT (name) DO NOTHING;
 
 -- =============================================
--- Functions
+-- Функции
 -- =============================================
 
--- Function to update updated_at column
+-- Функция обновления updated_at
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -307,7 +410,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Function to increment total_calls on contact
+-- Функция инкремента total_calls контакта
 CREATE OR REPLACE FUNCTION increment_contact_total_calls()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -319,34 +422,66 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Функция аудита действий пользователя
+CREATE OR REPLACE FUNCTION audit_user_action()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO audit_log (user_id, username, action, entity_type, entity_id, details)
+    VALUES (
+        current_setting('app.user_id', true)::INTEGER,
+        current_setting('app.username', true),
+        TG_OP,
+        TG_TABLE_NAME,
+        NEW.id,
+        jsonb_build_object('old', to_jsonb(OLD), 'new', to_jsonb(NEW))
+    );
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 -- =============================================
--- Triggers
+-- Триггеры
 -- =============================================
 
--- Campaigns updated_at trigger
+-- updated_at триггеры
 DROP TRIGGER IF EXISTS update_campaigns_updated_at ON campaigns;
 CREATE TRIGGER update_campaigns_updated_at 
     BEFORE UPDATE ON campaigns 
     FOR EACH ROW 
     EXECUTE FUNCTION update_updated_at_column();
 
--- Contacts updated_at trigger
 DROP TRIGGER IF EXISTS update_contacts_updated_at ON contacts;
 CREATE TRIGGER update_contacts_updated_at 
     BEFORE UPDATE ON contacts 
     FOR EACH ROW 
     EXECUTE FUNCTION update_updated_at_column();
 
--- Users updated_at trigger
 DROP TRIGGER IF EXISTS update_users_updated_at ON users;
 CREATE TRIGGER update_users_updated_at 
     BEFORE UPDATE ON users 
     FOR EACH ROW 
     EXECUTE FUNCTION update_updated_at_column();
 
--- Contact total_calls increment trigger
+DROP TRIGGER IF EXISTS update_webhook_subscriptions_updated_at ON webhook_subscriptions;
+CREATE TRIGGER update_webhook_subscriptions_updated_at 
+    BEFORE UPDATE ON webhook_subscriptions 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Триггер инкремента счётчика звонков контакта
 DROP TRIGGER IF EXISTS increment_contact_calls ON call_results;
 CREATE TRIGGER increment_contact_calls
     AFTER INSERT ON call_results
     FOR EACH ROW
     EXECUTE FUNCTION increment_contact_total_calls();
+
+-- =============================================
+-- Запись начальной миграции
+-- =============================================
+INSERT INTO schema_migrations (version, name) VALUES ('001', 'Initial Schema') ON CONFLICT (version) DO NOTHING;
+
+-- =============================================
+-- Grant Permissions
+-- =============================================
+-- GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO autodialer;
+-- GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO autodialer;
