@@ -1,62 +1,174 @@
+; =============================================
+; PJSIP Configuration Template
+; AutoDialer Ultimate v3.0.0
+; Variables: ${FREEPBX_IP}, ${EXTENSION_PASSWORD}
+; =============================================
+
 [global]
+; =============================================
+; Global PJSIP Settings
+; =============================================
 type = global
-user_agent = AutoDialer-Ultimate
+user_agent = AutoDialer-Ultimate/3.0.0
 keep_alive_interval = 90
 endpoint_identifier_order = ip,username,anonymous
+default_realm = ${FREEPBX_IP}
+max_initial_qualify = 5
 
+
+; =============================================
+; Transport Configuration
+; =============================================
 [transport-udp]
 type = transport
 protocol = udp
 bind = 0.0.0.0
+
+; External address for NAT
 local_net = 192.168.0.0/16,10.0.0.0/8,172.16.0.0/12
 external_media_address = ${FREEPBX_IP}
 external_signaling_address = ${FREEPBX_IP}
 
+; TLS transport (optional)
+; [transport-tls]
+; type = transport
+; protocol = tls
+; bind = 0.0.0.0
+; cert_file = /etc/asterisk/keys/asterisk.pem
+; priv_key_file = /etc/asterisk/keys/asterisk.key
+
+
+; =============================================
+; Authentication for Extension 291
+; =============================================
 [291_auth]
 type = auth
 auth_type = userpass
 username = 291
 password = ${EXTENSION_PASSWORD}
+realm = ${FREEPBX_IP}
 
+
+; =============================================
+; Address of Record (AOR)
+; =============================================
 [291_aor]
 type = aor
 max_contacts = 1
 remove_existing = yes
 contact = sip:291@${FREEPBX_IP}:5060
 
+; Qualify settings
+qualify_frequency = 30
+qualify_timeout = 5.0
+
+; Registration expiration
+default_expiration = 120
+
+; Maximum expiration
+maximum_expiration = 3600
+
+; Minimum expiration
+minimum_expiration = 60
+
+
+; =============================================
+; Endpoint Configuration
+; =============================================
 [291_endpoint]
 type = endpoint
 transport = transport-udp
 context = dialer_bridge
+
+; Codecs
 disallow = all
 allow = ulaw
 allow = alaw
 allow = g722
+
+; DTMF
 dtmf_mode = rfc4733
+
+; Authentication
 outbound_auth = 291_auth
 aors = 291_aor
-callerid = AutoDialer
+
+; Caller ID
+callerid = AutoDialer <291>
+callerid_privacy = allowed_not_screened
+callerid_tag = 291
+
+; Media
 direct_media = no
-from_user = 291
-from_domain = ${FREEPBX_IP}
-outbound_proxy = sip:${FREEPBX_IP}:5060
+media_encryption = no
+media_use_received_transport = yes
+
+; NAT
 rewrite_contact = yes
 rtp_symmetric = yes
 force_rport = yes
-rtp_keepalive = 30
-rtp_timeout = 30
-rtp_timeout_hold = 60
+
+; FreePBX specific
+from_user = 291
+from_domain = ${FREEPBX_IP}
+outbound_proxy = sip:${FREEPBX_IP}:5060
+
+; Timers
 timers = yes
 timers_sess_expires = 1800
 timers_min_se = 90
-ice_support = no
-media_encryption = no
-media_use_received_transport = yes
+
+; Keepalive
+rtp_keepalive = 30
+rtp_timeout = 30
+rtp_timeout_hold = 60
+
+; Trust
 trust_id_inbound = yes
 trust_id_outbound = yes
+
+; Headers
 send_pai = yes
 send_rpid = yes
 
+; ICE
+ice_support = no
+
+; Security
+allow_unauthenticated_options = no
+
+; Transport
+allow_transfer = no
+
+; Fax
+fax_detect = no
+
+; Message context
+message_context = dialer_bridge
+
+; Voicemail
+voicemail_extension = 
+
+; Language
+language = ru
+
+; Device state
+device_state_busy_at = 1
+
+; Call limits
+max_audio_streams = 1
+max_video_streams = 0
+
+; Connected line
+connected_line_method = invite
+
+; T.38
+t38_udptl = no
+
+
+; =============================================
+; Registration to FreePBX
+; =============================================
 [291_reg]
 type = registration
 outbound_auth = 291_auth
@@ -65,13 +177,92 @@ client_uri = sip:291@${FREEPBX_IP}:5060
 contact_user = 291
 line = yes
 endpoint = 291_endpoint
+
+; Retry settings
 retry_interval = 60
-expiration = 120
-forbidden_retry_interval = 300
 max_retries = 10
+forbidden_retry_interval = 300
+fatal_retry_interval = 600
+
+; Expiration
+expiration = 120
+
+; Authentication rejection
 auth_rejection_permanent = no
 
+; Support for outbound registration
+support_outbound = yes
+
+; Transport
+transport = transport-udp
+
+
+; =============================================
+; Identify - Match incoming from FreePBX
+; =============================================
 [291_identify]
 type = identify
 endpoint = 291_endpoint
 match = ${FREEPBX_IP}
+match_header = From: <sip:291@${FREEPBX_IP}>
+
+
+; =============================================
+; Additional Endpoint for Failover (Optional)
+; =============================================
+; [291_backup_endpoint]
+; type = endpoint
+; transport = transport-udp
+; context = dialer_bridge
+; disallow = all
+; allow = ulaw
+; allow = alaw
+; outbound_auth = 291_auth
+; aors = 291_backup_aor
+; callerid = AutoDialer <291>
+; from_user = 291
+; from_domain = ${FREEPBX_IP}
+; outbound_proxy = sip:BACKUP_IP:5060
+
+
+; =============================================
+; ACL for Local Networks
+; =============================================
+; [acl-local]
+; type = acl
+; deny = 0.0.0.0/0.0.0.0
+; permit = 127.0.0.1
+; permit = 192.168.0.0/16
+; permit = 10.0.0.0/8
+; permit = 172.16.0.0/12
+
+
+; =============================================
+; Domain Alias
+; =============================================
+; [domain-alias]
+; type = domain_alias
+; domain = ${FREEPBX_IP}
+; alias = freepbx.local
+
+
+; =============================================
+; System Configuration
+; =============================================
+[system]
+type = system
+; Timer settings
+timer_t1 = 500
+timer_b = 32000
+
+; Compact headers
+compact_headers = yes
+
+; Thread count
+threadpool_initial_size = 0
+threadpool_auto_increment = 5
+threadpool_idle_timeout = 60
+threadpool_max_size = 50
+
+; Disable multi-domain
+disable_multi_domain = no
