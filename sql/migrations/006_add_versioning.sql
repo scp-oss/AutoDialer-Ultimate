@@ -46,4 +46,65 @@ BEGIN
     
     -- Получаем user_id из контекста
     BEGIN
-        audit_user_id := current_setting('app.user_id', true)::INTEGER
+        audit_user_id := current_setting('app.user_id', true)::INTEGER;
+    EXCEPTION WHEN OTHERS THEN
+        audit_user_id := NULL;
+    END;
+    
+    -- Создаем новую версию
+    INSERT INTO record_versions (entity_type, entity_id, version, data, created_by)
+    VALUES (TG_TABLE_NAME, NEW.id, current_version + 1, to_jsonb(NEW), audit_user_id);
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =============================================
+-- Триггеры версионирования для важных таблиц
+-- =============================================
+DROP TRIGGER IF EXISTS version_campaigns ON campaigns;
+CREATE TRIGGER version_campaigns
+    AFTER UPDATE ON campaigns
+    FOR EACH ROW
+    EXECUTE FUNCTION create_record_version();
+
+DROP TRIGGER IF EXISTS version_contacts ON contacts;
+CREATE TRIGGER version_contacts
+    AFTER UPDATE ON contacts
+    FOR EACH ROW
+    EXECUTE FUNCTION create_record_version();
+
+DROP TRIGGER IF EXISTS version_settings ON settings;
+CREATE TRIGGER version_settings
+    AFTER UPDATE ON settings
+    FOR EACH ROW
+    EXECUTE FUNCTION create_record_version();
+
+-- =============================================
+-- Настройки
+-- =============================================
+INSERT INTO settings (key, value, description, category) VALUES 
+    ('versioning_enabled', 'true', 'Enable record versioning', 'system'),
+    ('rate_limit_enabled', 'true', 'Enable rate limiting', 'security'),
+    ('rate_limit_requests', '100', 'Rate limit requests per window', 'security'),
+    ('rate_limit_window', '60', 'Rate limit window in seconds', '60'),
+    ('login_rate_limit', '5', 'Login attempts before block', 'security'),
+    ('login_rate_window', '300', 'Login rate window in seconds', 'security'),
+    ('session_timeout', '3600', 'Session timeout in seconds', 'security')
+ON CONFLICT (key) DO NOTHING;
+
+-- =============================================
+-- Запись о применении миграции
+-- =============================================
+INSERT INTO schema_migrations (version, name) VALUES ('006', 'Record Versioning');
+
+-- =============================================
+-- Откат (ROLLBACK)
+-- =============================================
+/*
+DROP TRIGGER IF EXISTS version_campaigns ON campaigns;
+DROP TRIGGER IF EXISTS version_contacts ON contacts;
+DROP TRIGGER IF EXISTS version_settings ON settings;
+DROP FUNCTION IF EXISTS create_record_version();
+DROP TABLE IF EXISTS record_versions CASCADE;
+*/
