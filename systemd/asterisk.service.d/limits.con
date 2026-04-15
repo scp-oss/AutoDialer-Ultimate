@@ -1,0 +1,13 @@
+[Service]
+LimitNOFILE=655350
+LimitMEMLOCK=infinity
+LimitNPROC=655350
+User=asterisk
+Group=asterisk
+CPUQuota=200%
+MemoryMax=2G
+TasksMax=infinity
+
+[Unit]
+After=network-online.target
+Wants=network-online.target
