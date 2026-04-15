@@ -1,0 +1,29 @@
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 5
+destemail = root@localhost
+action = %(action_mwl)s
+
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 3
+
+[asterisk]
+enabled = true
+port = 5060,5061
+filter = asterisk
+logpath = /var/log/asterisk/security
+maxretry = 3
+bantime = 7200
+
+[autodialer-api]
+enabled = true
+port = 80,443
+filter = autodialer-api
+logpath = /opt/autodialer/logs/access.log
+maxretry = 10
+bantime = 1800
