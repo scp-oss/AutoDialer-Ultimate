@@ -2,6 +2,7 @@
 """
 AutoDialer Ultimate - Main FastAPI Application
 Version: 3.0.0
+Enterprise-grade auto dialer system
 """
 
 import asyncio
@@ -13,15 +14,16 @@ import signal
 import uuid
 import re
 import subprocess
-from datetime import datetime
-from typing import Optional, List
+import time
+from datetime import datetime, timedelta
+from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, validator
 
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
 
@@ -35,13 +37,18 @@ from rate_limiter import TokenBucket, GlobalRateLimiter, SlidingWindowRateLimite
 from leader_election import LeaderElection
 from task_registry import TaskRegistry
 
+
 # =============================================
 # Prometheus Metrics
 # =============================================
 active_calls_gauge = Gauge('autodialer_active_calls', 'Active calls')
-calls_total = Counter('autodialer_calls_total', 'Total calls', ['status'])
+calls_total = Counter('autodialer_calls_total', 'Total calls', ['status', 'campaign_id'])
 cps_histogram = Histogram('autodialer_cps', 'Calls per second')
 http_requests = Counter('autodialer_http_requests', 'HTTP requests', ['method', 'endpoint', 'status'])
+campaign_counter = Counter('autodialer_campaigns_total', 'Campaigns created')
+contact_counter = Counter('autodialer_contacts_total', 'Contacts imported')
+audio_generation_counter = Counter('autodialer_audio_generated', 'Audio files generated')
+
 
 # =============================================
 # Global Variables
@@ -54,121 +61,341 @@ task_registry = TaskRegistry()
 # Circuit breakers
 db_breaker = CircuitBreaker("database", failure_threshold=3, recovery_timeout=30)
 redis_breaker = CircuitBreaker("redis", failure_threshold=3, recovery_timeout=30)
+ami_breaker = CircuitBreaker("ami", failure_threshold=5, recovery_timeout=60)
 
 # Rate limiters
-rate_limiter = None  # Will be initialized after redis_client
-global_cps_limiter = None  # Will be initialized after redis_client
+rate_limiter = None
+global_cps_limiter = None
 
 # Leader election for cleanup tasks
-cleanup_leader = None  # Will be initialized after redis_client
+cleanup_leader = None
+
+# TTS semaphore
+tts_semaphore = None
+
 
 # =============================================
 # Pydantic Models
 # =============================================
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., min_length=1, max_length=50)
+    password: str = Field(..., min_length=1)
+
 
 class ChangePasswordRequest(BaseModel):
     old_password: str
-    new_password: str
+    new_password: str = Field(..., min_length=6)
+    
+    @validator('new_password')
+    def validate_password(cls, v):
+        if len(v) < 6:
+            raise ValueError('Password must be at least 6 characters')
+        if not any(c.isupper() for c in v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not any(c.islower() for c in v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not any(c.isdigit() for c in v):
+            raise ValueError('Password must contain at least one digit')
+        return v
 
-class CampaignCreate(BaseModel):
-    name: str
-    max_calls: int = 30
-    cps: int = 5
-    audio_id: Optional[int] = None
-    retry_strategy: Optional[dict] = None
-
-class CampaignUpdate(BaseModel):
-    name: Optional[str] = None
-    max_calls: Optional[int] = None
-    cps: Optional[int] = None
-    audio_id: Optional[int] = None
-    status: Optional[str] = None
-
-class UserCreate(BaseModel):
-    username: str
-    password: str
-    role: str = "operator"
-
-class UserUpdate(BaseModel):
-    password: Optional[str] = None
-    role: Optional[str] = None
-
-class SettingsUpdate(BaseModel):
-    value: str
-
-class AudioGenerate(BaseModel):
-    text: str
-    name: str
-    campaign_id: Optional[int] = None
-    voice: str = "denis"
-
-class ContactImport(BaseModel):
-    group_id: Optional[int] = None
-    contacts: List[dict]
-
-class BlacklistAdd(BaseModel):
-    phone: str
-    reason: Optional[str] = None
 
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
+    token_type: str = "bearer"
     role: str
     force_password_change: bool
+
+
+class CampaignCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    max_calls: int = Field(30, ge=1, le=100)
+    cps: int = Field(5, ge=1, le=50)
+    audio_id: Optional[int] = None
+    retry_strategy: Optional[Dict[str, int]] = None
+    schedule_start: Optional[datetime] = None
+    schedule_end: Optional[datetime] = None
+
+
+class CampaignUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    max_calls: Optional[int] = Field(None, ge=1, le=100)
+    cps: Optional[int] = Field(None, ge=1, le=50)
+    audio_id: Optional[int] = None
+    retry_strategy: Optional[Dict[str, int]] = None
+    schedule_start: Optional[datetime] = None
+    schedule_end: Optional[datetime] = None
+
+
+class CampaignResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    status: str
+    max_calls: int
+    cps: int
+    audio_id: Optional[int]
+    retry_strategy: Optional[Dict[str, int]]
+    schedule_start: Optional[datetime]
+    schedule_end: Optional[datetime]
+    created_by: Optional[int]
+    created_at: datetime
+    updated_at: datetime
+
+
+class ContactCreate(BaseModel):
+    phone: str
+    name: Optional[str] = None
+    email: Optional[str] = None
+    group_id: Optional[int] = None
+    tags: Optional[List[str]] = None
+    custom_fields: Optional[Dict[str, Any]] = None
+    
+    @validator('phone')
+    def validate_phone(cls, v):
+        phone = re.sub(r'[^\d]', '', v)
+        if len(phone) < 10:
+            raise ValueError('Invalid phone number')
+        return phone
+
+
+class ContactImport(BaseModel):
+    group_id: Optional[int] = None
+    contacts: List[Dict[str, str]]
+
+
+class ContactResponse(BaseModel):
+    id: int
+    phone: str
+    name: Optional[str]
+    email: Optional[str]
+    group_id: Optional[int]
+    tags: Optional[List[str]]
+    custom_fields: Optional[Dict[str, Any]]
+    status: str
+    blacklisted: bool
+    created_at: datetime
+
+
+class UserCreate(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=6)
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    role: str = "operator"
+    
+    @validator('role')
+    def validate_role(cls, v):
+        if v not in ['admin', 'operator', 'viewer']:
+            raise ValueError('Invalid role')
+        return v
+
+
+class UserUpdate(BaseModel):
+    password: Optional[str] = Field(None, min_length=6)
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: Optional[str]
+    full_name: Optional[str]
+    role: str
+    force_password_change: bool
+    is_active: bool
+    last_login: Optional[datetime]
+    created_at: datetime
+
+
+class SettingUpdate(BaseModel):
+    value: str
+
+
+class SettingResponse(BaseModel):
+    key: str
+    value: str
+    description: Optional[str]
+    category: str
+    is_public: bool
+
+
+class AudioGenerate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    text: str = Field(..., min_length=10, max_length=500)
+    voice: str = "denis"
+    campaign_id: Optional[int] = None
+    
+    @validator('voice')
+    def validate_voice(cls, v):
+        if v not in ['denis', 'irina']:
+            raise ValueError('Invalid voice')
+        return v
+
+
+class AudioResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    file_path: str
+    file_size: Optional[int]
+    duration: Optional[int]
+    format: str
+    campaign_id: Optional[int]
+    campaign_name: Optional[str]
+    created_by: Optional[int]
+    created_by_name: Optional[str]
+    is_public: bool
+    created_at: datetime
+
+
+class StatsResponse(BaseModel):
+    total_calls: int
+    agreed: int
+    declined: int
+    busy: int
+    noanswer: int
+    failed: int
+    timeout: int
+    today_calls: int
+    conversion_rate: float
+    daily: List[Dict[str, Any]]
+
+
+class SystemStatusResponse(BaseModel):
+    enabled: bool
+    active_calls: int
+    max_calls: int
+    ami_connected: bool
+    tasks_running: int
+    queue_size: int
+    redis_connected: bool
+    database_connected: bool
+    uptime_seconds: float
+
+
+class BlacklistAdd(BaseModel):
+    phone: str
+    reason: Optional[str] = None
+    
+    @validator('phone')
+    def validate_phone(cls, v):
+        return re.sub(r'[^\d]', '', v)
+
+
+class BlacklistResponse(BaseModel):
+    id: int
+    phone: str
+    reason: Optional[str]
+    created_by: Optional[int]
+    created_by_name: Optional[str]
+    created_at: datetime
+
+
+class AuditLogResponse(BaseModel):
+    id: int
+    user_id: Optional[int]
+    username: Optional[str]
+    action: str
+    entity_type: Optional[str]
+    entity_id: Optional[int]
+    details: Optional[Dict[str, Any]]
+    ip_address: Optional[str]
+    created_at: datetime
+
+
+class PaginatedResponse(BaseModel):
+    items: List[Any]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
 
 # =============================================
 # Lifespan
 # =============================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global db_pool, redis_client, dialer_manager, rate_limiter, global_cps_limiter, cleanup_leader
+    global db_pool, redis_client, dialer_manager
+    global rate_limiter, global_cps_limiter, cleanup_leader, tts_semaphore
     
     # Startup
-    logger.info("=" * 50)
+    logger.info("=" * 60)
     logger.info("Starting AutoDialer Ultimate v3.0.0...")
-    logger.info("=" * 50)
+    logger.info("=" * 60)
+    
+    start_time = time.time()
     
     # Database pool
-    db_pool = await asyncpg.create_pool(
-        user=os.getenv('DB_USER', 'autodialer'),
-        password=os.getenv('DB_PASSWORD'),
-        database=os.getenv('DB_NAME', 'autodialer'),
-        host=os.getenv('DB_HOST', '127.0.0.1'),
-        port=int(os.getenv('DB_PORT', 5432)),
-        min_size=5,
-        max_size=50,
-        command_timeout=60
-    )
-    logger.info("✅ Database connected")
+    try:
+        db_pool = await asyncpg.create_pool(
+            user=os.getenv('DB_USER', 'autodialer'),
+            password=os.getenv('DB_PASSWORD'),
+            database=os.getenv('DB_NAME', 'autodialer'),
+            host=os.getenv('DB_HOST', '127.0.0.1'),
+            port=int(os.getenv('DB_PORT', 5432)),
+            min_size=5,
+            max_size=50,
+            command_timeout=60,
+            max_queries=50000,
+            max_inactive_connection_lifetime=300
+        )
+        logger.info("✅ Database connected")
+    except Exception as e:
+        logger.error(f"Database connection failed: {e}")
+        raise
     
     # Redis client
-    redis_client = redis.Redis(
-        host=os.getenv('REDIS_HOST', 'localhost'),
-        port=int(os.getenv('REDIS_PORT', 6379)),
-        decode_responses=True,
-        socket_connect_timeout=5,
-        socket_keepalive=True,
-        health_check_interval=30
-    )
-    await redis_client.ping()
-    logger.info("✅ Redis connected")
+    try:
+        redis_client = redis.Redis(
+            host=os.getenv('REDIS_HOST', 'localhost'),
+            port=int(os.getenv('REDIS_PORT', 6379)),
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_keepalive=True,
+            health_check_interval=30
+        )
+        await redis_client.ping()
+        logger.info("✅ Redis connected")
+    except Exception as e:
+        logger.error(f"Redis connection failed: {e}")
+        raise
     
     # Initialize rate limiters
     rate_limiter = SlidingWindowRateLimiter(redis_client)
     global_cps_limiter = GlobalRateLimiter(redis_client, "global_cps", rate=100)
     
+    # Initialize TTS semaphore
+    tts_semaphore = asyncio.Semaphore(2)
+    
     # Initialize leader election
     cleanup_leader = LeaderElection(redis_client, "leader:cleanup", ttl=120)
     
-    # Import and initialize DialerManager
-    from ami_manager import DialerManager
-    dialer_manager = DialerManager(db_pool, redis_client)
-    await dialer_manager.ensure_connected()
+    # Initialize system enabled flag if not exists
+    if not await redis_client.exists("system_enabled"):
+        await redis_client.set("system_enabled", "true")
     
-    # Register signal handlers
+    # Initialize active calls counter
+    if not await redis_client.exists("active_calls"):
+        await redis_client.set("active_calls", "0")
+    
+    # Import and initialize DialerManager
+    try:
+        from ami_manager import DialerManager
+        dialer_manager = DialerManager(db_pool, redis_client)
+        await dialer_manager.ensure_connected()
+        logger.info("✅ AMI connected")
+    except Exception as e:
+        logger.error(f"AMI connection failed: {e}")
+        dialer_manager = None
+    
+    # Register signal handlers for graceful shutdown
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, lambda: asyncio.create_task(graceful_shutdown()))
@@ -176,10 +403,14 @@ async def lifespan(app: FastAPI):
     # Start background tasks
     asyncio.create_task(cleanup_old_audio_files())
     asyncio.create_task(process_retry_queue())
+    asyncio.create_task(update_metrics_periodically())
     
-    logger.info("=" * 50)
+    # Store start time for uptime calculation
+    app.state.start_time = start_time
+    
+    logger.info("=" * 60)
     logger.info("✅ AutoDialer Ultimate is ready!")
-    logger.info("=" * 50)
+    logger.info("=" * 60)
     
     yield
     
@@ -187,6 +418,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down gracefully...")
     await graceful_shutdown()
     logger.info("Shutdown complete")
+
 
 async def graceful_shutdown():
     """Graceful shutdown handler"""
@@ -227,6 +459,7 @@ async def graceful_shutdown():
     
     logger.info("Graceful shutdown complete")
 
+
 async def cleanup_old_audio_files():
     """Background task to cleanup old audio files"""
     while True:
@@ -244,17 +477,20 @@ async def cleanup_old_audio_files():
                         AND campaign_id IS NULL
                     """, retention_days)
                     
+                    cleaned = 0
                     for row in rows:
                         try:
                             if os.path.exists(row['file_path']):
                                 os.remove(row['file_path'])
                             await conn.execute("DELETE FROM audio_files WHERE id = $1", row['id'])
+                            cleaned += 1
                         except Exception as e:
                             logger.error(f"Failed to cleanup audio {row['id']}: {e}")
                     
-                    logger.info(f"Cleaned up {len(rows)} old audio files")
+                    logger.info(f"Cleaned up {cleaned} old audio files")
             finally:
                 await cleanup_leader.release()
+
 
 async def process_retry_queue():
     """Background task to process scheduled retries"""
@@ -266,33 +502,47 @@ async def process_retry_queue():
         
         try:
             async with db_pool.acquire() as conn:
-                rows = await conn.fetch("""
-                    SELECT cc.id, cc.campaign_id, c.phone, cc.retry_count
-                    FROM campaign_contacts cc
-                    JOIN contacts c ON cc.contact_id = c.id
-                    WHERE cc.next_retry_at IS NOT NULL 
-                    AND cc.next_retry_at <= NOW()
-                    LIMIT 50
-                    FOR UPDATE SKIP LOCKED
-                """)
-                
-                for row in rows:
-                    await conn.execute("""
-                        UPDATE campaign_contacts 
-                        SET next_retry_at = NULL
-                        WHERE id = $1
-                    """, row['id'])
+                async with conn.transaction():
+                    rows = await conn.fetch("""
+                        SELECT cc.id, cc.campaign_id, c.phone, cc.retry_count
+                        FROM campaign_contacts cc
+                        JOIN contacts c ON cc.contact_id = c.id
+                        WHERE cc.next_retry_at IS NOT NULL 
+                        AND cc.next_retry_at <= NOW()
+                        LIMIT 50
+                        FOR UPDATE SKIP LOCKED
+                    """)
                     
-                    await dialer_manager.start_call(
-                        row['phone'], 
-                        row['campaign_id'], 
-                        row['retry_count']
-                    )
-                
-                if rows:
-                    logger.debug(f"Processed {len(rows)} retry tasks")
+                    for row in rows:
+                        await conn.execute("""
+                            UPDATE campaign_contacts 
+                            SET next_retry_at = NULL
+                            WHERE id = $1
+                        """, row['id'])
+                        
+                        await dialer_manager.start_call(
+                            row['phone'], 
+                            row['campaign_id'], 
+                            row['retry_count']
+                        )
+                    
+                    if rows:
+                        logger.debug(f"Processed {len(rows)} retry tasks")
         except Exception as e:
             logger.error(f"Retry queue error: {e}")
+
+
+async def update_metrics_periodically():
+    """Update Prometheus metrics periodically"""
+    while True:
+        await asyncio.sleep(15)
+        try:
+            if dialer_manager:
+                active = await redis_client.scard(dialer_manager.active_channels_key)
+                active_calls_gauge.set(active)
+        except Exception as e:
+            logger.error(f"Metrics update error: {e}")
+
 
 # =============================================
 # FastAPI App
@@ -300,7 +550,9 @@ async def process_retry_queue():
 app = FastAPI(
     title="AutoDialer Ultimate API",
     version="3.0.0",
-    description="Enterprise-grade auto dialer system",
+    description="Enterprise-grade auto dialer system with advanced features",
+    docs_url="/docs",
+    redoc_url="/redoc",
     lifespan=lifespan
 )
 
@@ -312,6 +564,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # =============================================
 # Middleware
 # =============================================
@@ -322,18 +575,20 @@ async def middleware(request: Request, call_next):
     correlation_id_var.set(corr_id)
     
     # Rate limiting for API endpoints
-    if request.url.path.startswith("/api/") and request.url.path != "/api/health":
+    if request.url.path.startswith("/api/") and request.url.path not in ["/api/health", "/api/auth/login"]:
         client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
         if not client_ip:
             client_ip = request.headers.get("X-Real-IP", request.client.host)
         
-        if not await rate_limiter.check(f"rate_limit:{client_ip}", limit=200):
+        if rate_limiter and not await rate_limiter.check(f"rate_limit:{client_ip}", limit=200):
             http_requests.labels(method=request.method, endpoint=request.url.path, status=429).inc()
             return JSONResponse({"detail": "Rate limit exceeded"}, status_code=429)
     
     # Process request
+    start_time = time.time()
     response = await call_next(request)
     response.headers["X-Request-ID"] = corr_id
+    response.headers["X-Response-Time"] = f"{(time.time() - start_time)*1000:.2f}ms"
     
     # Metrics
     http_requests.labels(
@@ -344,27 +599,41 @@ async def middleware(request: Request, call_next):
     
     return response
 
+
 # =============================================
 # Health & Metrics
 # =============================================
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
-    status = {"status": "healthy", "components": {}, "version": "3.0.0"}
+    status = {
+        "status": "healthy",
+        "components": {},
+        "version": "3.0.0",
+        "timestamp": datetime.utcnow().isoformat()
+    }
     overall_healthy = True
     
     # Check database
     try:
-        await db_breaker.call(db_pool.fetchval, "SELECT 1")
-        status["components"]["database"] = "healthy"
+        if db_pool:
+            await db_breaker.call(db_pool.fetchval, "SELECT 1")
+            status["components"]["database"] = "healthy"
+        else:
+            status["components"]["database"] = "not_initialized"
+            overall_healthy = False
     except Exception as e:
         status["components"]["database"] = f"unhealthy: {str(e)[:50]}"
         overall_healthy = False
     
     # Check Redis
     try:
-        await redis_breaker.call(redis_client.ping)
-        status["components"]["redis"] = "healthy"
+        if redis_client:
+            await redis_breaker.call(redis_client.ping)
+            status["components"]["redis"] = "healthy"
+        else:
+            status["components"]["redis"] = "not_initialized"
+            overall_healthy = False
     except Exception as e:
         status["components"]["redis"] = f"unhealthy: {str(e)[:50]}"
         overall_healthy = False
@@ -373,18 +642,24 @@ async def health_check():
     if dialer_manager and dialer_manager.connected:
         status["components"]["ami"] = "healthy"
     else:
-        status["components"]["ami"] = "unhealthy"
+        status["components"]["ami"] = "unhealthy" if dialer_manager else "not_initialized"
         overall_healthy = False
     
     # Active calls
-    active = await redis_client.scard(dialer_manager.active_channels_key) if dialer_manager else 0
-    status["active_calls"] = active
-    status["max_calls"] = dialer_manager.max_calls if dialer_manager else 50
+    if dialer_manager:
+        active = await redis_client.scard(dialer_manager.active_channels_key)
+        status["active_calls"] = active
+        status["max_calls"] = dialer_manager.max_calls
+    
+    # Uptime
+    if hasattr(app.state, 'start_time'):
+        status["uptime_seconds"] = time.time() - app.state.start_time
     
     if not overall_healthy:
         status["status"] = "degraded"
     
     return status
+
 
 @app.get("/metrics")
 async def metrics(_: bool = Depends(verify_metrics_auth)):
@@ -393,6 +668,7 @@ async def metrics(_: bool = Depends(verify_metrics_auth)):
         active = await redis_client.scard(dialer_manager.active_channels_key)
         active_calls_gauge.set(active)
     return Response(generate_latest(), media_type="text/plain")
+
 
 # =============================================
 # Auth Endpoints
@@ -408,11 +684,20 @@ async def login(req: LoginRequest, request: Request):
     
     async with db_pool.acquire() as conn:
         user = await conn.fetchrow(
-            "SELECT id, username, password_hash, role, force_password_change FROM users WHERE username = $1",
+            """SELECT id, username, password_hash, role, force_password_change, is_active 
+               FROM users WHERE username = $1""",
             req.username
         )
         
-        if not user or not verify_password(req.password, user['password_hash']):
+        if not user:
+            await redis_client.incr(login_key)
+            await redis_client.expire(login_key, 300)
+            raise HTTPException(401, "Invalid credentials")
+        
+        if not user['is_active']:
+            raise HTTPException(403, "Account is disabled")
+        
+        if not verify_password(req.password, user['password_hash']):
             await redis_client.incr(login_key)
             await redis_client.expire(login_key, 300)
             raise HTTPException(401, "Invalid credentials")
@@ -421,7 +706,10 @@ async def login(req: LoginRequest, request: Request):
         await redis_client.delete(login_key)
         
         # Update last login
-        await conn.execute("UPDATE users SET last_login = NOW() WHERE id = $1", user['id'])
+        await conn.execute(
+            "UPDATE users SET last_login = NOW(), last_ip = $1 WHERE id = $2",
+            request.client.host, user['id']
+        )
         
         # Create tokens
         token_data = {
@@ -452,6 +740,7 @@ async def login(req: LoginRequest, request: Request):
             force_password_change=user['force_password_change']
         )
 
+
 @app.post("/api/auth/refresh")
 async def refresh(request: Request):
     """Refresh access token"""
@@ -460,7 +749,10 @@ async def refresh(request: Request):
         raise HTTPException(401, "Missing token")
     
     token = auth_header.replace("Bearer ", "")
-    payload = decode_token(token)
+    try:
+        payload = decode_token(token)
+    except Exception:
+        raise HTTPException(401, "Invalid token")
     
     if payload.get("type") != "refresh":
         raise HTTPException(401, "Invalid token type")
@@ -471,16 +763,20 @@ async def refresh(request: Request):
     
     async with db_pool.acquire() as conn:
         user = await conn.fetchrow(
-            "SELECT username, role FROM users WHERE id = $1",
+            "SELECT username, role, is_active FROM users WHERE id = $1",
             int(user_id)
         )
         if not user:
             raise HTTPException(401, "User not found")
         
+        if not user['is_active']:
+            raise HTTPException(403, "Account is disabled")
+        
         token_data = {"sub": user['username'], "role": user['role'], "user_id": int(user_id)}
         access_token = create_token(token_data, token_type="access")
         
         return {"access_token": access_token}
+
 
 @app.post("/api/auth/logout")
 async def logout(request: Request, user: TokenData = Depends(get_current_user)):
@@ -497,12 +793,10 @@ async def logout(request: Request, user: TokenData = Depends(get_current_user)):
     logger.info(f"User {user.username} logged out")
     return {"status": "logged_out"}
 
+
 @app.post("/api/auth/change-password")
 async def change_password(req: ChangePasswordRequest, user: TokenData = Depends(get_current_user)):
     """Change user password"""
-    if len(req.new_password) < 6:
-        raise HTTPException(400, "Password too short (min 6 chars)")
-    
     async with db_pool.acquire() as conn:
         u = await conn.fetchrow("SELECT password_hash FROM users WHERE id = $1", user.user_id)
         if not verify_password(req.old_password, u['password_hash']):
@@ -512,27 +806,65 @@ async def change_password(req: ChangePasswordRequest, user: TokenData = Depends(
             "UPDATE users SET password_hash = $1, force_password_change = FALSE WHERE id = $2",
             hash_password(req.new_password), user.user_id
         )
+        
+        await conn.execute("""
+            INSERT INTO audit_log (user_id, action, details)
+            VALUES ($1, $2, $3)
+        """, user.user_id, 'change_password', json.dumps({}))
     
     logger.info(f"Password changed for user {user.username}")
     return {"status": "changed"}
 
+
+@app.get("/api/auth/me")
+async def get_current_user_info(user: TokenData = Depends(get_current_user)):
+    """Get current user info"""
+    async with db_pool.acquire() as conn:
+        u = await conn.fetchrow(
+            """SELECT id, username, email, full_name, role, force_password_change, 
+                      is_active, last_login, created_at 
+               FROM users WHERE id = $1""",
+            user.user_id
+        )
+        return dict(u) if u else {}
+
+
 # =============================================
 # System Endpoints
 # =============================================
-@app.get("/api/system/status")
+@app.get("/api/system/status", response_model=SystemStatusResponse)
 async def system_status(user: TokenData = Depends(get_current_user)):
     """Get system status"""
     enabled = await redis_client.get("system_enabled") or "true"
     active = await redis_client.scard(dialer_manager.active_channels_key) if dialer_manager else 0
     
-    return {
-        "enabled": enabled == "true",
-        "active_calls": active,
-        "max_calls": dialer_manager.max_calls if dialer_manager else 50,
-        "ami_connected": dialer_manager.connected if dialer_manager else False,
-        "tasks_running": task_registry.get_count(),
-        "queue_size": await redis_client.llen("dial_queue")
-    }
+    # Check connections
+    redis_ok = False
+    db_ok = False
+    try:
+        await redis_client.ping()
+        redis_ok = True
+    except:
+        pass
+    
+    try:
+        await db_pool.fetchval("SELECT 1")
+        db_ok = True
+    except:
+        pass
+    
+    return SystemStatusResponse(
+        enabled=(enabled == "true"),
+        active_calls=active,
+        max_calls=dialer_manager.max_calls if dialer_manager else 50,
+        ami_connected=dialer_manager.connected if dialer_manager else False,
+        tasks_running=task_registry.get_count(),
+        queue_size=await redis_client.llen("dial_queue"),
+        redis_connected=redis_ok,
+        database_connected=db_ok,
+        uptime_seconds=time.time() - app.state.start_time if hasattr(app.state, 'start_time') else 0
+    )
+
 
 @app.post("/api/system/enable")
 async def system_enable(admin: TokenData = Depends(require_admin)):
@@ -549,6 +881,7 @@ async def system_enable(admin: TokenData = Depends(require_admin)):
     
     logger.warning(f"System enabled by {admin.username}")
     return {"status": "enabled"}
+
 
 @app.post("/api/system/disable")
 async def system_disable(admin: TokenData = Depends(require_admin)):
@@ -574,6 +907,7 @@ async def system_disable(admin: TokenData = Depends(require_admin)):
     logger.warning(f"System disabled by {admin.username}, killed {killed} calls")
     return {"status": "disabled", "killed_calls": killed}
 
+
 # =============================================
 # Campaign Endpoints
 # =============================================
@@ -581,41 +915,60 @@ async def system_disable(admin: TokenData = Depends(require_admin)):
 async def list_campaigns(
     skip: int = 0,
     limit: int = 100,
+    status: Optional[str] = None,
     user: TokenData = Depends(get_current_user)
 ):
     """List all campaigns"""
     async with db_pool.acquire() as conn:
-        rows = await conn.fetch("""
+        query = """
             SELECT c.*, 
                    COUNT(DISTINCT cc.contact_id) as total_contacts,
-                   COUNT(DISTINCT cr.id) as total_calls
+                   COUNT(DISTINCT cr.id) as total_calls,
+                   SUM(CASE WHEN cr.status = 'agreed' THEN 1 ELSE 0 END) as agreed_calls
             FROM campaigns c
             LEFT JOIN campaign_contacts cc ON c.id = cc.campaign_id
             LEFT JOIN call_results cr ON c.id = cr.campaign_id
-            GROUP BY c.id
-            ORDER BY c.created_at DESC
-            OFFSET $1 LIMIT $2
-        """, skip, limit)
+        """
+        params = []
+        if status:
+            query += " WHERE c.status = $1"
+            params.append(status)
+        
+        query += " GROUP BY c.id ORDER BY c.created_at DESC"
+        
+        if not status:
+            query += f" OFFSET ${len(params)+1} LIMIT ${len(params)+2}"
+            params.extend([skip, limit])
+        else:
+            query += f" OFFSET ${len(params)+1} LIMIT ${len(params)+2}"
+            params.extend([skip, limit])
+        
+        rows = await conn.fetch(query, *params)
+    
     return [dict(r) for r in rows]
+
 
 @app.post("/api/campaigns")
 async def create_campaign(c: CampaignCreate, user: TokenData = Depends(get_current_user)):
     """Create a new campaign"""
     async with db_pool.acquire() as conn:
         r = await conn.fetchrow("""
-            INSERT INTO campaigns (name, max_calls, cps, audio_id, retry_strategy)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO campaigns (name, description, max_calls, cps, audio_id, retry_strategy, schedule_start, schedule_end, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING id
-        """, c.name, c.max_calls, c.cps, c.audio_id, 
-           json.dumps(c.retry_strategy) if c.retry_strategy else None)
+        """, c.name, c.description, c.max_calls, c.cps, c.audio_id,
+           json.dumps(c.retry_strategy) if c.retry_strategy else None,
+           c.schedule_start, c.schedule_end, user.user_id)
         
         await conn.execute("""
-            INSERT INTO audit_log (user_id, action, details)
-            VALUES ($1, $2, $3)
-        """, user.user_id, 'create_campaign', json.dumps({"name": c.name}))
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, details)
+            VALUES ($1, $2, $3, $4, $5)
+        """, user.user_id, 'create_campaign', 'campaign', r['id'], json.dumps({"name": c.name}))
     
+    campaign_counter.inc()
     logger.info(f"Campaign created: {c.name} by {user.username}")
     return {"campaign_id": r['id']}
+
 
 @app.get("/api/campaigns/{campaign_id}")
 async def get_campaign(campaign_id: int, user: TokenData = Depends(get_current_user)):
@@ -630,9 +983,11 @@ async def get_campaign(campaign_id: int, user: TokenData = Depends(get_current_u
             SELECT 
                 COUNT(*) as total_calls,
                 SUM(CASE WHEN status = 'agreed' THEN 1 ELSE 0 END) as agreed,
+                SUM(CASE WHEN status = 'declined' THEN 1 ELSE 0 END) as declined,
                 SUM(CASE WHEN status = 'busy' THEN 1 ELSE 0 END) as busy,
                 SUM(CASE WHEN status = 'noanswer' THEN 1 ELSE 0 END) as noanswer,
-                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+                SUM(CASE WHEN status = 'timeout' THEN 1 ELSE 0 END) as timeout
             FROM call_results
             WHERE campaign_id = $1
         """, campaign_id)
@@ -647,6 +1002,64 @@ async def get_campaign(campaign_id: int, user: TokenData = Depends(get_current_u
             "stats": dict(stats) if stats else {},
             "contacts_count": contacts_count
         }
+
+
+@app.patch("/api/campaigns/{campaign_id}")
+async def update_campaign(
+    campaign_id: int,
+    c: CampaignUpdate,
+    user: TokenData = Depends(get_current_user)
+):
+    """Update campaign"""
+    async with db_pool.acquire() as conn:
+        camp = await conn.fetchrow("SELECT * FROM campaigns WHERE id = $1", campaign_id)
+        if not camp:
+            raise HTTPException(404, "Campaign not found")
+        
+        # Build update query
+        updates = []
+        params = []
+        param_idx = 1
+        
+        if c.name is not None:
+            updates.append(f"name = ${param_idx}")
+            params.append(c.name)
+            param_idx += 1
+        if c.description is not None:
+            updates.append(f"description = ${param_idx}")
+            params.append(c.description)
+            param_idx += 1
+        if c.max_calls is not None:
+            updates.append(f"max_calls = ${param_idx}")
+            params.append(c.max_calls)
+            param_idx += 1
+        if c.cps is not None:
+            updates.append(f"cps = ${param_idx}")
+            params.append(c.cps)
+            param_idx += 1
+        if c.audio_id is not None:
+            updates.append(f"audio_id = ${param_idx}")
+            params.append(c.audio_id)
+            param_idx += 1
+        if c.retry_strategy is not None:
+            updates.append(f"retry_strategy = ${param_idx}")
+            params.append(json.dumps(c.retry_strategy))
+            param_idx += 1
+        
+        if updates:
+            updates.append(f"updated_at = NOW()")
+            params.append(campaign_id)
+            query = f"UPDATE campaigns SET {', '.join(updates)} WHERE id = ${param_idx}"
+            await conn.execute(query, *params)
+            
+            await conn.execute("""
+                INSERT INTO audit_log (user_id, action, entity_type, entity_id, details)
+                VALUES ($1, $2, $3, $4, $5)
+            """, user.user_id, 'update_campaign', 'campaign', campaign_id, json.dumps(updates))
+    
+    logger.info(f"Campaign {campaign_id} updated by {user.username}")
+    return {"status": "updated"}
+
 
 @app.post("/api/campaigns/{campaign_id}/start")
 async def start_campaign(
@@ -690,13 +1103,11 @@ async def start_campaign(
                 WHERE cc.campaign_id = $1 AND NOT c.blacklisted
             """, campaign_id)
             
-            # Get retry strategy
-            retry_strategy = camp['retry_strategy'] or {"busy": 2, "noanswer": 3, "failed": 1}
-            
             await conn.execute("""
-                INSERT INTO audit_log (user_id, action, details)
-                VALUES ($1, $2, $3)
-            """, user.user_id, 'start_campaign', json.dumps({"campaign_id": campaign_id, "contacts": len(contacts)}))
+                INSERT INTO audit_log (user_id, action, entity_type, entity_id, details)
+                VALUES ($1, $2, $3, $4, $5)
+            """, user.user_id, 'start_campaign', 'campaign', campaign_id,
+               json.dumps({"contacts": len(contacts)}))
         
         # Update dialer settings
         if dialer_manager:
@@ -706,6 +1117,7 @@ async def start_campaign(
         # Dial function
         async def dial():
             bucket = TokenBucket(camp['cps'])
+            processed = 0
             for contact in contacts:
                 # Check system status
                 if not dialer_manager or not dialer_manager.running:
@@ -717,6 +1129,7 @@ async def start_campaign(
                 
                 await bucket.acquire()
                 await dialer_manager.start_call(contact['phone'], campaign_id, contact['retry_count'])
+                processed += 1
             
             # Update campaign status
             async with db_pool.acquire() as conn:
@@ -725,7 +1138,7 @@ async def start_campaign(
                     campaign_id
                 )
             
-            logger.info(f"Campaign {campaign_id} completed")
+            logger.info(f"Campaign {campaign_id} completed, processed {processed} calls")
         
         # Start background task
         task_id = f"campaign_{campaign_id}"
@@ -737,6 +1150,7 @@ async def start_campaign(
     
     finally:
         await redis_client.delete(lock_key)
+
 
 @app.post("/api/campaigns/{campaign_id}/stop")
 async def stop_campaign(campaign_id: int, admin: TokenData = Depends(require_admin)):
@@ -750,41 +1164,67 @@ async def stop_campaign(campaign_id: int, admin: TokenData = Depends(require_adm
         )
         
         await conn.execute("""
-            INSERT INTO audit_log (user_id, action, details)
-            VALUES ($1, $2, $3)
-        """, admin.user_id, 'stop_campaign', json.dumps({"campaign_id": campaign_id}))
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, details)
+            VALUES ($1, $2, $3, $4, $5)
+        """, admin.user_id, 'stop_campaign', 'campaign', campaign_id, json.dumps({}))
     
     logger.info(f"Campaign {campaign_id} stopped by {admin.username}")
     return {"status": "stopped"}
+
 
 @app.delete("/api/campaigns/{campaign_id}")
 async def delete_campaign(campaign_id: int, admin: TokenData = Depends(require_admin)):
     """Delete a campaign (admin only)"""
     async with db_pool.acquire() as conn:
+        # Check if running
+        camp = await conn.fetchrow("SELECT status FROM campaigns WHERE id = $1", campaign_id)
+        if camp and camp['status'] == 'running':
+            raise HTTPException(400, "Cannot delete running campaign")
+        
         await conn.execute("DELETE FROM campaign_contacts WHERE campaign_id = $1", campaign_id)
         await conn.execute("DELETE FROM campaigns WHERE id = $1", campaign_id)
         
         await conn.execute("""
-            INSERT INTO audit_log (user_id, action, details)
-            VALUES ($1, $2, $3)
-        """, admin.user_id, 'delete_campaign', json.dumps({"campaign_id": campaign_id}))
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, details)
+            VALUES ($1, $2, $3, $4, $5)
+        """, admin.user_id, 'delete_campaign', 'campaign', campaign_id, json.dumps({}))
     
     logger.info(f"Campaign {campaign_id} deleted by {admin.username}")
     return {"status": "deleted"}
 
+
 # =============================================
 # Stats Endpoints
 # =============================================
-@app.get("/api/stats")
-async def get_stats(user: TokenData = Depends(get_current_user)):
+@app.get("/api/stats", response_model=StatsResponse)
+async def get_stats(
+    campaign_id: Optional[int] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    user: TokenData = Depends(get_current_user)
+):
     """Get overall statistics"""
     async with db_pool.acquire() as conn:
-        total = await conn.fetchval("SELECT COUNT(*) FROM call_results")
-        agreed = await conn.fetchval("SELECT COUNT(*) FROM call_results WHERE status = 'agreed'")
-        busy = await conn.fetchval("SELECT COUNT(*) FROM call_results WHERE status = 'busy'")
-        noanswer = await conn.fetchval("SELECT COUNT(*) FROM call_results WHERE status = 'noanswer'")
-        failed = await conn.fetchval("SELECT COUNT(*) FROM call_results WHERE status = 'failed'")
-        today = await conn.fetchval("SELECT COUNT(*) FROM call_results WHERE created_at::date = CURRENT_DATE")
+        query = "SELECT status, COUNT(*) as count FROM call_results WHERE 1=1"
+        params = []
+        
+        if campaign_id:
+            query += " AND campaign_id = $1"
+            params.append(campaign_id)
+        if from_date:
+            query += f" AND created_at >= ${len(params)+1}"
+            params.append(from_date)
+        if to_date:
+            query += f" AND created_at <= ${len(params)+1}"
+            params.append(to_date)
+        
+        query += " GROUP BY status"
+        rows = await conn.fetch(query, *params)
+        
+        stats = {row['status']: row['count'] for row in rows}
+        
+        total = sum(stats.values())
+        agreed = stats.get('agreed', 0)
         
         # Daily stats for last 7 days
         daily = await conn.fetch("""
@@ -797,17 +1237,25 @@ async def get_stats(user: TokenData = Depends(get_current_user)):
             GROUP BY DATE(created_at)
             ORDER BY date DESC
         """)
+        
+        # Today's calls
+        today = await conn.fetchval("""
+            SELECT COUNT(*) FROM call_results WHERE created_at::date = CURRENT_DATE
+        """)
     
-    return {
-        "total_calls": total or 0,
-        "agreed": agreed or 0,
-        "busy": busy or 0,
-        "noanswer": noanswer or 0,
-        "failed": failed or 0,
-        "today_calls": today or 0,
-        "conversion_rate": round(agreed / total * 100, 2) if total else 0,
-        "daily": [dict(d) for d in daily]
-    }
+    return StatsResponse(
+        total_calls=total,
+        agreed=agreed,
+        declined=stats.get('declined', 0),
+        busy=stats.get('busy', 0),
+        noanswer=stats.get('noanswer', 0),
+        failed=stats.get('failed', 0),
+        timeout=stats.get('timeout', 0),
+        today_calls=today or 0,
+        conversion_rate=round(agreed / total * 100, 2) if total > 0 else 0,
+        daily=[dict(d) for d in daily]
+    )
+
 
 @app.get("/api/history")
 async def get_history(
@@ -815,9 +1263,10 @@ async def get_history(
     limit: int = 100,
     campaign_id: Optional[int] = None,
     status: Optional[str] = None,
+    phone: Optional[str] = None,
     user: TokenData = Depends(get_current_user)
 ):
-    """Get call history"""
+    """Get call history with filters"""
     async with db_pool.acquire() as conn:
         query = """
             SELECT cr.*, c.name as campaign_name, ct.phone
@@ -839,14 +1288,39 @@ async def get_history(
             params.append(status)
             param_idx += 1
         
+        if phone:
+            query += f" AND ct.phone LIKE ${param_idx}"
+            params.append(f"%{phone}%")
+            param_idx += 1
+        
         query += " ORDER BY cr.created_at DESC"
         query += f" LIMIT ${param_idx} OFFSET ${param_idx+1}"
         params.extend([limit, skip])
         
         rows = await conn.fetch(query, *params)
-        total = await conn.fetchval("SELECT COUNT(*) FROM call_results")
+        
+        # Total count
+        count_query = "SELECT COUNT(*) FROM call_results cr LEFT JOIN contacts ct ON cr.contact_id = ct.id WHERE 1=1"
+        count_params = []
+        c_idx = 1
+        
+        if campaign_id:
+            count_query += f" AND cr.campaign_id = ${c_idx}"
+            count_params.append(campaign_id)
+            c_idx += 1
+        if status:
+            count_query += f" AND cr.status = ${c_idx}"
+            count_params.append(status)
+            c_idx += 1
+        if phone:
+            count_query += f" AND ct.phone LIKE ${c_idx}"
+            count_params.append(f"%{phone}%")
+            c_idx += 1
+        
+        total = await conn.fetchval(count_query, *count_params)
     
     return {"history": [dict(r) for r in rows], "total": total}
+
 
 # =============================================
 # Contacts Endpoints
@@ -855,19 +1329,68 @@ async def get_history(
 async def list_contacts(
     skip: int = 0,
     limit: int = 100,
+    group_id: Optional[int] = None,
+    search: Optional[str] = None,
     user: TokenData = Depends(get_current_user)
 ):
     """List contacts"""
     async with db_pool.acquire() as conn:
-        rows = await conn.fetch("""
-            SELECT * FROM contacts 
-            WHERE NOT blacklisted
-            ORDER BY created_at DESC 
-            OFFSET $1 LIMIT $2
-        """, skip, limit)
-        total = await conn.fetchval("SELECT COUNT(*) FROM contacts WHERE NOT blacklisted")
+        query = "SELECT * FROM contacts WHERE NOT blacklisted"
+        params = []
+        param_idx = 1
+        
+        if group_id:
+            query += f" AND group_id = ${param_idx}"
+            params.append(group_id)
+            param_idx += 1
+        
+        if search:
+            query += f" AND (phone LIKE ${param_idx} OR name LIKE ${param_idx})"
+            params.append(f"%{search}%")
+            param_idx += 1
+        
+        query += f" ORDER BY created_at DESC OFFSET ${param_idx} LIMIT ${param_idx+1}"
+        params.extend([skip, limit])
+        
+        rows = await conn.fetch(query, *params)
+        
+        # Total count
+        count_query = "SELECT COUNT(*) FROM contacts WHERE NOT blacklisted"
+        count_params = []
+        c_idx = 1
+        if group_id:
+            count_query += f" AND group_id = ${c_idx}"
+            count_params.append(group_id)
+            c_idx += 1
+        if search:
+            count_query += f" AND (phone LIKE ${c_idx} OR name LIKE ${c_idx})"
+            count_params.append(f"%{search}%")
+        
+        total = await conn.fetchval(count_query, *count_params)
     
     return {"contacts": [dict(r) for r in rows], "total": total}
+
+
+@app.post("/api/contacts")
+async def create_contact(c: ContactCreate, user: TokenData = Depends(get_current_user)):
+    """Create a single contact"""
+    async with db_pool.acquire() as conn:
+        phone = re.sub(r'[^\d]', '', c.phone)
+        
+        r = await conn.fetchrow("""
+            INSERT INTO contacts (phone, name, email, group_id, tags, custom_fields)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (phone) DO UPDATE SET 
+                name = EXCLUDED.name,
+                email = EXCLUDED.email,
+                updated_at = NOW()
+            RETURNING id
+        """, phone, c.name, c.email, c.group_id, c.tags, json.dumps(c.custom_fields) if c.custom_fields else None)
+        
+        contact_counter.inc()
+    
+    return {"id": r['id'], "phone": phone}
+
 
 @app.post("/api/contacts/import")
 async def import_contacts(
@@ -877,8 +1400,15 @@ async def import_contacts(
     """Import contacts"""
     imported = 0
     skipped = 0
+    blacklisted = 0
     
     async with db_pool.acquire() as conn:
+        # Check blacklist
+        blacklisted_phones = set()
+        blacklist_rows = await conn.fetch("SELECT phone FROM blacklist")
+        for row in blacklist_rows:
+            blacklisted_phones.add(row['phone'])
+        
         for contact in import_data.contacts:
             phone = contact.get('phone', '').strip()
             if not phone:
@@ -896,29 +1426,81 @@ async def import_contacts(
                 skipped += 1
                 continue
             
+            # Check blacklist
+            if phone in blacklisted_phones:
+                blacklisted += 1
+                continue
+            
             try:
                 await conn.execute("""
                     INSERT INTO contacts (phone, name, group_id)
                     VALUES ($1, $2, $3)
-                    ON CONFLICT (phone) DO UPDATE SET name = EXCLUDED.name
+                    ON CONFLICT (phone) DO UPDATE SET 
+                        name = EXCLUDED.name,
+                        group_id = EXCLUDED.group_id,
+                        updated_at = NOW()
                 """, phone, contact.get('name', ''), import_data.group_id)
                 imported += 1
             except Exception as e:
                 logger.error(f"Failed to import {phone}: {e}")
                 skipped += 1
     
-    logger.info(f"Contacts imported by {user.username}: {imported} imported, {skipped} skipped")
-    return {"imported": imported, "skipped": skipped}
+    contact_counter.inc(imported)
+    logger.info(f"Contacts imported by {user.username}: {imported} imported, {skipped} skipped, {blacklisted} blacklisted")
+    return {"imported": imported, "skipped": skipped, "blacklisted": blacklisted}
+
+
+@app.post("/api/contacts/assign")
+async def assign_contacts_to_campaign(
+    campaign_id: int,
+    contact_ids: List[int],
+    user: TokenData = Depends(get_current_user)
+):
+    """Assign contacts to campaign"""
+    async with db_pool.acquire() as conn:
+        # Check campaign exists
+        camp = await conn.fetchval("SELECT id FROM campaigns WHERE id = $1", campaign_id)
+        if not camp:
+            raise HTTPException(404, "Campaign not found")
+        
+        assigned = 0
+        for cid in contact_ids:
+            try:
+                await conn.execute("""
+                    INSERT INTO campaign_contacts (campaign_id, contact_id)
+                    VALUES ($1, $2)
+                    ON CONFLICT DO NOTHING
+                """, campaign_id, cid)
+                assigned += 1
+            except:
+                pass
+    
+    logger.info(f"Assigned {assigned} contacts to campaign {campaign_id} by {user.username}")
+    return {"assigned": assigned}
+
 
 # =============================================
 # Blacklist Endpoints
 # =============================================
 @app.get("/api/blacklist")
-async def list_blacklist(user: TokenData = Depends(get_current_user)):
+async def list_blacklist(
+    skip: int = 0,
+    limit: int = 100,
+    user: TokenData = Depends(get_current_user)
+):
     """List blacklisted numbers"""
     async with db_pool.acquire() as conn:
-        rows = await conn.fetch("SELECT * FROM blacklist ORDER BY created_at DESC")
-    return [dict(r) for r in rows]
+        rows = await conn.fetch("""
+            SELECT b.*, u.username as created_by_name
+            FROM blacklist b
+            LEFT JOIN users u ON b.created_by = u.id
+            ORDER BY b.created_at DESC
+            OFFSET $1 LIMIT $2
+        """, skip, limit)
+        total = await conn.fetchval("SELECT COUNT(*) FROM blacklist")
+    
+    return {"blacklist": [dict(r) for r in rows], "total": total}
+
 
 @app.post("/api/blacklist")
 async def add_to_blacklist(
@@ -932,14 +1514,20 @@ async def add_to_blacklist(
         await conn.execute("""
             INSERT INTO blacklist (phone, reason, created_by)
             VALUES ($1, $2, $3)
-            ON CONFLICT (phone) DO NOTHING
+            ON CONFLICT (phone) DO UPDATE SET reason = EXCLUDED.reason
         """, phone, data.reason, user.user_id)
         
         # Mark contact as blacklisted
         await conn.execute("UPDATE contacts SET blacklisted = TRUE WHERE phone = $1", phone)
+        
+        await conn.execute("""
+            INSERT INTO audit_log (user_id, action, details)
+            VALUES ($1, $2, $3)
+        """, user.user_id, 'add_blacklist', json.dumps({"phone": phone}))
     
     logger.info(f"Number {phone} blacklisted by {user.username}")
     return {"status": "blacklisted", "phone": phone}
+
 
 @app.delete("/api/blacklist/{phone}")
 async def remove_from_blacklist(phone: str, admin: TokenData = Depends(require_admin)):
@@ -949,9 +1537,15 @@ async def remove_from_blacklist(phone: str, admin: TokenData = Depends(require_a
     async with db_pool.acquire() as conn:
         await conn.execute("DELETE FROM blacklist WHERE phone = $1", phone)
         await conn.execute("UPDATE contacts SET blacklisted = FALSE WHERE phone = $1", phone)
+        
+        await conn.execute("""
+            INSERT INTO audit_log (user_id, action, details)
+            VALUES ($1, $2, $3)
+        """, admin.user_id, 'remove_blacklist', json.dumps({"phone": phone}))
     
     logger.info(f"Number {phone} removed from blacklist by {admin.username}")
     return {"status": "removed"}
+
 
 # =============================================
 # Audio Endpoints
@@ -965,16 +1559,19 @@ async def generate_audio(
     if len(req.text) > 500:
         raise HTTPException(400, "Text too long (max 500 chars)")
     
-    # Safe filename
-    safe_name = re.sub(r'[^\w\-]', '_', req.name)
-    filename = f"audio_{int(datetime.now().timestamp())}_{safe_name}"
-    wav_path = f"/var/lib/asterisk/sounds/tts/{filename}.wav"
-    sln_path = f"/var/lib/asterisk/sounds/tts/{filename}.sln"
-    
-    voice = req.voice if req.voice in ['denis', 'irina'] else 'denis'
-    model = f"/var/lib/asterisk/sounds/tts/models/ru_RU-{voice}-medium.onnx"
+    if tts_semaphore:
+        await tts_semaphore.acquire()
     
     try:
+        # Safe filename
+        safe_name = re.sub(r'[^\w\-]', '_', req.name)
+        filename = f"audio_{int(datetime.now().timestamp())}_{safe_name}"
+        wav_path = f"/var/lib/asterisk/sounds/tts/{filename}.wav"
+        sln_path = f"/var/lib/asterisk/sounds/tts/{filename}.sln"
+        
+        voice = req.voice if req.voice in ['denis', 'irina'] else 'denis'
+        model = f"/var/lib/asterisk/sounds/tts/models/ru_RU-{voice}-medium.onnx"
+        
         # Generate TTS
         result = subprocess.run(
             ["/usr/local/bin/piper", "--model", model, "--output_file", wav_path],
@@ -992,26 +1589,95 @@ async def generate_audio(
             timeout=10
         )
         if result.returncode != 0:
+            os.remove(wav_path)
             raise HTTPException(500, f"Conversion failed: {result.stderr.decode()[:200]}")
         
         # Cleanup WAV
         os.remove(wav_path)
         
+        # Get file size
+        file_size = os.path.getsize(sln_path) if os.path.exists(sln_path) else 0
+        
+        async with db_pool.acquire() as conn:
+            r = await conn.fetchrow("""
+                INSERT INTO audio_files (name, file_path, file_size, format, campaign_id, created_by)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING id
+            """, req.name, sln_path, file_size, 'sln', req.campaign_id, user.user_id)
+        
+        audio_generation_counter.inc()
+        logger.info(f"Audio generated: {req.name} by {user.username}")
+        return {"id": r['id'], "name": req.name, "path": sln_path, "size": file_size}
+    
     except subprocess.TimeoutExpired:
         raise HTTPException(500, "TTS generation timeout")
+    finally:
+        if tts_semaphore:
+            tts_semaphore.release()
+
+
+@app.post("/api/audio/upload")
+async def upload_audio(
+    file: UploadFile = File(...),
+    name: str = Form(...),
+    campaign_id: Optional[int] = Form(None),
+    user: TokenData = Depends(get_current_user)
+):
+    """Upload audio file"""
+    MAX_SIZE = 10 * 1024 * 1024  # 10MB
+    
+    # Check extension
+    if not file.filename.lower().endswith(('.wav', '.mp3')):
+        raise HTTPException(400, "Only WAV and MP3 files allowed")
+    
+    # Safe filename
+    safe_name = re.sub(r'[^\w\-\.]', '_', file.filename)
+    filename = f"upload_{int(datetime.now().timestamp())}_{safe_name}"
+    upload_path = f"/var/lib/asterisk/sounds/tts/{filename}"
+    
+    # Streaming write
+    total_size = 0
+    with open(upload_path, "wb") as f:
+        while chunk := await file.read(1024 * 64):
+            total_size += len(chunk)
+            if total_size > MAX_SIZE:
+                f.close()
+                os.remove(upload_path)
+                raise HTTPException(400, f"File too large. Max size: {MAX_SIZE // 1024 // 1024}MB")
+            f.write(chunk)
+    
+    # Convert to SLN
+    sln_path = upload_path.rsplit('.', 1)[0] + '.sln'
+    result = subprocess.run(
+        ["/usr/bin/sox", upload_path, "-r", "8000", "-c", "1", sln_path],
+        capture_output=True,
+        timeout=30
+    )
+    
+    if result.returncode != 0:
+        os.remove(upload_path)
+        raise HTTPException(500, f"Conversion failed: {result.stderr.decode()[:200]}")
+    
+    os.remove(upload_path)
+    file_size = os.path.getsize(sln_path)
     
     async with db_pool.acquire() as conn:
         r = await conn.fetchrow("""
-            INSERT INTO audio_files (name, file_path, campaign_id, created_by)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO audio_files (name, file_path, file_size, format, campaign_id, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id
-        """, req.name, sln_path, req.campaign_id, user.user_id)
+        """, name, sln_path, file_size, 'sln', campaign_id, user.user_id)
     
-    logger.info(f"Audio generated: {req.name} by {user.username}")
-    return {"id": r['id'], "name": req.name, "path": sln_path}
+    logger.info(f"Audio uploaded: {name} by {user.username}")
+    return {"id": r['id'], "name": name, "path": sln_path, "size": file_size}
+
 
 @app.get("/api/audio")
-async def list_audio(user: TokenData = Depends(get_current_user)):
+async def list_audio(
+    skip: int = 0,
+    limit: int = 50,
+    user: TokenData = Depends(get_current_user)
+):
     """List audio files"""
     async with db_pool.acquire() as conn:
         rows = await conn.fetch("""
@@ -1020,8 +1686,12 @@ async def list_audio(user: TokenData = Depends(get_current_user)):
             LEFT JOIN users u ON a.created_by = u.id
             LEFT JOIN campaigns c ON a.campaign_id = c.id
             ORDER BY a.created_at DESC
-        """)
-    return [dict(r) for r in rows]
+            OFFSET $1 LIMIT $2
+        """, skip, limit)
+        total = await conn.fetchval("SELECT COUNT(*) FROM audio_files")
+    
+    return {"audio": [dict(r) for r in rows], "total": total}
+
 
 @app.delete("/api/audio/{audio_id}")
 async def delete_audio(audio_id: int, user: TokenData = Depends(get_current_user)):
@@ -1051,6 +1721,7 @@ async def delete_audio(audio_id: int, user: TokenData = Depends(get_current_user
     logger.info(f"Audio {audio_id} deleted by {user.username}")
     return {"status": "deleted"}
 
+
 # =============================================
 # Users Endpoints (Admin only)
 # =============================================
@@ -1063,7 +1734,8 @@ async def list_users(
     """List all users"""
     async with db_pool.acquire() as conn:
         rows = await conn.fetch("""
-            SELECT id, username, role, force_password_change, last_login, created_at
+            SELECT id, username, email, full_name, role, force_password_change, 
+                   is_active, last_login, created_at
             FROM users
             ORDER BY id
             OFFSET $1 LIMIT $2
@@ -1072,22 +1744,20 @@ async def list_users(
     
     return {"users": [dict(r) for r in rows], "total": total}
 
+
 @app.post("/api/users")
 async def create_user(
     req: UserCreate,
     admin: TokenData = Depends(require_admin)
 ):
     """Create a new user"""
-    if len(req.password) < 6:
-        raise HTTPException(400, "Password too short (min 6 chars)")
-    
     async with db_pool.acquire() as conn:
         try:
             r = await conn.fetchrow("""
-                INSERT INTO users (username, password_hash, role)
-                VALUES ($1, $2, $3)
+                INSERT INTO users (username, password_hash, email, full_name, role)
+                VALUES ($1, $2, $3, $4, $5)
                 RETURNING id
-            """, req.username, hash_password(req.password), req.role)
+            """, req.username, hash_password(req.password), req.email, req.full_name, req.role)
             
             await conn.execute("""
                 INSERT INTO audit_log (user_id, action, details)
@@ -1098,6 +1768,7 @@ async def create_user(
             return {"id": r['id'], "username": req.username}
         except asyncpg.UniqueViolationError:
             raise HTTPException(400, "Username already exists")
+
 
 @app.put("/api/users/{user_id}")
 async def update_user(
@@ -1110,16 +1781,38 @@ async def update_user(
         raise HTTPException(403, "Cannot modify default admin")
     
     async with db_pool.acquire() as conn:
-        if req.password:
-            if len(req.password) < 6:
-                raise HTTPException(400, "Password too short")
-            await conn.execute(
-                "UPDATE users SET password_hash = $1, force_password_change = TRUE WHERE id = $2",
-                hash_password(req.password), user_id
-            )
+        updates = []
+        params = []
+        param_idx = 1
         
-        if req.role:
-            await conn.execute("UPDATE users SET role = $1 WHERE id = $2", req.role, user_id)
+        if req.password:
+            updates.append(f"password_hash = ${param_idx}")
+            params.append(hash_password(req.password))
+            param_idx += 1
+            updates.append(f"force_password_change = ${param_idx}")
+            params.append(True)
+            param_idx += 1
+        if req.email is not None:
+            updates.append(f"email = ${param_idx}")
+            params.append(req.email)
+            param_idx += 1
+        if req.full_name is not None:
+            updates.append(f"full_name = ${param_idx}")
+            params.append(req.full_name)
+            param_idx += 1
+        if req.role is not None:
+            updates.append(f"role = ${param_idx}")
+            params.append(req.role)
+            param_idx += 1
+        if req.is_active is not None:
+            updates.append(f"is_active = ${param_idx}")
+            params.append(req.is_active)
+            param_idx += 1
+        
+        if updates:
+            params.append(user_id)
+            query = f"UPDATE users SET {', '.join(updates)} WHERE id = ${param_idx}"
+            await conn.execute(query, *params)
         
         await conn.execute("""
             INSERT INTO audit_log (user_id, action, details)
@@ -1128,6 +1821,7 @@ async def update_user(
     
     logger.info(f"User {user_id} updated by {admin.username}")
     return {"status": "updated"}
+
 
 @app.delete("/api/users/{user_id}")
 async def delete_user(user_id: int, admin: TokenData = Depends(require_admin)):
@@ -1146,6 +1840,7 @@ async def delete_user(user_id: int, admin: TokenData = Depends(require_admin)):
     logger.info(f"User {user_id} deleted by {admin.username}")
     return {"status": "deleted"}
 
+
 # =============================================
 # Settings Endpoints
 # =============================================
@@ -1153,25 +1848,34 @@ async def delete_user(user_id: int, admin: TokenData = Depends(require_admin)):
 async def get_settings(user: TokenData = Depends(get_current_user)):
     """Get system settings"""
     async with db_pool.acquire() as conn:
-        rows = await conn.fetch("SELECT key, value, description FROM settings")
-    return {r['key']: {"value": r['value'], "description": r['description']} for r in rows}
+        if user.role == 'admin':
+            rows = await conn.fetch("SELECT key, value, description, category, is_public FROM settings")
+        else:
+            rows = await conn.fetch("SELECT key, value, description, category FROM settings WHERE is_public = TRUE")
+    
+    return {r['key']: {
+        "value": r['value'],
+        "description": r['description'],
+        "category": r['category']
+    } for r in rows}
+
 
 @app.put("/api/settings/{key}")
 async def update_setting(
     key: str,
-    req: SettingsUpdate,
+    req: SettingUpdate,
     admin: TokenData = Depends(require_admin)
 ):
     """Update setting"""
     async with db_pool.acquire() as conn:
         await conn.execute("""
-            UPDATE settings SET value = $1, updated_at = NOW() WHERE key = $2
-        """, req.value, key)
+            UPDATE settings SET value = $1, updated_at = NOW(), updated_by = $3 WHERE key = $2
+        """, req.value, key, admin.user_id)
         
         await conn.execute("""
             INSERT INTO audit_log (user_id, action, details)
             VALUES ($1, $2, $3)
-        """, admin.user_id, 'update_setting', json.dumps({"key": key, "value": req.value}))
+        """, admin.user_id, 'update_setting', json.dumps({"key": key}))
         
         # Apply setting immediately
         if key == 'global_max_calls' and dialer_manager:
@@ -1179,8 +1883,50 @@ async def update_setting(
         elif key == 'default_cps' and dialer_manager:
             dialer_manager.cps_limiter.rate = int(req.value)
     
-    logger.info(f"Setting {key} updated to {req.value} by {admin.username}")
+    logger.info(f"Setting {key} updated by {admin.username}")
     return {"status": "updated"}
+
+
+# =============================================
+# Audit Log Endpoints (Admin only)
+# =============================================
+@app.get("/api/audit")
+async def get_audit_log(
+    skip: int = 0,
+    limit: int = 100,
+    user_id: Optional[int] = None,
+    action: Optional[str] = None,
+    admin: TokenData = Depends(require_admin)
+):
+    """Get audit log"""
+    async with db_pool.acquire() as conn:
+        query = """
+            SELECT a.*, u.username
+            FROM audit_log a
+            LEFT JOIN users u ON a.user_id = u.id
+            WHERE 1=1
+        """
+        params = []
+        param_idx = 1
+        
+        if user_id:
+            query += f" AND a.user_id = ${param_idx}"
+            params.append(user_id)
+            param_idx += 1
+        if action:
+            query += f" AND a.action = ${param_idx}"
+            params.append(action)
+            param_idx += 1
+        
+        query += " ORDER BY a.created_at DESC"
+        query += f" LIMIT ${param_idx} OFFSET ${param_idx+1}"
+        params.extend([limit, skip])
+        
+        rows = await conn.fetch(query, *params)
+        total = await conn.fetchval("SELECT COUNT(*) FROM audit_log")
+    
+    return {"audit_log": [dict(r) for r in rows], "total": total}
+
 
 # =============================================
 # Static Files
