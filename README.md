@@ -106,3 +106,10 @@ autodialer-ultimate/
     ├── API.md
     └── FAQ.md
 ```
+🛠️ Helper Scripts
+Скрипт	Назначение
+``bash
+autodialer-fail2ban-status	Статус всех jail
+autodialer-fail2ban-unban	Разбанить IP
+autodialer-fail2ban-ban	        Забанить IP вручную
+``
