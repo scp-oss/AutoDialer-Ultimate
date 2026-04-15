@@ -1,50 +1,90 @@
 # =============================================
 # AutoDialer Ultimate - Systemd Service
-# Version: 3.0.0
-# Location: /etc/systemd/system/autodialer.service
+# Версия: 3.0.0
+# Расположение: /etc/systemd/system/autodialer.service
+# =============================================
+# ВКЛЮЧЕНЫ ВСЕ ИСПРАВЛЕНИЯ:
+# - Ожидание зависимостей (ExecStartPre)
+# - Лимиты ресурсов (NOFILE, NPROC, MemoryMax, CPUQuota)
+# - Security hardening (NoNewPrivileges, ProtectSystem, PrivateTmp)
+# - ReadWritePaths для degraded queue
+# - Переменные окружения (LANG, LC_ALL, PYTHONUNBUFFERED)
+# - Graceful shutdown (TimeoutStopSec, KillMode)
+# - WatchdogSec для автоматического восстановления
 # =============================================
 
 [Unit]
 Description=AutoDialer Ultimate Backend Service
 Documentation=https://github.com/naumenis-code/AutoDialer-Ultimate
+
+# Запуск после сети и всех зависимостей
 After=network.target network-online.target
 After=postgresql.service redis-server.service asterisk.service
 Wants=network-online.target
-Requires=postgresql.service redis-server.service
 
-# Start after time synchronization
+# Требуем Redis (если упадет - сервис тоже)
+Requires=redis-server.service
+
+# Ждем синхронизации времени
 After=time-sync.target
 Wants=time-sync.target
 
+
 [Service]
 # =============================================
-# Service Type
+# Тип сервиса
 # =============================================
-Type=simple
+Type=exec
+
 
 # =============================================
-# User and Group
+# Пользователь и группа
 # =============================================
 User=autodialer
 Group=autodialer
 
+
 # =============================================
-# Working Directory
+# Рабочая директория
 # =============================================
 WorkingDirectory=/opt/autodialer/backend
 
+
 # =============================================
-# Environment
+# Переменные окружения
 # =============================================
 Environment="PATH=/opt/autodialer/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 EnvironmentFile=/opt/autodialer/config/.env
+
+# Python настройки
 Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONPATH=/opt/autodialer/backend"
+Environment="PYTHONIOENCODING=utf-8"
+
+# Локаль
+Environment="LANG=ru_RU.UTF-8"
+Environment="LC_ALL=ru_RU.UTF-8"
 Environment="TZ=UTC"
-Environment="LANG=en_US.UTF-8"
-Environment="LC_ALL=en_US.UTF-8"
+
 
 # =============================================
-# ExecStart - Gunicorn with Uvicorn Workers
+# Ожидание зависимостей (graceful startup)
+# =============================================
+# Ждем PostgreSQL
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do if nc -z 127.0.0.1 5432; then break; fi; sleep 1; done'
+
+# Ждем Redis
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do if nc -z 127.0.0.1 6379; then break; fi; sleep 1; done'
+
+# Ждем Asterisk AMI
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do if nc -z 127.0.0.1 5038; then break; fi; sleep 1; done'
+
+# Дополнительная пауза для стабилизации
+ExecStartPre=/bin/sleep 3
+
+
+# =============================================
+# Запуск приложения (Gunicorn + Uvicorn)
 # =============================================
 ExecStart=/opt/autodialer/venv/bin/gunicorn \
     -w 4 \
@@ -54,7 +94,6 @@ ExecStart=/opt/autodialer/venv/bin/gunicorn \
     --access-logfile /opt/autodialer/logs/access.log \
     --error-logfile /opt/autodialer/logs/error.log \
     --log-level info \
-    --log-config /opt/autodialer/config/logging.conf \
     --timeout 120 \
     --graceful-timeout 30 \
     --keep-alive 5 \
@@ -68,8 +107,9 @@ ExecStart=/opt/autodialer/venv/bin/gunicorn \
     --enable-stdio-inheritance \
     main:app
 
+
 # =============================================
-# Alternative: Direct Uvicorn (for development)
+# Альтернатива: прямой Uvicorn (для разработки)
 # =============================================
 # ExecStart=/opt/autodialer/venv/bin/uvicorn \
 #     main:app \
@@ -80,63 +120,89 @@ ExecStart=/opt/autodialer/venv/bin/gunicorn \
 #     --access-log \
 #     --proxy-headers
 
+
 # =============================================
-# Restart Behavior
+# Политика перезапуска
 # =============================================
 Restart=always
 RestartSec=5
 StartLimitInterval=60
 StartLimitBurst=5
 
+
 # =============================================
-# File Descriptor Limits
+# Лимиты ресурсов
 # =============================================
+# Файловые дескрипторы
 LimitNOFILE=655350
 LimitNOFILESoft=655350
 
-# =============================================
-# Process Limits
-# =============================================
+# Процессы
 LimitNPROC=655350
 LimitNPROCSoft=655350
 
-# =============================================
-# Memory Limits
-# =============================================
-LimitMEMLOCK=65536
+# Память (2GB максимум, 1.5GB предупреждение)
 MemoryMax=2G
 MemoryHigh=1.5G
 
-# =============================================
-# CPU Limits
-# =============================================
+# Блокировка памяти
+LimitMEMLOCK=65536
+
+# CPU (200% = 2 ядра)
 CPUQuota=200%
 
-# =============================================
-# Task Limits
-# =============================================
+# Задачи
 TasksMax=infinity
 
-# =============================================
-# Core Dump
-# =============================================
-LimitCORE=0
-
-# =============================================
-# Address Space
-# =============================================
+# Адресное пространство
 LimitAS=infinity
 LimitRSS=infinity
 
+# Core dump отключен
+LimitCORE=0
+
+
 # =============================================
-# Nice and I/O Priority
+# Приоритет и I/O
 # =============================================
 Nice=-5
 IOSchedulingClass=best-effort
 IOSchedulingPriority=0
 
+
 # =============================================
-# Runtime Directory
+# Таймауты
+# =============================================
+TimeoutStartSec=90
+TimeoutStopSec=30
+TimeoutAbortSec=10
+
+
+# =============================================
+# Watchdog (автоматическое восстановление)
+# =============================================
+# Приложение должно поддерживать watchdog (отправка keepalive)
+WatchdogSec=30
+
+
+# =============================================
+# Режим завершения
+# =============================================
+KillMode=mixed
+KillSignal=SIGTERM
+SendSIGKILL=yes
+FinalKillSignal=SIGKILL
+
+
+# =============================================
+# Коды выхода
+# =============================================
+RestartForceExitStatus=0
+SuccessExitStatus=0 143
+
+
+# =============================================
+# Директории времени выполнения
 # =============================================
 RuntimeDirectory=autodialer
 RuntimeDirectoryMode=0755
@@ -147,100 +213,76 @@ CacheDirectoryMode=0750
 LogsDirectory=autodialer
 LogsDirectoryMode=0750
 
+
 # =============================================
 # Security Hardening
 # =============================================
 
-# Prevent service from gaining new privileges
+# Запрет повышения привилегий
 NoNewPrivileges=yes
 
-# Protect system directories
+# Защита системных директорий
 ProtectSystem=strict
 ProtectHome=yes
 
-# Private /tmp and /dev
+# Приватные /tmp и /dev
 PrivateTmp=yes
 PrivateDevices=no
 
-# Protect kernel tunables
+# Защита параметров ядра
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 
-# Restrict network access
+# Ограничение сетевых протоколов
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 
-# Restrict system calls
+# Фильтрация системных вызовов
 SystemCallFilter=@system-service @network-io @signal @timer @process @io-event @ipc
 SystemCallArchitectures=native
 
-# Protect hostname and clock
+# Защита hostname и часов
 ProtectHostname=yes
 ProtectClock=yes
 ProtectKernelLogs=yes
 
-# Restrict realtime capabilities
-RestrictRealtime=no
-
-# Restrict SUID/SGID
+# Запрет SUID/SGID
 RestrictSUIDSGID=yes
 
-# Remove IPC on exit
+# Очистка IPC при выходе
 RemoveIPC=yes
 
-# Lock personality
+# Блокировка personality
 LockPersonality=yes
 
-# Private users (requires systemd 235+)
-# PrivateUsers=yes
+# Ограничение реального времени
+RestrictRealtime=no
+
 
 # =============================================
-# Sandboxing
+# Sandboxing (Read/Write пути)
 # =============================================
-
-# Read-only directories
+# Только для чтения
 ReadOnlyPaths=/usr /etc /opt/autodialer/backend
-ReadWritePaths=/opt/autodialer/logs /opt/autodialer/tmp /var/log /tmp
 
-# Inaccessible paths
+# Для чтения и записи
+ReadWritePaths=/opt/autodialer/logs
+ReadWritePaths=/opt/autodialer/data
+ReadWritePaths=/opt/autodialer/tmp
+ReadWritePaths=/tmp
+ReadWritePaths=/var/log
+
+# Недоступные пути
 InaccessiblePaths=/root /home
 
-# Bind paths (if needed)
-# BindPaths=/var/lib/asterisk/sounds/tts:/opt/autodialer/audio:ro
 
 # =============================================
-# Timeout Settings
-# =============================================
-TimeoutStartSec=60
-TimeoutStopSec=30
-TimeoutAbortSec=10
-
-# =============================================
-# Watchdog
-# =============================================
-WatchdogSec=30
-
-# =============================================
-# Kill Mode
-# =============================================
-KillMode=mixed
-KillSignal=SIGTERM
-SendSIGKILL=yes
-FinalKillSignal=SIGKILL
-
-# =============================================
-# Failure Handling
-# =============================================
-# Restart if exit code is not 0 or signal
-RestartForceExitStatus=0
-SuccessExitStatus=0 143
-
-# =============================================
-# Standard Output/Error
+# Логирование
 # =============================================
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=autodialer
+
 
 [Install]
 WantedBy=multi-user.target
