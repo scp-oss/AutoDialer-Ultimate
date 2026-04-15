@@ -1,17 +1,66 @@
-[DEFAULT]
-bantime = 3600
-findtime = 600
-maxretry = 5
-destemail = root@localhost
-action = %(action_mwl)s
+; =============================================
+; Fail2Ban Configuration
+; AutoDialer Ultimate v3.0.0
+; =============================================
 
+[DEFAULT]
+; =============================================
+; Default Settings for All Jails
+; =============================================
+
+; Ban time in seconds (1 hour)
+bantime = 3600
+
+; Find time window in seconds (10 minutes)
+; Count failures within this window
+findtime = 600
+
+; Maximum number of failures before ban
+maxretry = 5
+
+; Destination email for notifications
+; destemail = admin@example.com
+
+; Sender email for notifications
+; sender = fail2ban@autodialer.local
+
+; Action to take on ban
+; %(action_mwl)s - sends email with whois and log lines
+; %(action_)s - only ban
+action = %(action_)s
+
+; Ignore IP addresses (never ban)
+ignoreip = 127.0.0.1/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+
+; Backend for log file monitoring
+backend = auto
+
+; Use DNS to resolve hostnames
+usedns = warn
+
+; Log encoding
+logencoding = auto
+
+; Enable fail2ban
+enabled = true
+
+
+; =============================================
+; SSH Jail
+; =============================================
 [sshd]
 enabled = true
 port = ssh
 filter = sshd
 logpath = /var/log/auth.log
 maxretry = 3
+bantime = 3600
+findtime = 600
 
+
+; =============================================
+; Asterisk SIP Security Jail
+; =============================================
 [asterisk]
 enabled = true
 port = 5060,5061
@@ -19,7 +68,28 @@ filter = asterisk
 logpath = /var/log/asterisk/security
 maxretry = 3
 bantime = 7200
+findtime = 600
 
+; Ignore local network
+ignoreip = 127.0.0.1/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+
+
+; =============================================
+; Asterisk AMI Security Jail
+; =============================================
+[asterisk-ami]
+enabled = true
+port = 5038
+filter = asterisk-ami
+logpath = /var/log/asterisk/security
+maxretry = 3
+bantime = 3600
+findtime = 600
+
+
+; =============================================
+; AutoDialer API Rate Limiting Jail
+; =============================================
 [autodialer-api]
 enabled = true
 port = 80,443
@@ -27,3 +97,194 @@ filter = autodialer-api
 logpath = /opt/autodialer/logs/access.log
 maxretry = 10
 bantime = 1800
+findtime = 60
+
+; More lenient for API
+ignoreip = 127.0.0.1/8 ::1
+
+
+; =============================================
+; AutoDialer Auth Failures Jail
+; =============================================
+[autodialer-auth]
+enabled = true
+port = 80,443
+filter = autodialer-auth
+logpath = /opt/autodialer/logs/autodialer.log
+maxretry = 5
+bantime = 3600
+findtime = 300
+
+
+; =============================================
+; Nginx HTTP Flood Protection
+; =============================================
+[nginx-http-auth]
+enabled = true
+port = http,https
+filter = nginx-http-auth
+logpath = /var/log/nginx/error.log
+maxretry = 3
+bantime = 1800
+findtime = 300
+
+
+; =============================================
+; Nginx Bad Bots Jail
+; =============================================
+[nginx-badbots]
+enabled = true
+port = http,https
+filter = nginx-badbots
+logpath = /var/log/nginx/access.log
+maxretry = 1
+bantime = 86400
+findtime = 86400
+
+
+; =============================================
+; Nginx Limit Req Jail
+; =============================================
+[nginx-limit-req]
+enabled = true
+port = http,https
+filter = nginx-limit-req
+logpath = /var/log/nginx/error.log
+maxretry = 5
+bantime = 600
+findtime = 60
+
+
+; =============================================
+; Nginx Bot Search
+; =============================================
+[nginx-botsearch]
+enabled = true
+port = http,https
+filter = nginx-botsearch
+logpath = /var/log/nginx/access.log
+maxretry = 2
+bantime = 3600
+findtime = 300
+
+
+; =============================================
+; PostgreSQL Authentication Failures
+; =============================================
+[postgresql]
+enabled = true
+port = 5432
+filter = postgresql
+logpath = /var/log/postgresql/postgresql-*.log
+maxretry = 3
+bantime = 3600
+findtime = 600
+
+
+; =============================================
+; Recidive (Repeat Offenders) Jail
+; =============================================
+[recidive]
+enabled = true
+filter = recidive
+logpath = /var/log/fail2ban.log
+action = %(action_)s
+bantime = 604800  ; 1 week
+findtime = 86400  ; 1 day
+maxretry = 3
+
+
+; =============================================
+; Ping of Death (PoD) Protection
+; =============================================
+[pam-generic]
+enabled = true
+filter = pam-generic
+logpath = /var/log/auth.log
+maxretry = 3
+bantime = 3600
+findtime = 600
+
+
+; =============================================
+; SASL Authentication Failures
+; =============================================
+[sasl]
+enabled = true
+filter = sasl
+logpath = /var/log/mail.log
+maxretry = 3
+bantime = 3600
+findtime = 600
+
+
+; =============================================
+; Dovecot Authentication Failures
+; =============================================
+[dovecot]
+enabled = false
+port = pop3,pop3s,imap,imaps,submission,465,sieve
+filter = dovecot
+logpath = /var/log/mail.log
+maxretry = 3
+
+
+; =============================================
+; Apache Authentication
+; =============================================
+[apache-auth]
+enabled = false
+port = http,https
+filter = apache-auth
+logpath = /var/log/apache2/error.log
+maxretry = 3
+
+
+; =============================================
+; Custom Actions
+; =============================================
+; Uncomment to send email notifications
+; action_mwl = %(action_)s
+;              %(mta)s-whois-lines[sender="%(sender)s", dest="%(destemail)s", logpath="%(logpath)s", chain="%(chain)s"]
+
+; Uncomment to use Cloudflare API for banning
+; action_cf = %(action_)s
+;             curl -s -o /dev/null -X POST "https://api.cloudflare.com/client/v4/user/firewall/access_rules/rules" \
+;             -H "X-Auth-Email: %(cfemail)s" \
+;             -H "X-Auth-Key: %(cfapikey)s" \
+;             -H "Content-Type: application/json" \
+;             --data '{"mode":"block","configuration":{"target":"ip","value":"<ip>"},"notes":"Fail2Ban"}'
+
+; Uncomment to use Discord webhook notifications
+; action_discord = %(action_)s
+;                  curl -s -o /dev/null -X POST -H "Content-Type: application/json" \
+;                  -d '{"content":"**Fail2Ban Alert**\nIP: <ip>\nJail: <name>\nTime: <time>"}' \
+;                  %(discord_webhook)s
+
+
+; =============================================
+; Jail-specific Overrides
+; =============================================
+[asterisk]
+; Override for asterisk jail
+action = %(action_)s
+logencoding = utf-8
+
+
+[autodialer-api]
+; Override for API jail
+action = %(action_)s
+
+
+; =============================================
+; Fail2Ban Statistics
+; =============================================
+; Check status:
+;   fail2ban-client status
+;   fail2ban-client status asterisk
+;
+; Unban IP:
+;   fail2ban-client set asterisk unbanip 192.168.1.100
+;
+; Ban IP manually:
+;   fail2ban-client set asterisk banip 192.168.1.100
