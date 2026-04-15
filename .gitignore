@@ -1,44 +1,590 @@
-# Environment
-.env
-*.local
+# =============================================
+# AutoDialer Ultimate - Git Ignore File
+# Version: 3.0.0
+# =============================================
 
+# =============================================
+# Environment & Configuration
+# =============================================
+.env
+.env.local
+.env.*.local
+*.local
+config/local.py
+config/secrets.yml
+secrets/
+*.secret
+*.key
+*.pem
+*.crt
+*.pfx
+*.p12
+
+# =============================================
 # Python
+# =============================================
+# Byte-compiled / optimized files
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+
+# Virtual environments
 venv/
 env/
 ENV/
-.venv
-*.egg-info/
-dist/
+env.bak/
+venv.bak/
+.venv/
+virtualenv/
+.envrc
+
+# Distribution / packaging
+.Python
 build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-wheel-metadata/
+shiv/
 
-# Logs
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Translations
+*.mo
+*.pot
+
+# Django
 *.log
-/opt/autodialer/logs/
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
 
-# Database
-*.db
-*.sqlite3
+# Flask
+instance/
+.webassets-cache
 
-# IDE
-.vscode/
+# Scrapy
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# pdm
+.pdm.toml
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# Mr Developer
+.mr.developer.cfg
+.project
+.pydevproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+
+# PyCharm
 .idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# VSCode
+.vscode/
+*.code-workspace
+.history/
+*.vsix
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
 *.swp
 *.swo
+*~
+.*.swp
+.*.swo
+.netrwhist
+.viminfo
+Session.vim
+Sessionx.vim
 
-# OS
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Nano
+*.save
+
+# Kate
+*.kate-swp
+
+# Eclipse
+.classpath
+.project
+.settings/
+
+# NetBeans
+nbproject/private/
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+
+# IntelliJ IDEA
+*.iml
+.idea/*
+!.idea/codeStyles/
+!.idea/runConfigurations/
+out/
+gen/
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+xcuserdata/
+*.xccheckout
+*.moved-aside
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Android
+*.apk
+*.ap_
+*.dex
+*.class
+bin/
+gen/
+out/
+.gradle/
+build/
+local.properties
+proguard/
+*.jks
+*.keystore
+
+# =============================================
+# Node.js / Frontend
+# =============================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Frontend build
+frontend/dist/
+frontend/build/
+frontend/.cache/
+frontend/.parcel-cache/
+frontend/.next/
+frontend/out/
+
+# =============================================
+# Database
+# =============================================
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-shm
+*.db-wal
+postgres-data/
+mysql-data/
+mariadb-data/
+
+# Database dumps
+*.dump
+*.sql.gz
+backups/db/
+
+# =============================================
+# Logs
+# =============================================
+logs/
+*.log
+/opt/autodialer/logs/
+/var/log/autodialer/
+*.log.[0-9]*
+*.log.[0-9][0-9]*
+access.log
+error.log
+debug.log
+audit.log
+
+# =============================================
+# Runtime Data
+# =============================================
+pids/
+*.pid
+*.seed
+*.pid.lock
+/var/run/
+/var/lock/
+
+# =============================================
+# Temporary Files
+# =============================================
+tmp/
+temp/
+/tmp/
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.bak
+*.backup
+*.old
+*.orig
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+*.thumb
+desktop.ini
 
-# Secrets
+# =============================================
+# Cache Directories
+# =============================================
+.cache/
+.cache-*/
+__pycache__/
+*.pyc
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+cover/
+site/
+
+# =============================================
+# Media & Uploads
+# =============================================
+media/
+uploads/
+/var/lib/asterisk/sounds/tts/campaigns/*.wav
+/var/lib/asterisk/sounds/tts/campaigns/*.sln
+/var/lib/asterisk/sounds/tts/upload_*
+/var/spool/asterisk/monitor/*.wav
+/var/spool/asterisk/monitor/*.mp3
+
+# Keep directory structure
+!media/.gitkeep
+!uploads/.gitkeep
+!/var/lib/asterisk/sounds/tts/campaigns/.gitkeep
+
+# =============================================
+# Asterisk Specific
+# =============================================
+# Asterisk configuration with secrets
+/etc/asterisk/manager.conf
+/etc/asterisk/pjsip.conf
+/etc/asterisk/sip.conf
+/etc/asterisk/iax.conf
+/etc/asterisk/*.conf.backup
+
+# Asterisk runtime
+/var/run/asterisk/
+/var/lock/asterisk/
+/var/spool/asterisk/voicemail/
+/var/spool/asterisk/tmp/
+asterisk.ctl
+asterisk.pid
+
+# Asterisk logs
+/var/log/asterisk/*.log
+/var/log/asterisk/cdr-csv/*.csv
+/var/log/asterisk/cdr-custom/*.csv
+
+# =============================================
+# Docker
+# =============================================
+docker-compose.override.yml
+.dockerignore
+Dockerfile.local
+*.dockerignore.local
+
+# =============================================
+# Kubernetes
+# =============================================
+helm/
+charts/
+*.tgz
+values-*.yaml
+!values.yaml
+kubeconfig
+*.kubeconfig
+.secrets/
+
+# =============================================
+# Terraform
+# =============================================
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+*.auto.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# =============================================
+# Vagrant
+# =============================================
+.vagrant/
+Vagrantfile.local
+*.box
+
+# =============================================
+# Ansible
+# =============================================
+*.retry
+ansible/roles/
+ansible/playbook.retry
+ansible/*.log
+ansible/inventory/local
+ansible/inventory/*.ini
+!ansible/inventory/example.ini
+
+# =============================================
+# Backup Files
+# =============================================
+backups/
+*.backup
+*.bak
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.zip
+*.7z
+*.rar
+
+# =============================================
+# Documentation Build
+# =============================================
+docs/_build/
+docs/api/
+site/
+
+# =============================================
+# Testing
+# =============================================
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.pytest_cache/
+.tox/
+htmlcov/
+.jUnit/
+test-results/
+*.test.js.snap
+
+# =============================================
+# Benchmarks
+# =============================================
+bench/
+profile/
+*.prof
+*.lprof
+callgrind.out.*
+perf.data
+perf.data.old
+flamegraph.svg
+
+# =============================================
+# Secrets & Keys
+# =============================================
+# NEVER commit these files
 *.pem
 *.key
 *.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+secrets.yaml
+secrets.yml
+secret.env
+private/
+private-key*
+id_rsa*
+*.priv
 
-# Backups
-*.backup
-*.bak
+# =============================================
+# OS Generated
+# =============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.thumb
+desktop.ini
+$RECYCLE.BIN/
+System Volume Information/
+
+# =============================================
+# Windows
+# =============================================
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.lnk
+*.msi
+*.msm
+*.msp
+*.scr
+*.cmd
+*.bat
+*.ps1
+*.psm1
+*.psd1
+
+# =============================================
+# Linux
+# =============================================
+*.o
+*.a
+*.la
+*.lo
+*.so.*
+*.app
+*.deb
+*.rpm
+*.snap
+
+# =============================================
+# macOS
+# =============================================
+*.dmg
+*.app
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.com.apple.timemachine.supported
+.AppleDB
