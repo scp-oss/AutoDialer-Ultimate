@@ -1,3 +1,8 @@
+# =============================================
+# Logrotate Configuration for AutoDialer Ultimate
+# =============================================
+
+# Backend Application Logs
 /opt/autodialer/logs/*.log {
     daily
     rotate 30
@@ -7,7 +12,262 @@
     notifempty
     copytruncate
     create 0640 autodialer autodialer
+    dateext
+    dateformat -%Y%m%d
+    maxage 30
+    sharedscripts
     postrotate
         systemctl reload autodialer > /dev/null 2>&1 || true
+    endscript
+}
+
+# Asterisk Full Log
+/var/log/asterisk/full {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 asterisk asterisk
+    sharedscripts
+    postrotate
+        /usr/sbin/asterisk -rx 'logger reload' > /dev/null 2>&1 || true
+    endscript
+}
+
+# Asterisk Messages Log
+/var/log/asterisk/messages {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 asterisk asterisk
+    sharedscripts
+    postrotate
+        /usr/sbin/asterisk -rx 'logger reload' > /dev/null 2>&1 || true
+    endscript
+}
+
+# Asterisk Security Log
+/var/log/asterisk/security {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 asterisk asterisk
+    sharedscripts
+    postrotate
+        /usr/sbin/asterisk -rx 'logger reload' > /dev/null 2>&1 || true
+    endscript
+}
+
+# Asterisk Debug Log
+/var/log/asterisk/debug {
+    daily
+    rotate 3
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 asterisk asterisk
+    sharedscripts
+    postrotate
+        /usr/sbin/asterisk -rx 'logger reload' > /dev/null 2>&1 || true
+    endscript
+}
+
+# Asterisk Verbose Log
+/var/log/asterisk/verbose {
+    daily
+    rotate 3
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 asterisk asterisk
+    sharedscripts
+    postrotate
+        /usr/sbin/asterisk -rx 'logger reload' > /dev/null 2>&1 || true
+    endscript
+}
+
+# Asterisk DTMF Log
+/var/log/asterisk/dtmf {
+    daily
+    rotate 3
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 asterisk asterisk
+    sharedscripts
+    postrotate
+        /usr/sbin/asterisk -rx 'logger reload' > /dev/null 2>&1 || true
+    endscript
+}
+
+# Asterisk Dialer Log
+/var/log/asterisk/dialer {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 asterisk asterisk
+    sharedscripts
+    postrotate
+        /usr/sbin/asterisk -rx 'logger reload' > /dev/null 2>&1 || true
+    endscript
+}
+
+# Asterisk Queue Log
+/var/log/asterisk/queue_log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 asterisk asterisk
+    sharedscripts
+    postrotate
+        /usr/sbin/asterisk -rx 'logger reload' > /dev/null 2>&1 || true
+    endscript
+}
+
+# Asterisk CDR CSV Logs
+/var/log/asterisk/cdr-csv/*.csv {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 asterisk asterisk
+    dateext
+    dateformat -%Y%m%d
+}
+
+# Asterisk CDR Custom Logs
+/var/log/asterisk/cdr-custom/*.csv {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 asterisk asterisk
+    dateext
+    dateformat -%Y%m%d
+}
+
+# Nginx Access Log
+/var/log/nginx/access.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 www-data adm
+    sharedscripts
+    postrotate
+        systemctl reload nginx > /dev/null 2>&1 || true
+    endscript
+}
+
+# Nginx Error Log
+/var/log/nginx/error.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 www-data adm
+    sharedscripts
+    postrotate
+        systemctl reload nginx > /dev/null 2>&1 || true
+    endscript
+}
+
+# PostgreSQL Logs
+/var/log/postgresql/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 postgres postgres
+    sharedscripts
+    postrotate
+        /usr/lib/postgresql/*/bin/pg_ctl reload -D /var/lib/postgresql/*/main > /dev/null 2>&1 || true
+    endscript
+}
+
+# Redis Logs
+/var/log/redis/redis-server.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 redis redis
+    sharedscripts
+    postrotate
+        systemctl reload redis-server > /dev/null 2>&1 || true
+    endscript
+}
+
+# Fail2Ban Logs
+/var/log/fail2ban.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root adm
+    sharedscripts
+    postrotate
+        systemctl reload fail2ban > /dev/null 2>&1 || true
+    endscript
+}
+
+# System Auth Log
+/var/log/auth.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root adm
+    sharedscripts
+    postrotate
+        systemctl reload rsyslog > /dev/null 2>&1 || true
+    endscript
+}
+
+# System Syslog
+/var/log/syslog {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root adm
+    sharedscripts
+    postrotate
+        systemctl reload rsyslog > /dev/null 2>&1 || true
     endscript
 }
