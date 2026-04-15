@@ -1,12 +1,14 @@
 #!/bin/bash
 # =============================================
-# AutoDialer Ultimate - Python Backend Setup
-# Version: 3.0.0
+# AutoDialer Ultimate - Установка Python бэкенда
+# Версия: 3.0.0
 # =============================================
 
 set -e
 
-# Цвета для вывода
+# =============================================
+# Цвета для вывода в консоль
+# =============================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -14,73 +16,107 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-print_step() { echo -e "${GREEN}[STEP]${NC} $1"; }
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${CYAN}[SUCCESS]${NC} $1"; }
-print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+print_step() { echo -e "\n${GREEN}[ШАГ]${NC} $1"; }
+print_info() { echo -e "${BLUE}[ИНФО]${NC} $1"; }
+print_success() { echo -e "${CYAN}[УСПЕХ]${NC} $1"; }
+print_warn() { echo -e "${YELLOW}[ВНИМАНИЕ]${NC} $1"; }
+print_error() { echo -e "${RED}[ОШИБКА]${NC} $1"; }
 
+# =============================================
+# Определение директорий
+# =============================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # =============================================
-# Load Configuration
+# Загрузка конфигурации
 # =============================================
+print_step "Загрузка конфигурации..."
+
 if [ -f "$PROJECT_ROOT/.env" ]; then
     source "$PROJECT_ROOT/.env"
-    print_info "Loaded configuration from .env"
+    print_success "Конфигурация загружена из .env"
+else
+    print_error "Файл .env не найден!"
+    exit 1
 fi
 
 # =============================================
-# Create User and Directories
+# Установка значений по умолчанию
 # =============================================
-print_step "Creating autodialer user and directories..."
+FREEPBX_EXTENSION="${FREEPBX_EXTENSION:-291}"
+DB_NAME="${DB_NAME:-autodialer}"
+DB_USER="${DB_USER:-autodialer}"
+DB_HOST="${DB_HOST:-127.0.0.1}"
+DB_PORT="${DB_PORT:-5432}"
+REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
+REDIS_PORT="${REDIS_PORT:-6379}"
+MAX_CALLS="${MAX_CALLS:-50}"
+DEFAULT_CPS="${DEFAULT_CPS:-5}"
+CALL_TIMEOUT="${CALL_TIMEOUT:-30}"
+MAX_RETRIES="${MAX_RETRIES:-3}"
+TTS_VOICE="${TTS_VOICE:-denis}"
+LOG_LEVEL="${LOG_LEVEL:-INFO}"
+LOG_FORMAT="${LOG_FORMAT:-console}"
 
-# Create user if not exists
+print_info "FreePBX Extension: $FREEPBX_EXTENSION"
+print_info "База данных:       $DB_NAME на $DB_HOST:$DB_PORT"
+print_info "Redis:             $REDIS_HOST:$REDIS_PORT"
+print_info "Макс. каналов:     $MAX_CALLS"
+
+# =============================================
+# Создание пользователя и директорий
+# =============================================
+print_step "Создание пользователя autodialer и директорий..."
+
+# Создание пользователя, если не существует
 if ! id -u autodialer &>/dev/null; then
     useradd -r -m -d /opt/autodialer -s /bin/false -c "AutoDialer Service" autodialer
-    print_success "User 'autodialer' created"
+    print_success "Пользователь 'autodialer' создан"
 else
-    print_info "User 'autodialer' already exists"
+    print_info "Пользователь 'autodialer' уже существует"
 fi
 
-# Create directories
+# Создание директорий
 mkdir -p /opt/autodialer/{backend,logs,config,frontend/dist,scripts,tmp,venv}
 mkdir -p /opt/autodialer/logs/{access,error}
 
-print_success "Directories created"
+print_success "Директории созданы"
 
 # =============================================
-# Set Up Python Virtual Environment
+# Настройка виртуального окружения Python
 # =============================================
-print_step "Setting up Python virtual environment..."
+print_step "Настройка виртуального окружения Python..."
 
 cd /opt/autodialer
 
-# Create virtual environment
+# Создание виртуального окружения
 python3 -m venv venv
-print_success "Virtual environment created"
+print_success "Виртуальное окружение создано"
 
-# Activate and upgrade pip
+# Активация и обновление pip
 source venv/bin/activate
 pip install --upgrade pip setuptools wheel
-print_success "Pip upgraded"
+print_success "pip обновлён"
 
 # =============================================
-# Install Python Dependencies
+# Установка зависимостей Python
 # =============================================
-print_step "Installing Python dependencies..."
+print_step "Установка зависимостей Python..."
 
-# Create requirements file
+# Создание файла requirements.txt
 cat > /opt/autodialer/requirements.txt << 'EOF'
-# AutoDialer Ultimate Requirements
-# Core
+# =============================================
+# AutoDialer Ultimate - Зависимости Python
+# =============================================
+
+# Ядро
 fastapi==0.115.11
 uvicorn[standard]==0.34.0
 pydantic==2.10.6
 pydantic-settings==2.7.1
 
-# Database
+# База данных
 asyncpg==0.30.0
 sqlalchemy==2.0.36
 alembic==1.14.1
@@ -92,50 +128,50 @@ hiredis==2.3.2
 # AMI (Asterisk Manager Interface)
 panoramisk==0.2.0
 
-# Authentication
+# Аутентификация
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.2.0
 python-multipart==0.0.20
 
-# HTTP & WebSocket
+# HTTP и WebSocket
 httpx==0.28.1
 aiofiles==24.1.0
 gunicorn==23.0.0
 
-# Monitoring
+# Мониторинг
 prometheus-client==0.21.0
 
-# Utilities
+# Утилиты
 cachetools==5.5.0
 tenacity==9.0.0
 python-dateutil==2.9.0
 python-dotenv==1.0.1
 PyYAML==6.0.2
 
-# Development (optional)
+# Разработка (опционально)
 watchfiles==1.0.4
 EOF
 
-# Install requirements
+# Установка зависимостей
 pip install -r requirements.txt
-print_success "Python dependencies installed"
+print_success "Зависимости Python установлены"
 
 # =============================================
-# Copy Backend Files
+# Копирование файлов бэкенда
 # =============================================
-print_step "Copying backend files..."
+print_step "Копирование файлов бэкенда..."
 
 if [ -d "$PROJECT_ROOT/backend" ]; then
     cp -r "$PROJECT_ROOT/backend/"* /opt/autodialer/backend/
-    print_success "Backend files copied"
+    print_success "Файлы бэкенда скопированы"
 else
-    print_warn "Backend directory not found, creating skeleton..."
+    print_warn "Директория backend не найдена, создаю заглушку..."
     
-    # Create minimal main.py
+    # Создание минимального main.py
     cat > /opt/autodialer/backend/main.py << 'EOF'
 #!/usr/bin/env python3
-"""AutoDialer Ultimate - Main Application"""
+"""AutoDialer Ultimate - Основное приложение"""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -159,38 +195,39 @@ async def root():
     return {"message": "AutoDialer Ultimate API"}
 EOF
 
-    # Create __init__.py
+    # Создание __init__.py
     touch /opt/autodialer/backend/__init__.py
     
-    print_warn "Created skeleton backend files"
+    print_warn "Созданы заглушки файлов бэкенда"
 fi
 
 # =============================================
-# Create Environment Configuration
+# Создание файла конфигурации .env для бэкенда
 # =============================================
-print_step "Creating environment configuration..."
+print_step "Создание конфигурации бэкенда..."
 
-# Generate secrets if not set
+# Генерация секретов, если не заданы
 JWT_SECRET="${JWT_SECRET:-$(openssl rand -hex 32)}"
 AMI_PASSWORD="${AMI_PASSWORD:-$(openssl rand -hex 16)}"
 METRICS_PASS="${METRICS_PASS:-$(openssl rand -hex 8)}"
 
-# Save to .env if not exists
+# Сохранение секретов в основной .env
 if [ -f "$PROJECT_ROOT/.env" ]; then
     grep -q "^JWT_SECRET=" "$PROJECT_ROOT/.env" || echo "JWT_SECRET=$JWT_SECRET" >> "$PROJECT_ROOT/.env"
     grep -q "^AMI_PASSWORD=" "$PROJECT_ROOT/.env" || echo "AMI_PASSWORD=$AMI_PASSWORD" >> "$PROJECT_ROOT/.env"
     grep -q "^METRICS_PASS=" "$PROJECT_ROOT/.env" || echo "METRICS_PASS=$METRICS_PASS" >> "$PROJECT_ROOT/.env"
 fi
 
-# Create .env file for backend
+# Создание .env для бэкенда
 cat > /opt/autodialer/config/.env << EOF
 # =============================================
-# AutoDialer Ultimate Configuration
+# AutoDialer Ultimate - Конфигурация бэкенда
+# Версия: 3.0.0
 # =============================================
 
-# FreePBX Server
-FREEPBX_HOST=${FREEPBX_IP:-192.168.1.100}
-FREEPBX_EXTENSION=291
+# Сервер FreePBX
+FREEPBX_HOST=${FREEPBX_IP}
+FREEPBX_EXTENSION=${FREEPBX_EXTENSION}
 
 # Asterisk AMI
 AMI_HOST=127.0.0.1
@@ -198,65 +235,66 @@ AMI_PORT=5038
 AMI_USER=autodialer
 AMI_PASSWORD=${AMI_PASSWORD}
 
-# Database
-DB_HOST=127.0.0.1
-DB_PORT=5432
-DB_NAME=${DB_NAME:-autodialer}
-DB_USER=${DB_USER:-autodialer}
+# База данных PostgreSQL
+DB_HOST=${DB_HOST}
+DB_PORT=${DB_PORT}
+DB_NAME=${DB_NAME}
+DB_USER=${DB_USER}
 DB_PASSWORD=${DB_PASSWORD}
 
 # Redis
-REDIS_HOST=127.0.0.1
-REDIS_PORT=6379
+REDIS_HOST=${REDIS_HOST}
+REDIS_PORT=${REDIS_PORT}
 REDIS_PASSWORD=${REDIS_PASSWORD:-}
 
-# JWT
+# JWT аутентификация
 JWT_SECRET=${JWT_SECRET}
 JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE=3600
 REFRESH_TOKEN_EXPIRE=604800
 
-# Dialer Settings
-MAX_CALLS=${MAX_CALLS:-50}
-DEFAULT_CPS=${DEFAULT_CPS:-5}
-CALL_TIMEOUT=30
-MAX_RETRIES=3
+# Настройки дозвона
+MAX_CALLS=${MAX_CALLS}
+DEFAULT_CPS=${DEFAULT_CPS}
+CALL_TIMEOUT=${CALL_TIMEOUT}
+MAX_RETRIES=${MAX_RETRIES}
+CALLER_ID=${CALLER_ID:-AutoDialer}
 
-# TTS Settings
+# Настройки TTS
 TTS_ENGINE=piper
-TTS_VOICE=${TTS_VOICE:-denis}
+TTS_VOICE=${TTS_VOICE}
 TTS_MODEL=/var/lib/asterisk/sounds/tts/models/ru_RU-\${TTS_VOICE}-medium.onnx
 TTS_OUTPUT_DIR=/var/lib/asterisk/sounds/tts
 
-# Metrics
+# Метрики
 METRICS_USER=admin
 METRICS_PASS=${METRICS_PASS}
 
 # CORS
 CORS_ORIGINS=*
 
-# Logging
-LOG_LEVEL=${LOG_LEVEL:-INFO}
-LOG_FORMAT=${LOG_FORMAT:-console}
+# Логирование
+LOG_LEVEL=${LOG_LEVEL}
+LOG_FORMAT=${LOG_FORMAT}
 LOG_FILE=/opt/autodialer/logs/autodialer.log
 
-# Storage
+# Хранение
 AUDIO_RETENTION_DAYS=30
 MAX_UPLOAD_SIZE_MB=10
 EOF
 
-print_success "Environment configuration created"
+print_success "Конфигурация бэкенда создана"
 
 # =============================================
-# Copy Frontend Files
+# Копирование файлов фронтенда
 # =============================================
-print_step "Copying frontend files..."
+print_step "Копирование файлов фронтенда..."
 
 if [ -d "$PROJECT_ROOT/frontend/dist" ]; then
     cp -r "$PROJECT_ROOT/frontend/dist/"* /opt/autodialer/frontend/dist/
-    print_success "Frontend files copied"
+    print_success "Файлы фронтенда скопированы"
 else
-    print_warn "Frontend dist not found, creating placeholder..."
+    print_warn "Директория frontend/dist не найдена, создаю заглушку..."
     
     cat > /opt/autodialer/frontend/dist/index.html << 'EOF'
 <!DOCTYPE html>
@@ -266,38 +304,48 @@ else
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0f172a; color: #f1f5f9; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
         .container { text-align: center; }
-        h1 { color: #667eea; }
+        h1 { font-size: 3rem; margin-bottom: 1rem; }
+        p { font-size: 1.2rem; opacity: 0.9; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🚀 AutoDialer Ultimate</h1>
-        <p>Version 3.0.0</p>
-        <p>Backend is running. Frontend will be available soon.</p>
+        <p>Версия 3.0.0</p>
+        <p>Бэкенд запущен. Фронтенд будет доступен после полной установки.</p>
     </div>
 </body>
 </html>
 EOF
-    print_warn "Created placeholder frontend"
+    print_warn "Создана заглушка фронтенда"
 fi
 
 # =============================================
-# Set Permissions
+# Установка прав доступа
 # =============================================
-print_step "Setting permissions..."
+print_step "Установка прав доступа..."
 
 chown -R autodialer:autodialer /opt/autodialer
 chmod -R 755 /opt/autodialer
 chmod 600 /opt/autodialer/config/.env
 
-print_success "Permissions set"
+print_success "Права доступа установлены"
 
 # =============================================
-# Create Systemd Service
+# Создание systemd сервиса
 # =============================================
-print_step "Creating systemd service..."
+print_step "Создание systemd сервиса..."
 
 cat > /etc/systemd/system/autodialer.service << EOF
 [Unit]
@@ -313,18 +361,18 @@ Group=autodialer
 WorkingDirectory=/opt/autodialer/backend
 Environment="PATH=/opt/autodialer/venv/bin"
 EnvironmentFile=/opt/autodialer/config/.env
-ExecStart=/opt/autodialer/venv/bin/gunicorn \
-    -w 4 \
-    --threads 8 \
-    -k uvicorn.workers.UvicornWorker \
-    --bind 127.0.0.1:8000 \
-    --access-logfile /opt/autodialer/logs/access.log \
-    --error-logfile /opt/autodialer/logs/error.log \
-    --log-level info \
-    --timeout 120 \
-    --graceful-timeout 30 \
-    --max-requests 10000 \
-    --max-requests-jitter 1000 \
+ExecStart=/opt/autodialer/venv/bin/gunicorn \\
+    -w 4 \\
+    --threads 8 \\
+    -k uvicorn.workers.UvicornWorker \\
+    --bind 127.0.0.1:8000 \\
+    --access-logfile /opt/autodialer/logs/access.log \\
+    --error-logfile /opt/autodialer/logs/error.log \\
+    --log-level info \\
+    --timeout 120 \\
+    --graceful-timeout 30 \\
+    --max-requests 10000 \\
+    --max-requests-jitter 1000 \\
     main:app
 Restart=always
 RestartSec=5
@@ -332,118 +380,123 @@ LimitNOFILE=655350
 LimitNPROC=655350
 MemoryMax=2G
 CPUQuota=200%
-TasksMax=infinity
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-print_success "Systemd service created"
+print_success "Systemd сервис создан"
 
 # =============================================
-# Create Helper Scripts
+# Создание вспомогательных скриптов
 # =============================================
-print_step "Creating helper scripts..."
+print_step "Создание вспомогательных скриптов..."
 
-# Status script
+# Скрипт статуса
 cat > /usr/local/bin/autodialer-status << 'EOF'
 #!/bin/bash
 echo "=============================================="
-echo "AutoDialer Ultimate Status"
+echo "AutoDialer Ultimate - Статус"
 echo "=============================================="
 echo ""
 systemctl status autodialer --no-pager -l
 echo ""
 echo "=============================================="
-echo "Recent Logs:"
+echo "Последние логи:"
 echo "=============================================="
 journalctl -u autodialer -n 20 --no-pager
 EOF
 chmod +x /usr/local/bin/autodialer-status
 
-# Restart script
+# Скрипт перезапуска
 cat > /usr/local/bin/autodialer-restart << 'EOF'
 #!/bin/bash
 systemctl restart autodialer
-echo "AutoDialer restarted"
+echo "AutoDialer перезапущен"
 systemctl status autodialer --no-pager
 EOF
 chmod +x /usr/local/bin/autodialer-restart
 
-# Logs script
+# Скрипт просмотра логов
 cat > /usr/local/bin/autodialer-logs << 'EOF'
 #!/bin/bash
 journalctl -u autodialer -f
 EOF
 chmod +x /usr/local/bin/autodialer-logs
 
-print_success "Helper scripts created"
+print_success "Вспомогательные скрипты созданы"
 
 # =============================================
-# Start Backend Service
+# Запуск сервиса
 # =============================================
-print_step "Starting backend service..."
+print_step "Запуск бэкенд сервиса..."
 
 systemctl enable autodialer
 systemctl start autodialer
 
-# Wait for service to start
+# Ожидание запуска
 sleep 3
 
 if systemctl is-active --quiet autodialer; then
-    print_success "Backend service started"
+    print_success "Бэкенд сервис запущен"
 else
-    print_error "Backend service failed to start"
+    print_error "Бэкенд сервис не запустился"
     systemctl status autodialer --no-pager
     exit 1
 fi
 
 # =============================================
-# Verify Backend
+# Проверка бэкенда
 # =============================================
-print_step "Verifying backend..."
+print_step "Проверка бэкенда..."
 
-# Test health endpoint
 sleep 2
-if curl -s http://127.0.0.1:8000/api/health | grep -q "ok"; then
-    print_success "Health check passed"
+if curl -s http://127.0.0.1:8000/api/health 2>/dev/null | grep -q "ok"; then
+    print_success "Health check пройден"
+    echo ""
     curl -s http://127.0.0.1:8000/api/health | python3 -m json.tool 2>/dev/null || true
 else
-    print_warn "Health check failed (service may still be starting)"
+    print_warn "Health check не пройден (сервис может ещё запускаться)"
 fi
 
 # =============================================
-# Summary
+# Сводка
 # =============================================
-print_success "Python backend setup completed!"
+print_step "Сводка установки Python бэкенда"
 echo ""
-print_info "Backend Configuration:"
-echo "  User: autodialer"
-echo "  Directory: /opt/autodialer"
-echo "  Config: /opt/autodialer/config/.env"
-echo "  Logs: /opt/autodialer/logs/"
+print_info "Параметры бэкенда:"
+echo "  Пользователь:      autodialer"
+echo "  Директория:        /opt/autodialer"
+echo "  Конфигурация:      /opt/autodialer/config/.env"
+echo "  Логи:              /opt/autodialer/logs/"
 echo ""
-print_info "Secrets Generated:"
-echo "  JWT_SECRET: $JWT_SECRET"
-echo "  AMI_PASSWORD: $AMI_PASSWORD"
-echo "  METRICS_PASS: $METRICS_PASS"
+print_info "Параметры подключения:"
+echo "  FreePBX Host:      $FREEPBX_IP"
+echo "  FreePBX Extension: $FREEPBX_EXTENSION"
+echo "  База данных:       $DB_NAME на $DB_HOST:$DB_PORT"
+echo "  Redis:             $REDIS_HOST:$REDIS_PORT"
 echo ""
-print_info "Endpoints:"
-echo "  API: http://127.0.0.1:8000/api"
-echo "  Health: http://127.0.0.1:8000/api/health"
-echo "  Metrics: http://127.0.0.1:8000/metrics"
+print_info "Сгенерированные секреты:"
+echo "  JWT_SECRET:        $JWT_SECRET"
+echo "  AMI_PASSWORD:      $AMI_PASSWORD"
+echo "  METRICS_PASS:      $METRICS_PASS"
 echo ""
-print_info "Useful Commands:"
+print_info "Эндпоинты:"
+echo "  API:               http://127.0.0.1:8000/api"
+echo "  Health:            http://127.0.0.1:8000/api/health"
+echo "  Метрики:           http://127.0.0.1:8000/metrics"
+echo "  Документация:      http://127.0.0.1:8000/docs"
+echo ""
+print_info "Вспомогательные скрипты:"
+echo "  autodialer-status   - Статус сервиса и логи"
+echo "  autodialer-restart  - Перезапуск сервиса"
+echo "  autodialer-logs     - Просмотр логов в реальном времени"
+echo ""
+print_info "Полезные команды:"
 echo "  systemctl status autodialer"
 echo "  systemctl restart autodialer"
 echo "  journalctl -u autodialer -f"
-echo "  autodialer-status"
-echo "  autodialer-restart"
-echo "  autodialer-logs"
 echo ""
-print_info "Next Steps:"
-echo "  1. Configure Nginx (10_nginx_setup.sh)"
-echo "  2. Configure Firewall (11_firewall_setup.sh)"
-echo "  3. Start all services (12_start_services.sh)"
-echo ""
+
+print_success "Установка Python бэкенда завершена!"
