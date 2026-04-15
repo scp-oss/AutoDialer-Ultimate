@@ -1,13 +1,20 @@
 ; =============================================
-; PJSIP Configuration Template
-; AutoDialer Ultimate v3.0.0
-; Variables: ${FREEPBX_IP}, ${EXTENSION_PASSWORD}
+; AutoDialer Ultimate - Шаблон конфигурации PJSIP
+; Версия: 3.0.0
+; =============================================
+; ВНИМАНИЕ: Этот файл содержит переменные, которые заменяются
+; при установке скриптом 04_pjsip_config.sh
+; Переменные для замены:
+;   ${FREEPBX_IP}         - IP-адрес сервера FreePBX
+;   ${FREEPBX_EXTENSION}  - Номер SIP extension на FreePBX
+;   ${EXTENSION_PASSWORD} - Пароль для SIP extension
 ; =============================================
 
+
+; =============================================
+; ГЛОБАЛЬНЫЕ НАСТРОЙКИ
+; =============================================
 [global]
-; =============================================
-; Global PJSIP Settings
-; =============================================
 type = global
 user_agent = AutoDialer-Ultimate/3.0.0
 keep_alive_interval = 90
@@ -17,252 +24,206 @@ max_initial_qualify = 5
 
 
 ; =============================================
-; Transport Configuration
+; ТРАНСПОРТ UDP
 ; =============================================
 [transport-udp]
 type = transport
 protocol = udp
 bind = 0.0.0.0
 
-; External address for NAT
+; Настройки NAT (важно для работы через NAT)
 local_net = 192.168.0.0/16,10.0.0.0/8,172.16.0.0/12
 external_media_address = ${FREEPBX_IP}
 external_signaling_address = ${FREEPBX_IP}
 
-; TLS transport (optional)
-; [transport-tls]
-; type = transport
-; protocol = tls
-; bind = 0.0.0.0
-; cert_file = /etc/asterisk/keys/asterisk.pem
-; priv_key_file = /etc/asterisk/keys/asterisk.key
-
 
 ; =============================================
-; Authentication for Extension 291
+; АУТЕНТИФИКАЦИЯ
+; Используется для регистрации на FreePBX
 ; =============================================
-[291_auth]
+[${FREEPBX_EXTENSION}_auth]
 type = auth
 auth_type = userpass
-username = 291
+username = ${FREEPBX_EXTENSION}
 password = ${EXTENSION_PASSWORD}
 realm = ${FREEPBX_IP}
 
 
 ; =============================================
-; Address of Record (AOR)
+; ADDRESS OF RECORD (AOR)
+; Определяет, как связаться с этим endpoint
 ; =============================================
-[291_aor]
+[${FREEPBX_EXTENSION}_aor]
 type = aor
 max_contacts = 1
 remove_existing = yes
-contact = sip:291@${FREEPBX_IP}:5060
+contact = sip:${FREEPBX_EXTENSION}@${FREEPBX_IP}:5060
 
-; Qualify settings
+; Проверка доступности (Qualify)
 qualify_frequency = 30
 qualify_timeout = 5.0
 
-; Registration expiration
+; Время жизни регистрации
 default_expiration = 120
-
-; Maximum expiration
 maximum_expiration = 3600
-
-; Minimum expiration
 minimum_expiration = 60
 
 
 ; =============================================
-; Endpoint Configuration
+; ENDPOINT (КОНЕЧНАЯ ТОЧКА)
+; Основная конфигурация SIP-устройства
 ; =============================================
-[291_endpoint]
+[${FREEPBX_EXTENSION}_endpoint]
 type = endpoint
 transport = transport-udp
 context = dialer_bridge
 
-; Codecs
+; ========== КОДЕКИ ==========
+; Приоритет: ulaw, alaw, g722
 disallow = all
 allow = ulaw
 allow = alaw
 allow = g722
 
-; DTMF
+; ========== DTMF ==========
+; RFC4733 - наиболее надёжный способ передачи DTMF
 dtmf_mode = rfc4733
 
-; Authentication
-outbound_auth = 291_auth
-aors = 291_aor
+; ========== АУТЕНТИФИКАЦИЯ ==========
+outbound_auth = ${FREEPBX_EXTENSION}_auth
+aors = ${FREEPBX_EXTENSION}_aor
 
-; Caller ID
-callerid = AutoDialer <291>
+; ========== CALLER ID ==========
+callerid = AutoDialer <${FREEPBX_EXTENSION}>
 callerid_privacy = allowed_not_screened
-callerid_tag = 291
 
-; Media
+; ========== МЕДИА НАСТРОЙКИ ==========
 direct_media = no
 media_encryption = no
 media_use_received_transport = yes
 
-; NAT
+; ========== НАСТРОЙКИ NAT ==========
+; Критически важно для работы за NAT
 rewrite_contact = yes
 rtp_symmetric = yes
 force_rport = yes
 
-; FreePBX specific
-from_user = 291
+; ========== СПЕЦИФИЧНЫЕ НАСТРОЙКИ ДЛЯ FREEPBX ==========
+; Эти параметры необходимы для корректной работы с FreePBX
+from_user = ${FREEPBX_EXTENSION}
 from_domain = ${FREEPBX_IP}
 outbound_proxy = sip:${FREEPBX_IP}:5060
 
-; Timers
+; ========== ТАЙМЕРЫ СЕССИЙ ==========
 timers = yes
 timers_sess_expires = 1800
 timers_min_se = 90
 
-; Keepalive
+; ========== KEEPALIVE ДЛЯ RTP ==========
+; Поддерживает NAT-сессию активной
 rtp_keepalive = 30
 rtp_timeout = 30
 rtp_timeout_hold = 60
 
-; Trust
+; ========== ДОВЕРИЕ ==========
 trust_id_inbound = yes
 trust_id_outbound = yes
 
-; Headers
+; ========== ЗАГОЛОВКИ ==========
+; P-Asserted-Identity и Remote-Party-ID для идентификации
 send_pai = yes
 send_rpid = yes
 
-; ICE
+; ========== ICE (ОТКЛЮЧЕНО) ==========
 ice_support = no
 
-; Security
+; ========== БЕЗОПАСНОСТЬ ==========
 allow_unauthenticated_options = no
 
-; Transport
+; ========== ТРАНСФЕР (ЗАПРЕЩЁН) ==========
 allow_transfer = no
 
-; Fax
+; ========== ФАКС (ОТКЛЮЧЁН) ==========
 fax_detect = no
 
-; Message context
-message_context = dialer_bridge
-
-; Voicemail
-voicemail_extension = 
-
-; Language
+; ========== ЯЗЫК ==========
 language = ru
 
-; Device state
+; ========== СОСТОЯНИЕ УСТРОЙСТВА ==========
 device_state_busy_at = 1
 
-; Call limits
+; ========== ОГРАНИЧЕНИЯ ПОТОКОВ ==========
 max_audio_streams = 1
 max_video_streams = 0
 
-; Connected line
+; ========== CONNECTED LINE ==========
 connected_line_method = invite
 
-; T.38
+; ========== T.38 (ОТКЛЮЧЕНО) ==========
 t38_udptl = no
 
 
 ; =============================================
-; Registration to FreePBX
+; РЕГИСТРАЦИЯ НА FREEPBX
+; Отвечает за отправку REGISTER запросов
 ; =============================================
-[291_reg]
+[${FREEPBX_EXTENSION}_reg]
 type = registration
-outbound_auth = 291_auth
+outbound_auth = ${FREEPBX_EXTENSION}_auth
 server_uri = sip:${FREEPBX_IP}:5060
-client_uri = sip:291@${FREEPBX_IP}:5060
-contact_user = 291
+client_uri = sip:${FREEPBX_EXTENSION}@${FREEPBX_IP}:5060
+contact_user = ${FREEPBX_EXTENSION}
 line = yes
-endpoint = 291_endpoint
+endpoint = ${FREEPBX_EXTENSION}_endpoint
 
-; Retry settings
+; Настройки повторных попыток при сбоях
 retry_interval = 60
 max_retries = 10
 forbidden_retry_interval = 300
 fatal_retry_interval = 600
 
-; Expiration
+; Время жизни регистрации (секунд)
 expiration = 120
 
-; Authentication rejection
+; Не считать отказ в аутентификации постоянным
 auth_rejection_permanent = no
 
-; Support for outbound registration
+; Поддержка исходящей регистрации
 support_outbound = yes
 
-; Transport
+; Используемый транспорт
 transport = transport-udp
 
 
 ; =============================================
-; Identify - Match incoming from FreePBX
+; ИДЕНТИФИКАЦИЯ ВХОДЯЩИХ ВЫЗОВОВ
+; Сопоставляет входящие запросы с endpoint
 ; =============================================
-[291_identify]
+[${FREEPBX_EXTENSION}_identify]
 type = identify
-endpoint = 291_endpoint
+endpoint = ${FREEPBX_EXTENSION}_endpoint
 match = ${FREEPBX_IP}
-match_header = From: <sip:291@${FREEPBX_IP}>
+match_header = From: <sip:${FREEPBX_EXTENSION}@${FREEPBX_IP}>
 
 
 ; =============================================
-; Additional Endpoint for Failover (Optional)
-; =============================================
-; [291_backup_endpoint]
-; type = endpoint
-; transport = transport-udp
-; context = dialer_bridge
-; disallow = all
-; allow = ulaw
-; allow = alaw
-; outbound_auth = 291_auth
-; aors = 291_backup_aor
-; callerid = AutoDialer <291>
-; from_user = 291
-; from_domain = ${FREEPBX_IP}
-; outbound_proxy = sip:BACKUP_IP:5060
-
-
-; =============================================
-; ACL for Local Networks
-; =============================================
-; [acl-local]
-; type = acl
-; deny = 0.0.0.0/0.0.0.0
-; permit = 127.0.0.1
-; permit = 192.168.0.0/16
-; permit = 10.0.0.0/8
-; permit = 172.16.0.0/12
-
-
-; =============================================
-; Domain Alias
-; =============================================
-; [domain-alias]
-; type = domain_alias
-; domain = ${FREEPBX_IP}
-; alias = freepbx.local
-
-
-; =============================================
-; System Configuration
+; СИСТЕМНЫЕ НАСТРОЙКИ
 ; =============================================
 [system]
 type = system
-; Timer settings
+
+; Таймеры SIP
 timer_t1 = 500
 timer_b = 32000
 
-; Compact headers
+; Компактные заголовки
 compact_headers = yes
 
-; Thread count
+; Пул потоков
 threadpool_initial_size = 0
 threadpool_auto_increment = 5
 threadpool_idle_timeout = 60
 threadpool_max_size = 50
 
-; Disable multi-domain
+; Отключение мульти-домена
 disable_multi_domain = no
