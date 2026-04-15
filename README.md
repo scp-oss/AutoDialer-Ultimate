@@ -51,24 +51,27 @@ HTTPS через Let's Encrypt
 📁 СТРУКТУРА GitHub РЕПОЗИТОРИЯ
 ```bash
 autodialer-ultimate/
+├── .env.example
+├── .gitignore
+├── LICENSE
 ├── README.md
-├── install.sh                    # Главный установочный скрипт
-├── .env.example                  # Пример конфигурации
-├── docker-compose.yml            # Опционально для Docker
+├── install.sh
+├── docker-compose.yml
 ├── scripts/
-│   ├── 01_system_setup.sh        # Системные зависимости и лимиты
-│   ├── 02_asterisk_install.sh    # Установка Asterisk
-│   ├── 03_asterisk_config.sh     # Конфигурация Asterisk
-│   ├── 04_pjsip_config.sh        # PJSIP конфигурация
-│   ├── 05_dialplan_config.sh     # Dialplan
-│   ├── 06_tts_install.sh         # Установка Piper TTS
-│   ├── 07_postgresql_setup.sh    # Настройка PostgreSQL
-│   ├── 08_redis_setup.sh         # Настройка Redis
-│   ├── 09_python_backend.sh      # Установка Python и зависимостей
-│   ├── 10_nginx_setup.sh         # Настройка Nginx
-│   ├── 11_firewall_setup.sh      # Настройка файрвола
-│   └── 12_start_services.sh      # Запуск всех сервисов
+│   ├── 01_system_setup.sh
+│   ├── 02_asterisk_install.sh
+│   ├── 03_asterisk_config.sh
+│   ├── 04_pjsip_config.sh
+│   ├── 05_dialplan_config.sh
+│   ├── 06_tts_install.sh
+│   ├── 07_postgresql_setup.sh
+│   ├── 08_redis_setup.sh
+│   ├── 09_python_backend.sh
+│   ├── 10_nginx_setup.sh
+│   ├── 11_firewall_setup.sh
+│   └── 12_start_services.sh
 ├── backend/
+│   ├── __init__.py
 │   ├── requirements.txt
 │   ├── main.py
 │   ├── logger.py
@@ -80,17 +83,26 @@ autodialer-ultimate/
 │   └── ami_manager.py
 ├── frontend/
 │   └── dist/
-│       └── index.html
+│       ├── index.html
+│       ├── style.css
+│       └── app.js
 ├── asterisk/
 │   ├── asterisk.conf
 │   ├── rtp.conf
-│   ├── pjsip.conf
+│   ├── pjsip.conf.template
 │   ├── extensions.conf
-│   └── manager.conf
+│   └── manager.conf.template
 ├── systemd/
 │   └── autodialer.service
 ├── nginx/
 │   └── autodialer.conf
-└── sql/
-    └── schema.sql
+├── sql/
+│   └── schema.sql
+├── logrotate/
+│   └── autodialer
+└── docs/
+    ├── INSTALL.md
+    ├── CONFIGURATION.md
+    ├── API.md
+    └── FAQ.md
 ```
