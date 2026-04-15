@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: autodialer-postgres
+    environment:
+      POSTGRES_DB: autodialer
+      POSTGRES_USER: autodialer
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-autodialer_pass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - autodialer-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: autodialer-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - autodialer-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: autodialer-backend
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: autodialer
+      DB_USER: autodialer
+      DB_PASSWORD: ${DB_PASSWORD:-autodialer_pass}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      AMI_HOST: ${AMI_HOST:-asterisk}
+      AMI_PORT: ${AMI_PORT:-5038}
+      AMI_USER: ${AMI_USER:-autodialer}
+      AMI_PASSWORD: ${AMI_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+    volumes:
+      - ./backend:/app
+      - logs:/opt/autodialer/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    networks:
+      - autodialer-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: autodialer-nginx
+    volumes:
+      - ./nginx/autodialer.conf:/etc/nginx/conf.d/default.conf
+      - ./frontend/dist:/usr/share/nginx/html
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - autodialer-network
+
+networks:
+  autodialer-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  logs:
