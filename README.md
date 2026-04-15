@@ -1,31 +1,83 @@
-# autodialer-pro
-AutoDialer Pro - Система автоматического обзвона для FreePBX/Asterisk
+# AutoDialer Ultimate v3.0
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Asterisk](https://img.shields.io/badge/Asterisk-16%2B-orange.svg)](https://www.asterisk.org/)
+Enterprise-grade автоматический обзвонщик на базе Asterisk + FastAPI + React.
 
-Профессиональная система автоматического обзвона для FreePBX/Asterisk с поддержкой TTS, DTMF и веб-интерфейсом.
-
-## ✨ Возможности
-
-- 🎯 **Умный обзвон**: Внутренние и внешние номера
-- 🗣️ **TTS**: Google TTS и офлайн pyttsx3
-- 📞 **DTMF**: Распознавание нажатий клавиш
-- 📊 **Статистика**: Реал-тайм мониторинг
-- 🎨 **Веб-интерфейс**: Тёмная/светлая тема
-- 🔄 **Retry логика**: Автоматические повторные звонки
-- 📱 **Адаптивный дизайн**: Работает на всех устройствах
-
-## 🚀 Быстрый старт
-
+## 🚀 Быстрая установка
 ```bash
-# Клонирование
-git clone https://github.com/naumenis-code/autodialer-pro.git
-cd autodialer-pro
+git clone ttps://github.com/naumenis-code/AutoDialer-Ultimate/
+cd AutoDialer-Ultimate
+sudo ./install.sh
+```
 
-# Установка (от root)
-sudo bash scripts/install.sh
+📋 Системные требования
+Debian 12 (Bookworm)
+Минимум 4GB RAM, 2 vCPU
+Доступ к FreePBX серверу (Server-1)
+Открытые порты: 80, 443, 5060/udp, 10000-20000/udp
 
-# Доступ к веб-интерфейсу
-http://your-server-ip:5002
+🏗️ Архитектура
+[Server-2: AutoDialer]
+        ↓ SIP (PJSIP)
+[Server-1: FreePBX]
+        ↓ Trunk
+[Оператор связи]
+        ↓
+[Абоненты]
+
+🔐 Безопасность
+JWT с refresh token rotation
+RBAC (admin/operator)
+Rate limiting (sliding window)
+Circuit breaker для внешних сервисов
+Fail2ban для SIP
+HTTPS через Let's Encrypt
+
+📊 Мониторинг
+/metrics - Prometheus endpoint
+/api/health - Health check
+Логи: /opt/autodialer/logs/
+
+📁 СТРУКТУРА GitHub РЕПОЗИТОРИЯ
+autodialer-ultimate/
+├── README.md
+├── install.sh                    # Главный установочный скрипт
+├── .env.example                  # Пример конфигурации
+├── docker-compose.yml            # Опционально для Docker
+├── scripts/
+│   ├── 01_system_setup.sh        # Системные зависимости и лимиты
+│   ├── 02_asterisk_install.sh    # Установка Asterisk
+│   ├── 03_asterisk_config.sh     # Конфигурация Asterisk
+│   ├── 04_pjsip_config.sh        # PJSIP конфигурация
+│   ├── 05_dialplan_config.sh     # Dialplan
+│   ├── 06_tts_install.sh         # Установка Piper TTS
+│   ├── 07_postgresql_setup.sh    # Настройка PostgreSQL
+│   ├── 08_redis_setup.sh         # Настройка Redis
+│   ├── 09_python_backend.sh      # Установка Python и зависимостей
+│   ├── 10_nginx_setup.sh         # Настройка Nginx
+│   ├── 11_firewall_setup.sh      # Настройка файрвола
+│   └── 12_start_services.sh      # Запуск всех сервисов
+├── backend/
+│   ├── requirements.txt
+│   ├── main.py
+│   ├── logger.py
+│   ├── auth.py
+│   ├── circuit_breaker.py
+│   ├── rate_limiter.py
+│   ├── leader_election.py
+│   ├── task_registry.py
+│   └── ami_manager.py
+├── frontend/
+│   └── dist/
+│       └── index.html
+├── asterisk/
+│   ├── asterisk.conf
+│   ├── rtp.conf
+│   ├── pjsip.conf
+│   ├── extensions.conf
+│   └── manager.conf
+├── systemd/
+│   └── autodialer.service
+├── nginx/
+│   └── autodialer.conf
+└── sql/
+    └── schema.sql
