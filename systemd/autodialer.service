@@ -1,25 +1,246 @@
+# =============================================
+# AutoDialer Ultimate - Systemd Service
+# Version: 3.0.0
+# Location: /etc/systemd/system/autodialer.service
+# =============================================
+
 [Unit]
-Description=AutoDialer Ultimate Backend
-After=network.target postgresql.service redis-server.service asterisk.service
+Description=AutoDialer Ultimate Backend Service
+Documentation=https://github.com/naumenis-code/AutoDialer-Ultimate
+After=network.target network-online.target
+After=postgresql.service redis-server.service asterisk.service
 Wants=network-online.target
+Requires=postgresql.service redis-server.service
+
+# Start after time synchronization
+After=time-sync.target
+Wants=time-sync.target
 
 [Service]
+# =============================================
+# Service Type
+# =============================================
 Type=simple
+
+# =============================================
+# User and Group
+# =============================================
 User=autodialer
 Group=autodialer
+
+# =============================================
+# Working Directory
+# =============================================
 WorkingDirectory=/opt/autodialer/backend
-Environment="PATH=/opt/autodialer/venv/bin"
+
+# =============================================
+# Environment
+# =============================================
+Environment="PATH=/opt/autodialer/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 EnvironmentFile=/opt/autodialer/config/.env
-ExecStart=/opt/autodialer/venv/bin/gunicorn -w 4 --threads 8 -k uvicorn.workers.UvicornWorker \
-          --access-logfile /opt/autodialer/logs/access.log \
-          --error-logfile /opt/autodialer/logs/error.log \
-          --log-level info \
-          --timeout 120 \
-          --graceful-timeout 30 \
-          main:app --bind 127.0.0.1:8000
+Environment="PYTHONUNBUFFERED=1"
+Environment="TZ=UTC"
+Environment="LANG=en_US.UTF-8"
+Environment="LC_ALL=en_US.UTF-8"
+
+# =============================================
+# ExecStart - Gunicorn with Uvicorn Workers
+# =============================================
+ExecStart=/opt/autodialer/venv/bin/gunicorn \
+    -w 4 \
+    --threads 8 \
+    -k uvicorn.workers.UvicornWorker \
+    --bind 127.0.0.1:8000 \
+    --access-logfile /opt/autodialer/logs/access.log \
+    --error-logfile /opt/autodialer/logs/error.log \
+    --log-level info \
+    --log-config /opt/autodialer/config/logging.conf \
+    --timeout 120 \
+    --graceful-timeout 30 \
+    --keep-alive 5 \
+    --max-requests 10000 \
+    --max-requests-jitter 1000 \
+    --worker-connections 1000 \
+    --backlog 2048 \
+    --proxy-allow-from 127.0.0.1 \
+    --forwarded-allow-ips 127.0.0.1 \
+    --capture-output \
+    --enable-stdio-inheritance \
+    main:app
+
+# =============================================
+# Alternative: Direct Uvicorn (for development)
+# =============================================
+# ExecStart=/opt/autodialer/venv/bin/uvicorn \
+#     main:app \
+#     --host 127.0.0.1 \
+#     --port 8000 \
+#     --workers 4 \
+#     --log-level info \
+#     --access-log \
+#     --proxy-headers
+
+# =============================================
+# Restart Behavior
+# =============================================
 Restart=always
 RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=5
+
+# =============================================
+# File Descriptor Limits
+# =============================================
 LimitNOFILE=655350
+LimitNOFILESoft=655350
+
+# =============================================
+# Process Limits
+# =============================================
+LimitNPROC=655350
+LimitNPROCSoft=655350
+
+# =============================================
+# Memory Limits
+# =============================================
+LimitMEMLOCK=65536
+MemoryMax=2G
+MemoryHigh=1.5G
+
+# =============================================
+# CPU Limits
+# =============================================
+CPUQuota=200%
+
+# =============================================
+# Task Limits
+# =============================================
+TasksMax=infinity
+
+# =============================================
+# Core Dump
+# =============================================
+LimitCORE=0
+
+# =============================================
+# Address Space
+# =============================================
+LimitAS=infinity
+LimitRSS=infinity
+
+# =============================================
+# Nice and I/O Priority
+# =============================================
+Nice=-5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=0
+
+# =============================================
+# Runtime Directory
+# =============================================
+RuntimeDirectory=autodialer
+RuntimeDirectoryMode=0755
+StateDirectory=autodialer
+StateDirectoryMode=0750
+CacheDirectory=autodialer
+CacheDirectoryMode=0750
+LogsDirectory=autodialer
+LogsDirectoryMode=0750
+
+# =============================================
+# Security Hardening
+# =============================================
+
+# Prevent service from gaining new privileges
+NoNewPrivileges=yes
+
+# Protect system directories
+ProtectSystem=strict
+ProtectHome=yes
+
+# Private /tmp and /dev
+PrivateTmp=yes
+PrivateDevices=no
+
+# Protect kernel tunables
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+# Restrict network access
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+# Restrict system calls
+SystemCallFilter=@system-service @network-io @signal @timer @process @io-event @ipc
+SystemCallArchitectures=native
+
+# Protect hostname and clock
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelLogs=yes
+
+# Restrict realtime capabilities
+RestrictRealtime=no
+
+# Restrict SUID/SGID
+RestrictSUIDSGID=yes
+
+# Remove IPC on exit
+RemoveIPC=yes
+
+# Lock personality
+LockPersonality=yes
+
+# Private users (requires systemd 235+)
+# PrivateUsers=yes
+
+# =============================================
+# Sandboxing
+# =============================================
+
+# Read-only directories
+ReadOnlyPaths=/usr /etc /opt/autodialer/backend
+ReadWritePaths=/opt/autodialer/logs /opt/autodialer/tmp /var/log /tmp
+
+# Inaccessible paths
+InaccessiblePaths=/root /home
+
+# Bind paths (if needed)
+# BindPaths=/var/lib/asterisk/sounds/tts:/opt/autodialer/audio:ro
+
+# =============================================
+# Timeout Settings
+# =============================================
+TimeoutStartSec=60
+TimeoutStopSec=30
+TimeoutAbortSec=10
+
+# =============================================
+# Watchdog
+# =============================================
+WatchdogSec=30
+
+# =============================================
+# Kill Mode
+# =============================================
+KillMode=mixed
+KillSignal=SIGTERM
+SendSIGKILL=yes
+FinalKillSignal=SIGKILL
+
+# =============================================
+# Failure Handling
+# =============================================
+# Restart if exit code is not 0 or signal
+RestartForceExitStatus=0
+SuccessExitStatus=0 143
+
+# =============================================
+# Standard Output/Error
+# =============================================
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=autodialer
 
 [Install]
 WantedBy=multi-user.target
