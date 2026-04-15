@@ -1,0 +1,7 @@
+"""
+AutoDialer Ultimate Backend
+Version: 3.0.0
+"""
+
+__version__ = "3.0.0"
+__author__ = "AutoDialer Team"
