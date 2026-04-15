@@ -1,430 +1,385 @@
-// AutoDialer Ultimate Frontend Application
-
-// Global state
-let accessToken = '';
-let refreshToken = '';
-let userRole = '';
-let username = '';
-let forceChange = false;
-let currentTab = 'dashboard';
-
-const API_BASE = '/api';
+// Дополнительные функции для полной версии
 
 // =============================================
-// Initialization
+// Campaign Modal
 // =============================================
-document.addEventListener('DOMContentLoaded', () => {
-    const savedRefreshToken = localStorage.getItem('refresh_token');
-    if (savedRefreshToken) {
-        refreshToken = savedRefreshToken;
-        tryAutoLogin();
-    }
-});
-
-async function tryAutoLogin() {
-    try {
-        const response = await fetch(`${API_BASE}/auth/refresh`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${refreshToken}` }
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            accessToken = data.access_token;
-            await loadUserInfo();
-            showApp();
-        } else {
-            localStorage.removeItem('refresh_token');
-        }
-    } catch (e) {
-        console.error('Auto login failed:', e);
-    }
+function openCampaignModal() {
+    document.getElementById('campaignModal').style.display = 'flex';
+    loadAudioForSelect();
 }
 
-// =============================================
-// Authentication
-// =============================================
-async function login() {
-    const usernameInput = document.getElementById('loginUsername');
-    const passwordInput = document.getElementById('loginPassword');
-    const errorDiv = document.getElementById('loginError');
-    
-    try {
-        const response = await fetch(`${API_BASE}/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                username: usernameInput.value,
-                password: passwordInput.value
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (!response.ok) {
-            throw new Error(data.detail || 'Login failed');
-        }
-        
-        accessToken = data.access_token;
-        refreshToken = data.refresh_token;
-        userRole = data.role;
-        forceChange = data.force_password_change;
-        
-        localStorage.setItem('refresh_token', refreshToken);
-        
-        if (forceChange) {
-            showPasswordModal();
-        } else {
-            await loadUserInfo();
-            showApp();
-        }
-    } catch (e) {
-        errorDiv.textContent = e.message;
-    }
+function closeCampaignModal() {
+    document.getElementById('campaignModal').style.display = 'none';
+    document.getElementById('campaignName').value = '';
 }
 
-async function logout() {
-    try {
-        await authFetch(`${API_BASE}/auth/logout`, { method: 'POST' });
-    } catch (e) {
-        // Ignore
-    }
+async function createCampaign() {
+    const name = document.getElementById('campaignName').value;
+    const maxCalls = parseInt(document.getElementById('campaignMaxCalls').value);
+    const cps = parseInt(document.getElementById('campaignCps').value);
+    const audioId = document.getElementById('campaignAudio').value;
     
-    localStorage.removeItem('refresh_token');
-    accessToken = '';
-    refreshToken = '';
-    
-    document.getElementById('appScreen').style.display = 'none';
-    document.getElementById('loginScreen').style.display = 'flex';
-}
-
-async function changePassword() {
-    const oldPass = document.getElementById('oldPassword').value;
-    const newPass1 = document.getElementById('newPassword1').value;
-    const newPass2 = document.getElementById('newPassword2').value;
-    const errorDiv = document.getElementById('passwordError');
-    
-    if (newPass1 !== newPass2) {
-        errorDiv.textContent = 'Пароли не совпадают';
-        return;
-    }
-    
-    if (newPass1.length < 6) {
-        errorDiv.textContent = 'Пароль должен быть не менее 6 символов';
+    if (!name) {
+        alert('Введите название кампании');
         return;
     }
     
     try {
-        const response = await authFetch(`${API_BASE}/auth/change-password`, {
+        const response = await authFetch(`${API_BASE}/campaigns`, {
             method: 'POST',
-            body: JSON.stringify({
-                old_password: oldPass,
-                new_password: newPass1
-            })
+            body: JSON.stringify({ name, max_calls: maxCalls, cps, audio_id: audioId || null })
         });
         
         if (response.ok) {
-            closePasswordModal();
-            await loadUserInfo();
-            showApp();
+            closeCampaignModal();
+            loadCampaigns();
+            if (currentTab === 'dashboard') loadDashboard();
         } else {
             const data = await response.json();
-            errorDiv.textContent = data.detail || 'Ошибка смены пароля';
+            alert(data.detail || 'Ошибка создания');
         }
     } catch (e) {
-        errorDiv.textContent = 'Ошибка сервера';
+        alert('Ошибка сервера');
     }
 }
 
 // =============================================
-// API Helpers
+// User Modal
 // =============================================
-async function authFetch(url, options = {}) {
-    if (!options.headers) {
-        options.headers = {};
-    }
-    options.headers['Authorization'] = `Bearer ${accessToken}`;
-    options.headers['Content-Type'] = options.headers['Content-Type'] || 'application/json';
-    
-    let response = await fetch(url, options);
-    
-    if (response.status === 401) {
-        const refreshed = await refreshAccessToken();
-        if (refreshed) {
-            options.headers['Authorization'] = `Bearer ${accessToken}`;
-            response = await fetch(url, options);
-        }
-    }
-    
-    return response;
+function openUserModal() {
+    document.getElementById('userModal').style.display = 'flex';
 }
 
-async function refreshAccessToken() {
+function closeUserModal() {
+    document.getElementById('userModal').style.display = 'none';
+    document.getElementById('newUsername').value = '';
+    document.getElementById('newUserPassword').value = '';
+}
+
+async function createUser() {
+    const username = document.getElementById('newUsername').value;
+    const password = document.getElementById('newUserPassword').value;
+    const role = document.getElementById('newUserRole').value;
+    
+    if (!username || !password) {
+        alert('Заполните все поля');
+        return;
+    }
+    
     try {
-        const response = await fetch(`${API_BASE}/auth/refresh`, {
+        const response = await authFetch(`${API_BASE}/users`, {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${refreshToken}` }
+            body: JSON.stringify({ username, password, role })
         });
         
         if (response.ok) {
+            closeUserModal();
+            loadUsers();
+        } else {
             const data = await response.json();
-            accessToken = data.access_token;
-            return true;
+            alert(data.detail || 'Ошибка создания');
         }
     } catch (e) {
-        console.error('Token refresh failed:', e);
+        alert('Ошибка сервера');
     }
-    
-    logout();
-    return false;
 }
 
-async function loadUserInfo() {
+// =============================================
+// Contacts
+// =============================================
+async function loadContacts() {
     try {
-        const response = await authFetch(`${API_BASE}/auth/me`);
+        const response = await authFetch(`${API_BASE}/contacts?limit=50`);
         if (response.ok) {
             const data = await response.json();
-            username = data.username;
-            userRole = data.role;
-        }
-    } catch (e) {
-        console.error('Failed to load user info:', e);
-    }
-}
-
-// =============================================
-// UI Functions
-// =============================================
-function showApp() {
-    document.getElementById('loginScreen').style.display = 'none';
-    document.getElementById('appScreen').style.display = 'block';
-    
-    document.getElementById('userDisplay').innerHTML = `
-        <span class="badge badge-${userRole}">${userRole}</span> ${username}
-    `;
-    
-    if (userRole !== 'admin') {
-        document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
-        const killSwitch = document.getElementById('killSwitchBtn');
-        if (killSwitch) killSwitch.style.display = 'none';
-    }
-    
-    switchTab('dashboard');
-    startPeriodicRefresh();
-}
-
-function showPasswordModal() {
-    document.getElementById('passwordModal').style.display = 'flex';
-}
-
-function closePasswordModal() {
-    document.getElementById('passwordModal').style.display = 'none';
-}
-
-function switchTab(tabId) {
-    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.sidebar-item').forEach(s => s.classList.remove('active'));
-    
-    document.getElementById(tabId).classList.add('active');
-    document.querySelector(`[data-tab="${tabId}"]`)?.classList.add('active');
-    
-    currentTab = tabId;
-    loadTabContent(tabId);
-}
-
-async function loadTabContent(tabId) {
-    switch (tabId) {
-        case 'dashboard':
-            await loadDashboard();
-            break;
-        case 'campaigns':
-            await loadCampaigns();
-            break;
-        case 'contacts':
-            await loadContacts();
-            break;
-        case 'history':
-            await loadHistory();
-            break;
-        case 'audio':
-            await loadAudio();
-            break;
-        case 'users':
-            await loadUsers();
-            break;
-        case 'settings':
-            await loadSettings();
-            break;
-    }
-}
-
-function startPeriodicRefresh() {
-    setInterval(async () => {
-        await refreshSystemStatus();
-        if (currentTab === 'dashboard') {
-            await loadDashboard();
-        }
-    }, 3000);
-}
-
-// =============================================
-// Data Loading
-// =============================================
-async function refreshSystemStatus() {
-    try {
-        const response = await authFetch(`${API_BASE}/system/status`);
-        if (response.ok) {
-            const data = await response.json();
-            document.getElementById('sysStatus').textContent = data.enabled ? 'Активна' : 'ОСТАНОВЛЕНА';
-            document.getElementById('sysChannels').textContent = `${data.active_calls}/${data.max_calls}`;
+            const container = document.getElementById('contactsList');
             
-            const killSwitch = document.getElementById('killSwitchBtn');
-            if (killSwitch) {
-                killSwitch.textContent = data.enabled ? '🛑 АВАРИЙНАЯ ОСТАНОВКА' : '🟢 ВКЛЮЧИТЬ';
-            }
-        }
-    } catch (e) {
-        console.error('Status refresh failed:', e);
-    }
-}
-
-async function loadDashboard() {
-    try {
-        const response = await authFetch(`${API_BASE}/stats`);
-        if (response.ok) {
-            const data = await response.json();
-            document.getElementById('dashTotal').textContent = data.total_calls || 0;
-            document.getElementById('dashAgreed').textContent = data.agreed || 0;
-            document.getElementById('dashToday').textContent = data.today_calls || 0;
-            document.getElementById('dashConversion').textContent = `${data.conversion_rate || 0}%`;
-        }
-    } catch (e) {
-        console.error('Dashboard load failed:', e);
-    }
-}
-
-async function loadCampaigns() {
-    try {
-        const response = await authFetch(`${API_BASE}/campaigns`);
-        if (response.ok) {
-            const data = await response.json();
-            const tbody = document.getElementById('campaignsTable');
-            
-            if (data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Нет кампаний</td></tr>';
+            if (data.contacts.length === 0) {
+                container.innerHTML = '<div class="loading">Нет контактов</div>';
                 return;
             }
             
-            tbody.innerHTML = data.map(c => `
+            container.innerHTML = data.contacts.map(c => `
+                <div class="contact-item">
+                    <div>
+                        <strong>${c.phone}</strong>
+                        ${c.name ? ` - ${c.name}` : ''}
+                    </div>
+                    <div>
+                        ${c.blacklisted ? '<span class="status-badge status-declined">Заблокирован</span>' : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+    } catch (e) {
+        console.error('Contacts load failed:', e);
+    }
+}
+
+async function importContacts() {
+    const text = document.getElementById('contactsImport').value;
+    const phones = text.split('\n')
+        .map(p => p.trim())
+        .filter(p => p)
+        .map(p => ({ phone: p }));
+    
+    if (phones.length === 0) {
+        alert('Введите номера телефонов');
+        return;
+    }
+    
+    try {
+        const response = await authFetch(`${API_BASE}/contacts/import`, {
+            method: 'POST',
+            body: JSON.stringify({ contacts: phones })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            alert(`Импортировано: ${data.imported}, пропущено: ${data.skipped}`);
+            document.getElementById('contactsImport').value = '';
+            loadContacts();
+        }
+    } catch (e) {
+        alert('Ошибка импорта');
+    }
+}
+
+// =============================================
+// History
+// =============================================
+async function loadHistory(page = 1) {
+    const campaignId = document.getElementById('historyFilterCampaign').value;
+    const status = document.getElementById('historyFilterStatus').value;
+    
+    let url = `${API_BASE}/history?skip=${(page - 1) * 20}&limit=20`;
+    if (campaignId) url += `&campaign_id=${campaignId}`;
+    if (status) url += `&status=${status}`;
+    
+    try {
+        const response = await authFetch(url);
+        if (response.ok) {
+            const data = await response.json();
+            const tbody = document.getElementById('historyTable');
+            
+            if (data.history.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Нет записей</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = data.history.map(h => `
                 <tr>
-                    <td>${c.id}</td>
-                    <td>${c.name}</td>
-                    <td><span class="badge badge-${c.status}">${c.status}</span></td>
-                    <td>${c.max_calls}</td>
-                    <td>${c.cps}</td>
+                    <td>${new Date(h.created_at).toLocaleString()}</td>
+                    <td>${h.phone}</td>
+                    <td>${h.campaign_name || '-'}</td>
+                    <td><span class="status-badge status-${h.status}">${h.status}</span></td>
+                    <td>${h.dtmf_result || '-'}</td>
+                </tr>
+            `).join('');
+            
+            // Pagination
+            const totalPages = Math.ceil(data.total / 20);
+            renderPagination('historyPagination', page, totalPages, loadHistory);
+        }
+    } catch (e) {
+        console.error('History load failed:', e);
+    }
+}
+
+function renderPagination(containerId, currentPage, totalPages, callback) {
+    const container = document.getElementById(containerId);
+    if (totalPages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+    
+    let html = '';
+    for (let i = 1; i <= totalPages; i++) {
+        if (i === currentPage) {
+            html += `<button class="active">${i}</button>`;
+        } else if (Math.abs(i - currentPage) <= 2 || i === 1 || i === totalPages) {
+            html += `<button onclick="${callback.name}(${i})">${i}</button>`;
+        } else if (Math.abs(i - currentPage) === 3) {
+            html += `<span>...</span>`;
+        }
+    }
+    container.innerHTML = html;
+}
+
+// =============================================
+// Audio
+// =============================================
+async function loadAudio() {
+    try {
+        const response = await authFetch(`${API_BASE}/audio`);
+        if (response.ok) {
+            const data = await response.json();
+            const container = document.getElementById('audioList');
+            
+            if (data.length === 0) {
+                container.innerHTML = '<div class="loading">Нет аудиофайлов</div>';
+                return;
+            }
+            
+            container.innerHTML = data.map(a => `
+                <div class="audio-item">
+                    <div>
+                        <strong>${a.name}</strong>
+                        ${a.campaign_name ? ` (${a.campaign_name})` : ''}
+                        <div class="text-muted" style="font-size:0.8rem;">${a.created_by_name || 'system'}</div>
+                    </div>
+                    <div style="display:flex; gap:0.5rem; align-items:center;">
+                        <audio controls src="${a.file_path.replace('/var/lib/asterisk/sounds/', '/audio/')}" style="height:30px;"></audio>
+                        <button class="btn btn-outline btn-sm" onclick="deleteAudio(${a.id})">🗑</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+    } catch (e) {
+        console.error('Audio load failed:', e);
+    }
+}
+
+async function generateAudio() {
+    const name = document.getElementById('audioName').value;
+    const text = document.getElementById('audioText').value;
+    const voice = document.getElementById('audioVoice').value;
+    
+    if (!name || !text) {
+        alert('Заполните название и текст');
+        return;
+    }
+    
+    try {
+        const response = await authFetch(`${API_BASE}/audio/generate`, {
+            method: 'POST',
+            body: JSON.stringify({ name, text, voice })
+        });
+        
+        if (response.ok) {
+            document.getElementById('audioName').value = '';
+            document.getElementById('audioText').value = '';
+            loadAudio();
+        } else {
+            const data = await response.json();
+            alert(data.detail || 'Ошибка генерации');
+        }
+    } catch (e) {
+        alert('Ошибка сервера');
+    }
+}
+
+async function deleteAudio(id) {
+    if (!confirm('Удалить аудиофайл?')) return;
+    
+    try {
+        const response = await authFetch(`${API_BASE}/audio/${id}`, {
+            method: 'DELETE'
+        });
+        if (response.ok) {
+            loadAudio();
+        }
+    } catch (e) {
+        alert('Ошибка удаления');
+    }
+}
+
+async function loadAudioForSelect() {
+    try {
+        const response = await authFetch(`${API_BASE}/audio`);
+        if (response.ok) {
+            const data = await response.json();
+            const select = document.getElementById('campaignAudio');
+            select.innerHTML = '<option value="">По умолчанию</option>' +
+                data.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+        }
+    } catch (e) {
+        console.error('Audio for select failed:', e);
+    }
+}
+
+// =============================================
+// Users
+// =============================================
+async function loadUsers() {
+    try {
+        const response = await authFetch(`${API_BASE}/users`);
+        if (response.ok) {
+            const data = await response.json();
+            const tbody = document.getElementById('usersTable');
+            
+            tbody.innerHTML = data.users.map(u => `
+                <tr>
+                    <td>${u.id}</td>
+                    <td>${u.username}</td>
+                    <td><span class="badge badge-${u.role}">${u.role}</span></td>
+                    <td>${u.last_login ? new Date(u.last_login).toLocaleString() : '-'}</td>
                     <td>
-                        ${c.status === 'draft' ? 
-                            `<button class="btn btn-success" onclick="startCampaign(${c.id})">▶</button>` : ''}
-                        ${c.status === 'running' && userRole === 'admin' ? 
-                            `<button class="btn btn-danger" onclick="stopCampaign(${c.id})">⏹</button>` : ''}
+                        ${u.id !== 1 ? `<button class="btn btn-outline btn-sm" onclick="deleteUser(${u.id})">🗑</button>` : ''}
                     </td>
                 </tr>
             `).join('');
         }
     } catch (e) {
-        console.error('Campaigns load failed:', e);
+        console.error('Users load failed:', e);
     }
 }
 
-async function loadContacts() {
-    // Implementation
+async function deleteUser(id) {
+    if (!confirm('Удалить пользователя?')) return;
+    
+    try {
+        const response = await authFetch(`${API_BASE}/users/${id}`, {
+            method: 'DELETE'
+        });
+        if (response.ok) {
+            loadUsers();
+        }
+    } catch (e) {
+        alert('Ошибка удаления');
+    }
 }
 
-async function loadHistory() {
-    // Implementation
-}
-
-async function loadAudio() {
-    // Implementation
-}
-
-async function loadUsers() {
-    // Implementation
-}
-
+// =============================================
+// Settings
+// =============================================
 async function loadSettings() {
-    // Implementation
-}
-
-// =============================================
-// Actions
-// =============================================
-async function startCampaign(id) {
     try {
-        const response = await authFetch(`${API_BASE}/campaigns/${id}/start`, {
-            method: 'POST'
-        });
+        const response = await authFetch(`${API_BASE}/settings`);
         if (response.ok) {
-            loadCampaigns();
-        } else {
             const data = await response.json();
-            alert(data.detail || 'Ошибка запуска');
+            const container = document.getElementById('settingsForm');
+            
+            container.innerHTML = Object.entries(data).map(([key, info]) => `
+                <div class="form-group">
+                    <label>${key}</label>
+                    <div style="display:flex; gap:0.5rem;">
+                        <input type="text" value="${info.value}" id="setting_${key}" style="flex:1;">
+                        <button class="btn btn-outline btn-sm" onclick="updateSetting('${key}')">Сохранить</button>
+                    </div>
+                    ${info.description ? `<small class="text-muted">${info.description}</small>` : ''}
+                </div>
+            `).join('');
         }
     } catch (e) {
-        alert('Ошибка сервера');
+        console.error('Settings load failed:', e);
     }
 }
 
-async function stopCampaign(id) {
+async function updateSetting(key) {
+    const input = document.getElementById(`setting_${key}`);
+    const value = input.value;
+    
     try {
-        const response = await authFetch(`${API_BASE}/campaigns/${id}/stop`, {
-            method: 'POST'
+        const response = await authFetch(`${API_BASE}/settings/${key}`, {
+            method: 'PUT',
+            body: JSON.stringify({ value })
         });
-        if (response.ok) {
-            loadCampaigns();
-        }
-    } catch (e) {
-        alert('Ошибка сервера');
-    }
-}
-
-async function toggleSystem() {
-    try {
-        const statusResponse = await authFetch(`${API_BASE}/system/status`);
-        const statusData = await statusResponse.json();
         
-        if (statusData.enabled) {
-            if (!confirm('Аварийная остановка системы? Все активные звонки будут сброшены!')) {
-                return;
-            }
-            await authFetch(`${API_BASE}/system/disable`, { method: 'POST' });
-        } else {
-            await authFetch(`${API_BASE}/system/enable`, { method: 'POST' });
-        }
-        
-        await refreshSystemStatus();
-    } catch (e) {
-        alert('Ошибка сервера');
-    }
-}
-
-function openCampaignModal() {
-    const name = prompt('Название кампании:');
-    if (name) {
-        createCampaign(name);
-    }
-}
-
-async function createCampaign(name) {
-    try {
-        const response = await authFetch(`${API_BASE}/campaigns`, {
-            method: 'POST',
-            body: JSON.stringify({ name, max_calls: 30, cps: 5 })
-        });
         if (response.ok) {
-            loadCampaigns();
+            alert('Настройка сохранена');
         }
     } catch (e) {
-        alert('Ошибка создания');
+        alert('Ошибка сохранения');
     }
 }
