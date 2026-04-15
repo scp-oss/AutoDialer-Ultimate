@@ -4,8 +4,15 @@ Enterprise-grade автоматический обзвонщик на базе A
 
 ## 🚀 Быстрая установка
 ```bash
-git clone ttps://github.com/naumenis-code/AutoDialer-Ultimate/
-cd AutoDialer-Ultimate
+# Клонирование
+git clone https://github.com/naumenis-code/AutoDialer-Ultimate/
+cd autodialer-ultimate
+
+# Настройка
+cp .env.example .env
+nano .env  # Укажите FREEPBX_IP и пароли
+
+# Установка
 sudo ./install.sh
 ```
 
