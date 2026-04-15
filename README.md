@@ -16,6 +16,7 @@ Debian 12 (Bookworm)
 Открытые порты: 80, 443, 5060/udp, 10000-20000/udp
 
 🏗️ Архитектура
+```bash
 [Server-2: AutoDialer]
         ↓ SIP (PJSIP)
 [Server-1: FreePBX]
@@ -23,21 +24,24 @@ Debian 12 (Bookworm)
 [Оператор связи]
         ↓
 [Абоненты]
-
+```
 🔐 Безопасность
+```bash
 JWT с refresh token rotation
 RBAC (admin/operator)
 Rate limiting (sliding window)
 Circuit breaker для внешних сервисов
 Fail2ban для SIP
 HTTPS через Let's Encrypt
-
+```
 📊 Мониторинг
+```bash
 /metrics - Prometheus endpoint
 /api/health - Health check
 Логи: /opt/autodialer/logs/
-
+```
 📁 СТРУКТУРА GitHub РЕПОЗИТОРИЯ
+```bash
 autodialer-ultimate/
 ├── README.md
 ├── install.sh                    # Главный установочный скрипт
@@ -81,3 +85,4 @@ autodialer-ultimate/
 │   └── autodialer.conf
 └── sql/
     └── schema.sql
+```
