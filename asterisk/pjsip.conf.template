@@ -22,9 +22,12 @@ endpoint_identifier_order = ip,username,anonymous
 default_realm = ${FREEPBX_IP}
 max_initial_qualify = 5
 
+; Отладочная информация (включить при проблемах)
+; debug = yes
+
 
 ; =============================================
-; ТРАНСПОРТ UDP
+; ТРАНСПОРТ UDP (основной)
 ; =============================================
 [transport-udp]
 type = transport
@@ -35,6 +38,26 @@ bind = 0.0.0.0
 local_net = 192.168.0.0/16,10.0.0.0/8,172.16.0.0/12
 external_media_address = ${FREEPBX_IP}
 external_signaling_address = ${FREEPBX_IP}
+
+; Разрешить переиспользование порта
+allow_reload = yes
+
+; TOS для QoS
+tos = cs3
+
+
+; =============================================
+; ТРАНСПОРТ TCP (опционально, для failover)
+; =============================================
+[transport-tcp]
+type = transport
+protocol = tcp
+bind = 0.0.0.0
+local_net = 192.168.0.0/16,10.0.0.0/8,172.16.0.0/12
+external_media_address = ${FREEPBX_IP}
+external_signaling_address = ${FREEPBX_IP}
+allow_reload = yes
+tos = cs3
 
 
 ; =============================================
@@ -60,13 +83,17 @@ remove_existing = yes
 contact = sip:${FREEPBX_EXTENSION}@${FREEPBX_IP}:5060
 
 ; Проверка доступности (Qualify)
+; Отправляет OPTIONS запросы для проверки состояния
 qualify_frequency = 30
 qualify_timeout = 5.0
 
-; Время жизни регистрации
+; Время жизни регистрации (секунд)
 default_expiration = 120
 maximum_expiration = 3600
 minimum_expiration = 60
+
+; Поддержка outbound (RFC 5626)
+support_outbound = yes
 
 
 ; =============================================
@@ -96,6 +123,7 @@ aors = ${FREEPBX_EXTENSION}_aor
 ; ========== CALLER ID ==========
 callerid = AutoDialer <${FREEPBX_EXTENSION}>
 callerid_privacy = allowed_not_screened
+callerid_tag = ${FREEPBX_EXTENSION}
 
 ; ========== МЕДИА НАСТРОЙКИ ==========
 direct_media = no
@@ -149,6 +177,12 @@ fax_detect = no
 ; ========== ЯЗЫК ==========
 language = ru
 
+; ========== КОНТЕКСТ СООБЩЕНИЙ ==========
+message_context = dialer_bridge
+
+; ========== ГОЛОСОВАЯ ПОЧТА ==========
+voicemail_extension = 
+
 ; ========== СОСТОЯНИЕ УСТРОЙСТВА ==========
 device_state_busy_at = 1
 
@@ -161,6 +195,27 @@ connected_line_method = invite
 
 ; ========== T.38 (ОТКЛЮЧЕНО) ==========
 t38_udptl = no
+
+; ========== SRTP (ОТКЛЮЧЕНО) ==========
+media_encryption = no
+
+; ========== 100rel (поддержка PRACK) ==========
+100rel = yes
+
+; ========== ПОДДЕРЖКА РАННИХ МЕДИА ==========
+direct_media_method = invite
+
+; ========== ПРИВЯЗКА МЕДИА ==========
+bind_rtp_to_media_address = yes
+
+; ========== СЛЕЖЕНИЕ ЗА ВЫЗОВАМИ ==========
+callerid_privacy = allowed_not_screened
+
+; ========== ОТКЛЮЧЕНИЕ НЕИСПОЛЬЗУЕМЫХ ФУНКЦИЙ ==========
+follow_early_media_fork = no
+accept_multiple_sdp_answers = no
+suppress_q850_reason_headers = no
+ignore_183_without_sdp = no
 
 
 ; =============================================
@@ -207,6 +262,52 @@ match_header = From: <sip:${FREEPBX_EXTENSION}@${FREEPBX_IP}>
 
 
 ; =============================================
+; РЕЗЕРВНЫЙ ENDPOINT (ОПЦИОНАЛЬНО)
+; Используется если есть резервный FreePBX
+; =============================================
+; [${FREEPBX_EXTENSION}_backup_aor]
+; type = aor
+; max_contacts = 1
+; contact = sip:${FREEPBX_EXTENSION}@BACKUP_IP:5060
+
+; [${FREEPBX_EXTENSION}_backup_endpoint]
+; type = endpoint
+; transport = transport-udp
+; context = dialer_bridge
+; disallow = all
+; allow = ulaw
+; allow = alaw
+; outbound_auth = ${FREEPBX_EXTENSION}_auth
+; aors = ${FREEPBX_EXTENSION}_backup_aor
+; callerid = AutoDialer <${FREEPBX_EXTENSION}>
+; from_user = ${FREEPBX_EXTENSION}
+; from_domain = BACKUP_IP
+; outbound_proxy = sip:BACKUP_IP:5060
+
+
+; =============================================
+; СПИСКИ КОНТРОЛЯ ДОСТУПА (ACL)
+; =============================================
+[acl-local]
+type = acl
+deny = 0.0.0.0/0.0.0.0
+permit = 127.0.0.1
+permit = ::1
+permit = 192.168.0.0/16
+permit = 10.0.0.0/8
+permit = 172.16.0.0/12
+
+
+; =============================================
+; ПСЕВДОНИМ ДОМЕНА
+; =============================================
+; [domain-alias]
+; type = domain_alias
+; domain = ${FREEPBX_IP}
+; alias = freepbx.local
+
+
+; =============================================
 ; СИСТЕМНЫЕ НАСТРОЙКИ
 ; =============================================
 [system]
@@ -227,3 +328,6 @@ threadpool_max_size = 50
 
 ; Отключение мульти-домена
 disable_multi_domain = no
+
+; Настройки логирования PJSIP
+; log_level = 3
