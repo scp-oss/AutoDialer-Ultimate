@@ -1,0 +1,77 @@
+[global]
+type = global
+user_agent = AutoDialer-Ultimate
+keep_alive_interval = 90
+endpoint_identifier_order = ip,username,anonymous
+
+[transport-udp]
+type = transport
+protocol = udp
+bind = 0.0.0.0
+local_net = 192.168.0.0/16,10.0.0.0/8,172.16.0.0/12
+external_media_address = ${FREEPBX_IP}
+external_signaling_address = ${FREEPBX_IP}
+
+[291_auth]
+type = auth
+auth_type = userpass
+username = 291
+password = ${EXTENSION_PASSWORD}
+
+[291_aor]
+type = aor
+max_contacts = 1
+remove_existing = yes
+contact = sip:291@${FREEPBX_IP}:5060
+
+[291_endpoint]
+type = endpoint
+transport = transport-udp
+context = dialer_bridge
+disallow = all
+allow = ulaw
+allow = alaw
+allow = g722
+dtmf_mode = rfc4733
+outbound_auth = 291_auth
+aors = 291_aor
+callerid = AutoDialer
+direct_media = no
+from_user = 291
+from_domain = ${FREEPBX_IP}
+outbound_proxy = sip:${FREEPBX_IP}:5060
+rewrite_contact = yes
+rtp_symmetric = yes
+force_rport = yes
+rtp_keepalive = 30
+rtp_timeout = 30
+rtp_timeout_hold = 60
+timers = yes
+timers_sess_expires = 1800
+timers_min_se = 90
+ice_support = no
+media_encryption = no
+media_use_received_transport = yes
+trust_id_inbound = yes
+trust_id_outbound = yes
+send_pai = yes
+send_rpid = yes
+
+[291_reg]
+type = registration
+outbound_auth = 291_auth
+server_uri = sip:${FREEPBX_IP}:5060
+client_uri = sip:291@${FREEPBX_IP}:5060
+contact_user = 291
+line = yes
+endpoint = 291_endpoint
+retry_interval = 60
+expiration = 120
+forbidden_retry_interval = 300
+max_retries = 10
+auth_rejection_permanent = no
+
+[291_identify]
+type = identify
+endpoint = 291_endpoint
+match = ${FREEPBX_IP}
