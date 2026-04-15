@@ -454,6 +454,28 @@ th {
 .status-agreed { background: #10b98120; color: #10b981; }
 .status-declined { background: #ef444420; color: #ef4444; }
 .status-busy { background: #f59e0b20;
+status-busy { background: #f59e0b20; color: #f59e0b; }
+.status-noanswer { background: #64748b20; color: #94a3b8; }
+.status-failed { background: #dc262620; color: #dc2626; }
+.status-timeout { background: #8b5cf620; color: #a78bfa; }
+
+@media (max-width: 768px) {
+    .layout {
+        flex-direction: column;
+    }
+    .sidebar {
+        width: 100%;
+        display: flex;
+        overflow-x: auto;
+    }
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    table {
+        display: block;
+        overflow-x: auto;
+    }
+}
 
 /* Utilities */
 .text-success { color: #10b981; }
