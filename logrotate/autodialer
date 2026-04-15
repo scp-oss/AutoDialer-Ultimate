@@ -1,0 +1,13 @@
+/opt/autodialer/logs/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    create 0640 autodialer autodialer
+    postrotate
+        systemctl reload autodialer > /dev/null 2>&1 || true
+    endscript
+}
