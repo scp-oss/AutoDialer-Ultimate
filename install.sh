@@ -1,13 +1,13 @@
 #!/bin/bash
 # =============================================
-# AutoDialer Ultimate - Main Installer
-# Version: 3.0.0
+# AutoDialer Ultimate - Главный установщик
+# Версия: 3.0.0
 # =============================================
 
 set -e
 
 # =============================================
-# Colors for Output
+# Цвета для вывода в консоль
 # =============================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -15,400 +15,441 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
-NC='\033[0m'
-
-print_step() { echo -e "\n${GREEN}[STEP]${NC} $1"; }
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${CYAN}[SUCCESS]${NC} $1"; }
-print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-print_header() { echo -e "\n${BOLD}${BLUE}========================================${NC}"; echo -e "${BOLD}${BLUE}$1${NC}"; echo -e "${BOLD}${BLUE}========================================${NC}"; }
+NC='\033[0m' # No Color
 
 # =============================================
-# Script Directory
+# Функции для форматированного вывода
+# =============================================
+print_step() { echo -e "\n${GREEN}[ШАГ]${NC} $1"; }
+print_info() { echo -e "${BLUE}[ИНФО]${NC} $1"; }
+print_success() { echo -e "${CYAN}[УСПЕХ]${NC} $1"; }
+print_warn() { echo -e "${YELLOW}[ВНИМАНИЕ]${NC} $1"; }
+print_error() { echo -e "${RED}[ОШИБКА]${NC} $1"; }
+print_header() { 
+    echo -e "\n${BOLD}${BLUE}========================================${NC}"
+    echo -e "${BOLD}${BLUE}$1${NC}"
+    echo -e "${BOLD}${BLUE}========================================${NC}"
+}
+
+# =============================================
+# Определение директории скрипта
 # =============================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export SCRIPT_DIR
-
 cd "$SCRIPT_DIR"
 
 # =============================================
-# Check Root
+# Проверка прав root
 # =============================================
 if [ "$EUID" -ne 0 ]; then 
-    print_error "Please run as root: sudo ./install.sh"
+    print_error "Запустите установку с правами root: sudo ./install.sh"
     exit 1
 fi
 
 # =============================================
-# Welcome Screen
+# Приветственный экран
 # =============================================
 clear
-print_header "AutoDialer Ultimate v3.0.0 Installer"
+print_header "Установщик AutoDialer Ultimate v3.0.0"
 echo ""
-print_info "This script will install and configure AutoDialer Ultimate."
-print_info "System: Debian 12 (Bookworm) recommended"
-print_info "Requirements: 4GB RAM, 2 vCPU, 20GB disk"
+print_info "Этот скрипт установит и настроит AutoDialer Ultimate."
+print_info "Рекомендуемая ОС: Debian 12 (Bookworm)"
+print_info "Требования: 4 ГБ RAM, 2 vCPU, 20 ГБ диска"
 echo ""
-print_warn "IMPORTANT:"
-echo "  - FreePBX server (Server-1) must be accessible"
-echo "  - Extension 291 must be created on FreePBX"
-echo "  - Ports 80, 443, 5060, 10000-20000 must be open"
+print_warn "ВАЖНО:"
+echo "  - Сервер FreePBX (Server-1) должен быть доступен по сети"
+echo "  - На FreePBX должен быть создан SIP extension"
+echo "  - Порты 80, 443, 5060, 10000-20000 должны быть открыты"
 echo ""
 
-read -p "Continue with installation? [y/N] " -n 1 -r
+read -p "Продолжить установку? [y/N] " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    print_error "Installation cancelled"
+    print_error "Установка отменена"
     exit 1
 fi
 
 # =============================================
-# Check .env File
+# Проверка наличия файла .env
 # =============================================
-print_step "Checking configuration..."
+print_step "Проверка конфигурации..."
 
 if [ ! -f "$SCRIPT_DIR/.env" ]; then
-    print_warn ".env file not found!"
-    print_info "Creating .env from .env.example..."
+    print_warn "Файл .env не найден!"
+    print_info "Создаю .env из .env.example..."
     
     if [ -f "$SCRIPT_DIR/.env.example" ]; then
         cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
+        print_success "Файл .env создан"
     else
-        print_error ".env.example not found!"
+        print_error "Файл .env.example не найден!"
         exit 1
     fi
     
-    print_info "Please edit .env file with your configuration:"
+    echo ""
+    print_info "Необходимо отредактировать файл .env:"
     print_info "  nano $SCRIPT_DIR/.env"
     echo ""
-    print_info "Required variables:"
-    echo "  - FREEPBX_IP          : IP address of your FreePBX server"
-    echo "  - EXTENSION_PASSWORD  : Password for SIP extension 291"
+    print_info "Обязательные параметры:"
+    echo "  - FREEPBX_IP          : IP-адрес вашего сервера FreePBX"
+    echo "  - FREEPBX_EXTENSION   : Номер SIP extension (по умолчанию: 291)"
+    echo "  - EXTENSION_PASSWORD  : Пароль для SIP extension"
     echo ""
     
-    read -p "Edit .env now and continue? [y/N] " -n 1 -r
+    read -p "Открыть .env для редактирования сейчас? [y/N] " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         ${EDITOR:-nano} "$SCRIPT_DIR/.env"
     else
-        print_error "Installation cancelled. Please configure .env first."
+        print_error "Установка отменена. Сначала настройте .env"
         exit 1
     fi
 fi
 
 # =============================================
-# Load Configuration
+# Загрузка конфигурации из .env
 # =============================================
+print_step "Загрузка конфигурации..."
 source "$SCRIPT_DIR/.env"
 
-# Validate required variables
+# =============================================
+# Установка значений по умолчанию
+# =============================================
+FREEPBX_EXTENSION="${FREEPBX_EXTENSION:-291}"
+MAX_CALLS="${MAX_CALLS:-50}"
+DEFAULT_CPS="${DEFAULT_CPS:-5}"
+CALL_TIMEOUT="${CALL_TIMEOUT:-30}"
+MAX_RETRIES="${MAX_RETRIES:-3}"
+TTS_VOICE="${TTS_VOICE:-denis}"
+DOMAIN_NAME="${DOMAIN_NAME:-}"
+
+# =============================================
+# Проверка обязательных параметров
+# =============================================
 if [ -z "$FREEPBX_IP" ]; then
-    print_error "FREEPBX_IP is not set in .env"
-    echo "Please set the IP address of your FreePBX server."
+    print_error "Параметр FREEPBX_IP не задан в .env"
+    echo "Укажите IP-адрес вашего сервера FreePBX."
     exit 1
 fi
 
 if [ -z "$EXTENSION_PASSWORD" ]; then
-    print_error "EXTENSION_PASSWORD is not set in .env"
-    echo "Please set the password for SIP extension 291."
+    print_error "Параметр EXTENSION_PASSWORD не задан в .env"
+    echo "Укажите пароль для SIP extension."
     exit 1
 fi
 
-print_success "Configuration loaded"
+print_success "Конфигурация загружена"
+print_info "  FreePBX IP:      $FREEPBX_IP"
+print_info "  FreePBX Extension: $FREEPBX_EXTENSION"
+print_info "  Домен:           ${DOMAIN_NAME:-не настроен}"
 
 # =============================================
-# Generate Secrets if Empty
+# Генерация секретов (если не заданы)
 # =============================================
-print_step "Generating secrets..."
+print_step "Генерация секретов..."
 
 SECRETS_UPDATED=false
 
 if [ -z "$DB_PASSWORD" ]; then
     DB_PASSWORD=$(openssl rand -hex 16)
-    sed -i "s/^# DB_PASSWORD=.*/DB_PASSWORD=$DB_PASSWORD/" "$SCRIPT_DIR/.env" 2>/dev/null || echo "DB_PASSWORD=$DB_PASSWORD" >> "$SCRIPT_DIR/.env"
+    sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=$DB_PASSWORD/" "$SCRIPT_DIR/.env" 2>/dev/null || echo "DB_PASSWORD=$DB_PASSWORD" >> "$SCRIPT_DIR/.env"
     SECRETS_UPDATED=true
-    print_info "Generated DB_PASSWORD"
+    print_info "Сгенерирован DB_PASSWORD"
 fi
 
 if [ -z "$JWT_SECRET" ]; then
     JWT_SECRET=$(openssl rand -hex 32)
-    sed -i "s/^# JWT_SECRET=.*/JWT_SECRET=$JWT_SECRET/" "$SCRIPT_DIR/.env" 2>/dev/null || echo "JWT_SECRET=$JWT_SECRET" >> "$SCRIPT_DIR/.env"
+    sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$JWT_SECRET/" "$SCRIPT_DIR/.env" 2>/dev/null || echo "JWT_SECRET=$JWT_SECRET" >> "$SCRIPT_DIR/.env"
     SECRETS_UPDATED=true
-    print_info "Generated JWT_SECRET"
+    print_info "Сгенерирован JWT_SECRET"
 fi
 
 if [ -z "$AMI_PASSWORD" ]; then
     AMI_PASSWORD=$(openssl rand -hex 16)
-    sed -i "s/^# AMI_PASSWORD=.*/AMI_PASSWORD=$AMI_PASSWORD/" "$SCRIPT_DIR/.env" 2>/dev/null || echo "AMI_PASSWORD=$AMI_PASSWORD" >> "$SCRIPT_DIR/.env"
+    sed -i "s/^AMI_PASSWORD=.*/AMI_PASSWORD=$AMI_PASSWORD/" "$SCRIPT_DIR/.env" 2>/dev/null || echo "AMI_PASSWORD=$AMI_PASSWORD" >> "$SCRIPT_DIR/.env"
     SECRETS_UPDATED=true
-    print_info "Generated AMI_PASSWORD"
+    print_info "Сгенерирован AMI_PASSWORD"
 fi
 
 if [ -z "$METRICS_PASS" ]; then
     METRICS_PASS=$(openssl rand -hex 8)
-    sed -i "s/^# METRICS_PASS=.*/METRICS_PASS=$METRICS_PASS/" "$SCRIPT_DIR/.env" 2>/dev/null || echo "METRICS_PASS=$METRICS_PASS" >> "$SCRIPT_DIR/.env"
+    sed -i "s/^METRICS_PASS=.*/METRICS_PASS=$METRICS_PASS/" "$SCRIPT_DIR/.env" 2>/dev/null || echo "METRICS_PASS=$METRICS_PASS" >> "$SCRIPT_DIR/.env"
     SECRETS_UPDATED=true
-    print_info "Generated METRICS_PASS"
+    print_info "Сгенерирован METRICS_PASS"
 fi
 
 if [ "$SECRETS_UPDATED" = true ]; then
     source "$SCRIPT_DIR/.env"
-    print_success "Secrets generated and saved to .env"
+    print_success "Секреты сгенерированы и сохранены в .env"
 fi
 
+# =============================================
+# Экспорт переменных для дочерних скриптов
+# =============================================
 export FREEPBX_IP
+export FREEPBX_EXTENSION
 export EXTENSION_PASSWORD
 export DB_PASSWORD
 export JWT_SECRET
 export AMI_PASSWORD
 export METRICS_PASS
-export DOMAIN_NAME="${DOMAIN_NAME:-}"
-export MAX_CALLS="${MAX_CALLS:-50}"
-export DEFAULT_CPS="${DEFAULT_CPS:-5}"
-export TTS_VOICE="${TTS_VOICE:-denis}"
+export DOMAIN_NAME
+export MAX_CALLS
+export DEFAULT_CPS
+export CALL_TIMEOUT
+export MAX_RETRIES
+export TTS_VOICE
 
 # =============================================
-# Installation Summary
+# Сводка перед установкой
 # =============================================
-print_header "Installation Summary"
+print_header "Сводка установки"
 echo ""
-print_info "FreePBX Server:     $FREEPBX_IP"
-print_info "Extension:          291"
-print_info "Domain:             ${DOMAIN_NAME:-Not configured}"
-print_info "Max Calls:          $MAX_CALLS"
-print_info "Default CPS:        $DEFAULT_CPS"
-print_info "TTS Voice:          $TTS_VOICE"
+print_info "Сервер FreePBX:      $FREEPBX_IP"
+print_info "Номер Extension:      $FREEPBX_EXTENSION"
+print_info "Домен:                ${DOMAIN_NAME:-не настроен}"
+print_info "Макс. каналов:        $MAX_CALLS"
+print_info "CPS по умолчанию:     $DEFAULT_CPS"
+print_info "Голос TTS:            $TTS_VOICE"
 echo ""
-print_info "Installation Directory: /opt/autodialer"
-print_info "Asterisk Directory:    /etc/asterisk"
+print_info "Директория установки: /opt/autodialer"
+print_info "Директория Asterisk:  /etc/asterisk"
 echo ""
 
-read -p "Start installation? [y/N] " -n 1 -r
+read -p "Начать установку? [y/N] " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    print_error "Installation cancelled"
+    print_error "Установка отменена"
     exit 1
 fi
 
 # =============================================
-# Make Scripts Executable
+# Делаем скрипты исполняемыми
 # =============================================
-print_step "Preparing installation scripts..."
+print_step "Подготовка установочных скриптов..."
 
 if [ -d "$SCRIPT_DIR/scripts" ]; then
     chmod +x "$SCRIPT_DIR/scripts/"*.sh 2>/dev/null || true
-    print_success "Scripts are executable"
+    print_success "Скрипты готовы к выполнению"
 else
-    print_error "scripts directory not found!"
+    print_error "Директория scripts не найдена!"
     exit 1
 fi
 
 # =============================================
-# Run Installation Scripts in Order
+# Запуск установочных скриптов по порядку
 # =============================================
 INSTALLATION_START=$(date +%s)
 
 SCRIPTS=(
-    "01_system_setup.sh"
-    "02_asterisk_install.sh"
-    "03_asterisk_config.sh"
-    "04_pjsip_config.sh"
-    "05_dialplan_config.sh"
-    "06_tts_install.sh"
-    "07_postgresql_setup.sh"
-    "08_redis_setup.sh"
-    "09_python_backend.sh"
-    "10_nginx_setup.sh"
-    "11_firewall_setup.sh"
-    "12_start_services.sh"
-    "13_fail2ban_setup.sh"
-    "14_logrotate_setup.sh"
+    "01_system_setup.sh:Настройка системы и установка зависимостей"
+    "02_asterisk_install.sh:Установка Asterisk"
+    "03_asterisk_config.sh:Конфигурация Asterisk"
+    "04_pjsip_config.sh:Настройка PJSIP"
+    "05_dialplan_config.sh:Настройка диалплана"
+    "06_tts_install.sh:Установка TTS (Piper)"
+    "07_postgresql_setup.sh:Настройка PostgreSQL"
+    "08_redis_setup.sh:Настройка Redis"
+    "09_python_backend.sh:Установка Python бэкенда"
+    "10_nginx_setup.sh:Настройка Nginx"
+    "11_firewall_setup.sh:Настройка файрвола"
+    "12_start_services.sh:Запуск сервисов"
+    "13_fail2ban_setup.sh:Настройка Fail2ban"
+    "14_logrotate_setup.sh:Настройка ротации логов"
 )
 
 FAILED_SCRIPTS=()
 
-for script in "${SCRIPTS[@]}"; do
+for script_info in "${SCRIPTS[@]}"; do
+    script="${script_info%%:*}"
+    description="${script_info##*:}"
     script_path="$SCRIPT_DIR/scripts/$script"
     
     if [ -f "$script_path" ]; then
-        print_header "Running: $script"
+        print_header "Выполнение: $description"
         
         if bash "$script_path"; then
-            print_success "$script completed"
+            print_success "$script выполнен успешно"
         else
-            print_error "$script failed"
+            print_error "$script завершился с ошибкой"
             FAILED_SCRIPTS+=("$script")
             
-            read -p "Continue despite error? [y/N] " -n 1 -r
+            echo ""
+            read -p "Продолжить установку несмотря на ошибку? [y/N] " -n 1 -r
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                print_error "Installation aborted"
+                print_error "Установка прервана"
                 exit 1
             fi
         fi
     else
-        print_warn "$script not found, skipping..."
+        print_warn "$script не найден, пропускаю..."
     fi
 done
 
 # =============================================
-# Configure HTTPS (Optional)
+# Настройка HTTPS (опционально)
 # =============================================
 if [ -n "$DOMAIN_NAME" ] && command -v certbot &> /dev/null; then
-    print_step "Setting up HTTPS with Let's Encrypt..."
+    print_step "Настройка HTTPS с Let's Encrypt..."
     
-    read -p "Configure HTTPS for $DOMAIN_NAME? [y/N] " -n 1 -r
+    read -p "Настроить HTTPS для домена $DOMAIN_NAME? [y/N] " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         certbot --nginx -d "$DOMAIN_NAME" --non-interactive --agree-tos --email "admin@$DOMAIN_NAME" 2>/dev/null || {
-            print_warn "Certbot failed, HTTPS not configured"
+            print_warn "Не удалось получить сертификат, HTTPS не настроен"
         }
         if [ -f "/etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem" ]; then
-            print_success "HTTPS configured for $DOMAIN_NAME"
+            print_success "HTTPS настроен для $DOMAIN_NAME"
         fi
     fi
 fi
 
 # =============================================
-# Installation Complete
+# Завершение установки
 # =============================================
 INSTALLATION_END=$(date +%s)
 INSTALLATION_TIME=$((INSTALLATION_END - INSTALLATION_START))
 
 clear
-print_header "Installation Complete!"
+print_header "Установка завершена!"
 echo ""
 
+# =============================================
+# Предупреждения об ошибках
+# =============================================
 if [ ${#FAILED_SCRIPTS[@]} -gt 0 ]; then
-    print_warn "Some scripts failed:"
+    print_warn "Некоторые скрипты завершились с ошибками:"
     for script in "${FAILED_SCRIPTS[@]}"; do
         echo "  - $script"
     done
     echo ""
 fi
 
-print_success "AutoDialer Ultimate has been installed!"
-print_info "Installation time: ${INSTALLATION_TIME} seconds"
+print_success "AutoDialer Ultimate успешно установлен!"
+print_info "Время установки: ${INSTALLATION_TIME} секунд"
 echo ""
 
 # =============================================
-# Server Information
+# Информация о сервере
 # =============================================
 SERVER_IP=$(hostname -I | awk '{print $1}')
 
-print_header "Access Information"
+print_header "Информация для доступа"
 echo ""
-print_info "Web UI:       http://$SERVER_IP/"
+print_info "Веб-интерфейс:  http://$SERVER_IP/"
 if [ -n "$DOMAIN_NAME" ] && [ -f "/etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem" ]; then
-    print_info "Web UI HTTPS: https://$DOMAIN_NAME/"
+    print_info "Веб-интерфейс (HTTPS): https://$DOMAIN_NAME/"
 fi
-print_info "API Docs:     http://$SERVER_IP/docs"
-print_info "API Health:   http://$SERVER_IP/api/health"
-print_info "Metrics:      http://$SERVER_IP/metrics"
+print_info "Документация API: http://$SERVER_IP/docs"
+print_info "Проверка здоровья: http://$SERVER_IP/api/health"
+print_info "Метрики:          http://$SERVER_IP/metrics"
 echo ""
 
 # =============================================
-# Credentials
+# Учётные данные
 # =============================================
-print_header "Credentials"
+print_header "Учётные данные"
 echo ""
-print_info "Web UI:"
-echo "  Username: admin"
-echo "  Password: admin"
+print_info "Веб-интерфейс:"
+echo "  Логин:    admin"
+echo "  Пароль:   admin"
 echo ""
-print_info "AMI:"
-echo "  Username: autodialer"
-echo "  Password: $AMI_PASSWORD"
+print_info "Asterisk AMI:"
+echo "  Логин:    autodialer"
+echo "  Пароль:   $AMI_PASSWORD"
 echo ""
-print_info "Database:"
-echo "  Username: $DB_USER"
-echo "  Password: $DB_PASSWORD"
-echo "  Database: $DB_NAME"
+print_info "База данных PostgreSQL:"
+echo "  База:     $DB_NAME"
+echo "  Логин:    $DB_USER"
+echo "  Пароль:   $DB_PASSWORD"
 echo ""
-print_info "Metrics:"
-echo "  Username: $METRICS_USER"
-echo "  Password: $METRICS_PASS"
+print_info "Метрики (/metrics):"
+echo "  Логин:    $METRICS_USER"
+echo "  Пароль:   $METRICS_PASS"
 echo ""
 
 # =============================================
-# Verification Commands
+# Команды для проверки
 # =============================================
-print_header "Verification Commands"
+print_header "Команды для проверки"
 echo ""
-print_info "Check services:"
+print_info "Проверка сервисов:"
 echo "  systemctl status autodialer"
 echo "  systemctl status asterisk"
 echo "  systemctl status nginx"
+echo "  systemctl status postgresql"
+echo "  systemctl status redis-server"
 echo ""
-print_info "Check Asterisk:"
+print_info "Проверка Asterisk:"
 echo "  asterisk -rvvv"
 echo "  asterisk -rx 'pjsip show registrations'"
 echo "  asterisk -rx 'pjsip show endpoints'"
 echo ""
-print_info "Check logs:"
+print_info "Просмотр логов:"
 echo "  tail -f /opt/autodialer/logs/autodialer.log"
 echo "  tail -f /var/log/asterisk/full"
 echo "  journalctl -u autodialer -f"
 echo ""
 
 # =============================================
-# Helper Scripts
+# Вспомогательные скрипты
 # =============================================
-print_header "Helper Scripts"
+print_header "Вспомогательные скрипты"
 echo ""
-print_info "Status:"
-echo "  autodialer-status           - Backend status"
-echo "  autodialer-all-status       - All services status"
-echo "  autodialer-redis-status     - Redis status"
-echo "  autodialer-firewall-status  - Firewall status"
-echo "  autodialer-fail2ban-status  - Fail2ban status"
-echo "  autodialer-logrotate-status - Logrotate status"
+print_info "Статус:"
+echo "  autodialer-status           - Статус бэкенда"
+echo "  autodialer-all-status       - Статус всех сервисов"
+echo "  autodialer-redis-status     - Статус Redis"
+echo "  autodialer-firewall-status  - Статус файрвола"
+echo "  autodialer-fail2ban-status  - Статус Fail2ban"
+echo "  autodialer-logrotate-status - Статус ротации логов"
 echo ""
-print_info "Management:"
-echo "  autodialer-restart          - Restart backend"
-echo "  autodialer-all-restart      - Restart all services"
-echo "  autodialer-logs             - View backend logs"
+print_info "Управление:"
+echo "  autodialer-restart          - Перезапустить бэкенд"
+echo "  autodialer-all-restart      - Перезапустить все сервисы"
+echo "  autodialer-logs             - Просмотр логов бэкенда"
 echo ""
 
 # =============================================
-# Important Notes
+# Важные замечания
 # =============================================
-print_header "Important Notes"
+print_header "Важные замечания"
 echo ""
-print_warn "1. CHANGE THE DEFAULT ADMIN PASSWORD!"
-echo "   Login to Web UI and change password immediately."
+print_warn "1. СМЕНИТЕ ПАРОЛЬ АДМИНИСТРАТОРА!"
+echo "   Войдите в веб-интерфейс и смените пароль немедленно."
 echo ""
-print_warn "2. VERIFY SIP REGISTRATION!"
-echo "   asterisk -rx 'pjsip show registrations'"
-echo "   Should show 'Registered' for extension 291"
+print_warn "2. ПРОВЕРЬТЕ SIP РЕГИСТРАЦИЮ!"
+echo "   Выполните: asterisk -rx 'pjsip show registrations'"
+echo "   Должен быть статус 'Registered' для extension $FREEPBX_EXTENSION"
 echo ""
-print_warn "3. CHECK FIREWALL!"
-echo "   Ensure FreePBX can reach this server on ports 5060 and 10000-20000"
+print_warn "3. ПРОВЕРЬТЕ ФАЙРВОЛ!"
+echo "   Убедитесь, что FreePBX может связаться с этим сервером"
+echo "   по портам 5060 (UDP) и 10000-20000 (UDP)."
 echo ""
-print_info "4. CONFIGURE CAMPAIGNS!"
-echo "   Create campaigns and import contacts via Web UI."
+print_info "4. НАСТРОЙТЕ КАМПАНИИ!"
+echo "   Создайте кампании и импортируйте контакты через веб-интерфейс."
 echo ""
 
 # =============================================
-# Configuration Files
+# Файлы конфигурации
 # =============================================
-print_header "Configuration Files"
+print_header "Файлы конфигурации"
 echo ""
-print_info "Backend:  /opt/autodialer/config/.env"
-print_info "Asterisk: /etc/asterisk/"
-print_info "Nginx:    /etc/nginx/sites-available/autodialer"
-print_info "Systemd:  /etc/systemd/system/autodialer.service"
+print_info "Бэкенд:    /opt/autodialer/config/.env"
+print_info "Asterisk:  /etc/asterisk/"
+print_info "Nginx:     /etc/nginx/sites-available/autodialer"
+print_info "Systemd:   /etc/systemd/system/autodialer.service"
 echo ""
 
 # =============================================
-# Support
+# Поддержка
 # =============================================
-print_header "Support"
+print_header "Поддержка"
 echo ""
-print_info "Documentation: https://github.com/naumenis-code/AutoDialer-Ultimate"
-print_info "Issues:        https://github.com/naumenis-code/AutoDialer-Ultimate/issues"
+print_info "Документация: https://github.com/naumenis-code/AutoDialer-Ultimate"
+print_info "Баг-трекер:   https://github.com/naumenis-code/AutoDialer-Ultimate/issues"
 echo ""
 
-print_success "Thank you for installing AutoDialer Ultimate!"
+print_success "Спасибо за установку AutoDialer Ultimate!"
 echo "=============================================="
