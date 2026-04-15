@@ -4,61 +4,121 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AutoDialer Ultimate</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23667eea'/%3E%3Ctext x='50' y='70' font-size='50' text-anchor='middle' fill='white'%3E📞%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <!-- ============================================= -->
     <!-- Login Screen -->
+    <!-- ============================================= -->
     <div id="loginScreen">
-        <div class="login-card">
-            <h2>📞 AutoDialer Ultimate</h2>
-            <div id="loginError" class="error"></div>
-            <input type="text" id="loginUsername" placeholder="Логин" value="admin">
-            <input type="password" id="loginPassword" placeholder="Пароль" value="admin">
-            <button onclick="login()">Войти</button>
-        </div>
-    </div>
-    
-    <!-- Main App -->
-    <div id="appScreen">
-        <div class="system-bar">
-            <span>🟢 Система: <span id="sysStatus">Активна</span></span>
-            <span>📡 Каналы: <span id="sysChannels">0/50</span></span>
-            <span>👤 <span id="userDisplay"></span></span>
-            <button class="kill-switch admin-only" id="killSwitchBtn" onclick="toggleSystem()">🛑 АВАРИЙНАЯ ОСТАНОВКА</button>
-        </div>
-        
-        <div class="header">
-            <h1>AutoDialer Ultimate v3.0</h1>
-            <button class="btn btn-outline" onclick="logout()">Выйти</button>
-        </div>
-        
-        <div class="layout">
-            <div class="sidebar">
-                <div class="sidebar-item active" data-tab="dashboard" onclick="switchTab('dashboard')">
-                    <span>📊</span> Дашборд
+        <div class="login-container">
+            <div class="login-card">
+                <div class="login-header">
+                    <h1>📞 AutoDialer Ultimate</h1>
+                    <p class="version">v3.0.0</p>
                 </div>
-                <div class="sidebar-item" data-tab="campaigns" onclick="switchTab('campaigns')">
-                    <span>📋</span> Кампании
-                </div>
-                <div class="sidebar-item" data-tab="contacts" onclick="switchTab('contacts')">
-                    <span>📇</span> Контакты
-                </div>
-                <div class="sidebar-item" data-tab="history" onclick="switchTab('history')">
-                    <span>📜</span> История
-                </div>
-                <div class="sidebar-item" data-tab="audio" onclick="switchTab('audio')">
-                    <span>🎵</span> Аудио
-                </div>
-                <div class="sidebar-item admin-only" data-tab="users" onclick="switchTab('users')">
-                    <span>👥</span> Пользователи
-                </div>
-                <div class="sidebar-item admin-only" data-tab="settings" onclick="switchTab('settings')">
-                    <span>⚙️</span> Настройки
+                <form id="loginForm" onsubmit="return false;">
+                    <div id="loginError" class="error-message"></div>
+                    <div class="form-group">
+                        <label for="loginUsername">Логин</label>
+                        <input type="text" id="loginUsername" name="username" placeholder="Введите логин" value="admin" autocomplete="username" autofocus>
+                    </div>
+                    <div class="form-group">
+                        <label for="loginPassword">Пароль</label>
+                        <input type="password" id="loginPassword" name="password" placeholder="Введите пароль" value="admin" autocomplete="current-password">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block" onclick="login()">Войти</button>
+                </form>
+                <div class="login-footer">
+                    <p>Enterprise-grade автообзвон</p>
                 </div>
             </div>
-            
-            <div class="content">
+        </div>
+    </div>
+
+    <!-- ============================================= -->
+    <!-- Main Application Screen -->
+    <!-- ============================================= -->
+    <div id="appScreen" style="display: none;">
+        <!-- System Bar -->
+        <div class="system-bar">
+            <div class="system-status">
+                <span class="status-indicator" id="sysStatusIndicator">🟢</span>
+                <span id="sysStatus">Активна</span>
+            </div>
+            <div class="system-channels">
+                <span>📡 Каналы:</span>
+                <span id="sysChannels">0/50</span>
+            </div>
+            <div class="system-user">
+                <span>👤</span>
+                <span id="userDisplay"></span>
+            </div>
+            <button class="kill-switch admin-only" id="killSwitchBtn" onclick="toggleSystem()">
+                🛑 АВАРИЙНАЯ ОСТАНОВКА
+            </button>
+        </div>
+
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1>AutoDialer Ultimate</h1>
+                <span class="version-badge">v3.0.0</span>
+            </div>
+            <div class="header-right">
+                <button class="btn btn-outline" onclick="logout()">
+                    <span>🚪</span> Выйти
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Layout -->
+        <div class="layout">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <nav class="sidebar-nav">
+                    <div class="sidebar-item active" data-tab="dashboard" onclick="switchTab('dashboard')">
+                        <span class="sidebar-icon">📊</span>
+                        <span class="sidebar-label">Дашборд</span>
+                    </div>
+                    <div class="sidebar-item" data-tab="campaigns" onclick="switchTab('campaigns')">
+                        <span class="sidebar-icon">📋</span>
+                        <span class="sidebar-label">Кампании</span>
+                    </div>
+                    <div class="sidebar-item" data-tab="contacts" onclick="switchTab('contacts')">
+                        <span class="sidebar-icon">📇</span>
+                        <span class="sidebar-label">Контакты</span>
+                    </div>
+                    <div class="sidebar-item" data-tab="history" onclick="switchTab('history')">
+                        <span class="sidebar-icon">📜</span>
+                        <span class="sidebar-label">История</span>
+                    </div>
+                    <div class="sidebar-item" data-tab="audio" onclick="switchTab('audio')">
+                        <span class="sidebar-icon">🎵</span>
+                        <span class="sidebar-label">Аудио</span>
+                    </div>
+                    <div class="sidebar-divider"></div>
+                    <div class="sidebar-item admin-only" data-tab="users" onclick="switchTab('users')">
+                        <span class="sidebar-icon">👥</span>
+                        <span class="sidebar-label">Пользователи</span>
+                    </div>
+                    <div class="sidebar-item admin-only" data-tab="settings" onclick="switchTab('settings')">
+                        <span class="sidebar-icon">⚙️</span>
+                        <span class="sidebar-label">Настройки</span>
+                    </div>
+                    <div class="sidebar-item admin-only" data-tab="audit" onclick="switchTab('audit')">
+                        <span class="sidebar-icon">🔍</span>
+                        <span class="sidebar-label">Аудит</span>
+                    </div>
+                </nav>
+            </aside>
+
+            <!-- Content Area -->
+            <main class="content">
+                <!-- ============================================= -->
                 <!-- Dashboard Tab -->
+                <!-- ============================================= -->
                 <div id="dashboard" class="tab-content active">
                     <div class="stats-grid">
                         <div class="stat-card">
@@ -77,221 +137,453 @@
                             <div class="stat-value" id="dashConversion">0%</div>
                             <div class="stat-label">Конверсия</div>
                         </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="dashBusy">0</div>
+                            <div class="stat-label">Занято</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="dashNoanswer">0</div>
+                            <div class="stat-label">Нет ответа</div>
+                        </div>
                     </div>
-                    <div class="card">
-                        <h3>Активные кампании</h3>
-                        <div id="activeCampaignsList"></div>
-                    </div>
-                    <div class="card">
-                        <h3>Последние звонки</h3>
-                        <div id="recentCalls"></div>
+
+                    <div class="dashboard-row">
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Активные кампании</h3>
+                                <button class="btn btn-outline btn-sm" onclick="loadActiveCampaigns()">🔄</button>
+                            </div>
+                            <div class="card-body" id="activeCampaignsList">
+                                <div class="loading">Загрузка...</div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Последние звонки</h3>
+                                <button class="btn btn-outline btn-sm" onclick="loadRecentCalls()">🔄</button>
+                            </div>
+                            <div class="card-body" id="recentCalls">
+                                <div class="loading">Загрузка...</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                
+
+                <!-- ============================================= -->
                 <!-- Campaigns Tab -->
+                <!-- ============================================= -->
                 <div id="campaigns" class="tab-content">
                     <div class="card">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div class="card-header">
                             <h3>Кампании</h3>
-                            <button class="btn btn-primary" onclick="openCampaignModal()">+ Новая кампания</button>
+                            <div class="card-actions">
+                                <button class="btn btn-outline btn-sm" onclick="loadCampaigns()">🔄</button>
+                                <button class="btn btn-primary" onclick="openCampaignModal()">+ Новая кампания</button>
+                            </div>
                         </div>
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>ID</th>
-                                    <th>Название</th>
-                                    <th>Статус</th>
-                                    <th>Каналы</th>
-                                    <th>CPS</th>
-                                    <th>Контакты</th>
-                                    <th>Действия</th>
-                                </tr>
-                            </thead>
-                            <tbody id="campaignsTable">
-                                <tr><td colspan="7" style="text-align:center;">Загрузка...</td></tr>
-                            </tbody>
-                        </table>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Название</th>
+                                            <th>Статус</th>
+                                            <th>Каналы</th>
+                                            <th>CPS</th>
+                                            <th>Прогресс</th>
+                                            <th>Конверсия</th>
+                                            <th>Действия</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="campaignsTable">
+                                        <tr><td colspan="8" class="text-center">Загрузка...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                
+
+                <!-- ============================================= -->
                 <!-- Contacts Tab -->
+                <!-- ============================================= -->
                 <div id="contacts" class="tab-content">
                     <div class="card">
-                        <h3>Импорт контактов</h3>
-                        <textarea id="contactsImport" rows="5" placeholder="79161234567&#10;79261234568&#10;79361234569"></textarea>
-                        <button class="btn btn-primary mt-2" onclick="importContacts()">Импортировать</button>
+                        <div class="card-header">
+                            <h3>Импорт контактов</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-group">
+                                <label for="contactGroupSelect">Группа (опционально)</label>
+                                <select id="contactGroupSelect">
+                                    <option value="">Без группы</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="contactsImport">Номера телефонов (один на строку)</label>
+                                <textarea id="contactsImport" rows="6" placeholder="79161234567&#10;79261234568&#10;79361234569"></textarea>
+                                <small>Формат: 7XXXXXXXXXX, 8XXXXXXXXXX или +7XXXXXXXXXX</small>
+                            </div>
+                            <button class="btn btn-primary" onclick="importContacts()">Импортировать</button>
+                        </div>
                     </div>
+
                     <div class="card">
-                        <h3>Список контактов</h3>
-                        <div id="contactsList"></div>
+                        <div class="card-header">
+                            <h3>Список контактов</h3>
+                            <button class="btn btn-outline btn-sm" onclick="loadContacts()">🔄</button>
+                        </div>
+                        <div class="card-body" id="contactsList">
+                            <div class="loading">Загрузка...</div>
+                        </div>
                     </div>
                 </div>
-                
+
+                <!-- ============================================= -->
                 <!-- History Tab -->
+                <!-- ============================================= -->
                 <div id="history" class="tab-content">
                     <div class="card">
-                        <h3>История звонков</h3>
-                        <div class="filters">
-                            <select id="historyFilterCampaign">
-                                <option value="">Все кампании</option>
-                            </select>
-                            <select id="historyFilterStatus">
-                                <option value="">Все статусы</option>
-                                <option value="agreed">Согласие</option>
-                                <option value="declined">Отказ</option>
-                                <option value="busy">Занято</option>
-                                <option value="noanswer">Нет ответа</option>
-                            </select>
-                            <button class="btn btn-outline" onclick="loadHistory()">Применить</button>
+                        <div class="card-header">
+                            <h3>История звонков</h3>
                         </div>
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Время</th>
-                                    <th>Телефон</th>
-                                    <th>Кампания</th>
-                                    <th>Статус</th>
-                                    <th>DTMF</th>
-                                </tr>
-                            </thead>
-                            <tbody id="historyTable">
-                                <tr><td colspan="5" style="text-align:center;">Загрузка...</td></tr>
-                            </tbody>
-                        </table>
-                        <div id="historyPagination" class="pagination"></div>
+                        <div class="card-body">
+                            <div class="filters">
+                                <select id="historyFilterCampaign" class="form-control">
+                                    <option value="">Все кампании</option>
+                                </select>
+                                <select id="historyFilterStatus" class="form-control">
+                                    <option value="">Все статусы</option>
+                                    <option value="agreed">Согласие</option>
+                                    <option value="declined">Отказ</option>
+                                    <option value="busy">Занято</option>
+                                    <option value="noanswer">Нет ответа</option>
+                                    <option value="failed">Ошибка</option>
+                                    <option value="timeout">Таймаут</option>
+                                    <option value="machine">Автоответчик</option>
+                                </select>
+                                <button class="btn btn-outline" onclick="loadHistory(1)">Применить</button>
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Время</th>
+                                            <th>Телефон</th>
+                                            <th>Контакт</th>
+                                            <th>Кампания</th>
+                                            <th>Статус</th>
+                                            <th>DTMF</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="historyTable">
+                                        <tr><td colspan="6" class="text-center">Загрузка...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div id="historyPagination" class="pagination"></div>
+                        </div>
                     </div>
                 </div>
-                
+
+                <!-- ============================================= -->
                 <!-- Audio Tab -->
+                <!-- ============================================= -->
                 <div id="audio" class="tab-content">
                     <div class="card">
-                        <h3>Генерация TTS</h3>
-                        <div class="form-group">
-                            <label>Название</label>
-                            <input type="text" id="audioName" placeholder="main_message">
+                        <div class="card-header">
+                            <h3>Генерация TTS</h3>
                         </div>
-                        <div class="form-group">
-                            <label>Текст</label>
-                            <textarea id="audioText" rows="3" placeholder="Здравствуйте! Для подтверждения нажмите 1..."></textarea>
+                        <div class="card-body">
+                            <div class="form-group">
+                                <label for="audioName">Название</label>
+                                <input type="text" id="audioName" placeholder="main_message" maxlength="255">
+                            </div>
+                            <div class="form-group">
+                                <label for="audioText">Текст (до 500 символов)</label>
+                                <textarea id="audioText" rows="4" placeholder="Здравствуйте! Для подтверждения нажмите 1, для отказа нажмите 2." maxlength="500"></textarea>
+                                <small><span id="charCount">0</span>/500</small>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="audioVoice">Голос</label>
+                                    <select id="audioVoice">
+                                        <option value="denis">Денис (мужской)</option>
+                                        <option value="irina">Ирина (женский)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="audioCampaign">Привязать к кампании</label>
+                                    <select id="audioCampaign">
+                                        <option value="">Нет</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button class="btn btn-primary" onclick="generateAudio()">Сгенерировать</button>
                         </div>
-                        <div class="form-group">
-                            <label>Голос</label>
-                            <select id="audioVoice">
-                                <option value="denis">Денис (мужской)</option>
-                                <option value="irina">Ирина (женский)</option>
-                            </select>
-                        </div>
-                        <button class="btn btn-primary" onclick="generateAudio()">Сгенерировать</button>
                     </div>
+
                     <div class="card">
-                        <h3>Аудиофайлы</h3>
-                        <div id="audioList"></div>
+                        <div class="card-header">
+                            <h3>Аудиофайлы</h3>
+                            <button class="btn btn-outline btn-sm" onclick="loadAudio()">🔄</button>
+                        </div>
+                        <div class="card-body" id="audioList">
+                            <div class="loading">Загрузка...</div>
+                        </div>
                     </div>
                 </div>
-                
-                <!-- Users Tab -->
+
+                <!-- ============================================= -->
+                <!-- Users Tab (Admin Only) -->
+                <!-- ============================================= -->
                 <div id="users" class="tab-content">
                     <div class="card">
-                        <button class="btn btn-primary" onclick="openUserModal()">+ Добавить пользователя</button>
-                        <table class="mt-4">
-                            <thead>
-                                <tr>
-                                    <th>ID</th>
-                                    <th>Логин</th>
-                                    <th>Роль</th>
-                                    <th>Последний вход</th>
-                                    <th>Действия</th>
-                                </tr>
-                            </thead>
-                            <tbody id="usersTable">
-                                <tr><td colspan="5" style="text-align:center;">Загрузка...</td></tr>
-                            </tbody>
-                        </table>
+                        <div class="card-header">
+                            <h3>Пользователи</h3>
+                            <button class="btn btn-primary" onclick="openUserModal()">+ Добавить</button>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Логин</th>
+                                            <th>Email</th>
+                                            <th>Имя</th>
+                                            <th>Роль</th>
+                                            <th>Действия</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="usersTable">
+                                        <tr><td colspan="6" class="text-center">Загрузка...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                
-                <!-- Settings Tab -->
+
+                <!-- ============================================= -->
+                <!-- Settings Tab (Admin Only) -->
+                <!-- ============================================= -->
                 <div id="settings" class="tab-content">
                     <div class="card">
-                        <h3>Настройки системы</h3>
-                        <div id="settingsForm"></div>
+                        <div class="card-header">
+                            <h3>Настройки системы</h3>
+                        </div>
+                        <div class="card-body" id="settingsForm">
+                            <div class="loading">Загрузка...</div>
+                        </div>
                     </div>
                 </div>
-            </div>
+
+                <!-- ============================================= -->
+                <!-- Audit Tab (Admin Only) -->
+                <!-- ============================================= -->
+                <div id="audit" class="tab-content">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Журнал аудита</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="filters">
+                                <select id="auditFilterAction" class="form-control">
+                                    <option value="">Все действия</option>
+                                    <option value="login">Вход</option>
+                                    <option value="logout">Выход</option>
+                                    <option value="create_campaign">Создание кампании</option>
+                                    <option value="start_campaign">Запуск кампании</option>
+                                    <option value="stop_campaign">Остановка кампании</option>
+                                    <option value="delete_campaign">Удаление кампании</option>
+                                    <option value="system_enable">Включение системы</option>
+                                    <option value="system_disable">Выключение системы</option>
+                                </select>
+                                <button class="btn btn-outline" onclick="loadAuditLog(1)">Применить</button>
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Время</th>
+                                            <th>Пользователь</th>
+                                            <th>Действие</th>
+                                            <th>IP</th>
+                                            <th>Детали</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="auditTable">
+                                        <tr><td colspan="5" class="text-center">Загрузка...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div id="auditPagination" class="pagination"></div>
+                        </div>
+                    </div>
+                </div>
+            </main>
         </div>
     </div>
-    
+
+    <!-- ============================================= -->
     <!-- Password Change Modal -->
-    <div class="modal" id="passwordModal">
+    <!-- ============================================= -->
+    <div id="passwordModal" class="modal">
         <div class="modal-content">
-            <h3>Смена пароля</h3>
-            <p>При первом входе необходимо сменить пароль</p>
-            <input type="password" id="oldPassword" placeholder="Текущий пароль">
-            <input type="password" id="newPassword1" placeholder="Новый пароль">
-            <input type="password" id="newPassword2" placeholder="Подтвердите пароль">
-            <div id="passwordError" class="error"></div>
-            <button class="btn btn-primary" onclick="changePassword()">Сменить</button>
+            <div class="modal-header">
+                <h3>Смена пароля</h3>
+                <button class="modal-close" onclick="closePasswordModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-info">При первом входе необходимо сменить пароль</p>
+                <div id="passwordError" class="error-message"></div>
+                <div class="form-group">
+                    <label for="oldPassword">Текущий пароль</label>
+                    <input type="password" id="oldPassword" placeholder="Введите текущий пароль">
+                </div>
+                <div class="form-group">
+                    <label for="newPassword1">Новый пароль</label>
+                    <input type="password" id="newPassword1" placeholder="Не менее 8 символов">
+                </div>
+                <div class="form-group">
+                    <label for="newPassword2">Подтвердите пароль</label>
+                    <input type="password" id="newPassword2" placeholder="Повторите новый пароль">
+                </div>
+                <small class="password-hint">
+                    Пароль должен содержать заглавные и строчные буквы, цифры.
+                </small>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="changePassword()">Сменить пароль</button>
+            </div>
         </div>
     </div>
-    
+
+    <!-- ============================================= -->
     <!-- Campaign Modal -->
-    <div class="modal" id="campaignModal">
+    <!-- ============================================= -->
+    <div id="campaignModal" class="modal">
         <div class="modal-content">
-            <h3>Новая кампания</h3>
-            <div class="form-group">
-                <label>Название</label>
-                <input type="text" id="campaignName" placeholder="Холодный обзвон">
+            <div class="modal-header">
+                <h3>Новая кампания</h3>
+                <button class="modal-close" onclick="closeCampaignModal()">&times;</button>
             </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div class="modal-body">
                 <div class="form-group">
-                    <label>Макс. каналов</label>
-                    <input type="number" id="campaignMaxCalls" value="30" min="1" max="100">
+                    <label for="campaignName">Название *</label>
+                    <input type="text" id="campaignName" placeholder="Холодный обзвон Q1" maxlength="255">
                 </div>
                 <div class="form-group">
-                    <label>CPS</label>
-                    <input type="number" id="campaignCps" value="5" min="1" max="50">
+                    <label for="campaignDescription">Описание</label>
+                    <textarea id="campaignDescription" rows="2" placeholder="Описание кампании" maxlength="1000"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="campaignMaxCalls">Макс. каналов</label>
+                        <input type="number" id="campaignMaxCalls" value="30" min="1" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label for="campaignCps">CPS (звонков/сек)</label>
+                        <input type="number" id="campaignCps" value="5" min="1" max="50">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="campaignAudio">Аудиофайл по умолчанию</label>
+                    <select id="campaignAudio">
+                        <option value="">Стандартное приветствие</option>
+                    </select>
                 </div>
             </div>
-            <div class="form-group">
-                <label>Аудиофайл</label>
-                <select id="campaignAudio">
-                    <option value="">По умолчанию</option>
-                </select>
-            </div>
-            <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+            <div class="modal-footer">
                 <button class="btn btn-outline" onclick="closeCampaignModal()">Отмена</button>
                 <button class="btn btn-primary" onclick="createCampaign()">Создать</button>
             </div>
         </div>
     </div>
-    
+
+    <!-- ============================================= -->
     <!-- User Modal -->
-    <div class="modal" id="userModal">
+    <!-- ============================================= -->
+    <div id="userModal" class="modal">
         <div class="modal-content">
-            <h3>Новый пользователь</h3>
-            <div class="form-group">
-                <label>Логин</label>
-                <input type="text" id="newUsername">
+            <div class="modal-header">
+                <h3>Новый пользователь</h3>
+                <button class="modal-close" onclick="closeUserModal()">&times;</button>
             </div>
-            <div class="form-group">
-                <label>Пароль</label>
-                <input type="password" id="newUserPassword">
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="newUsername">Логин *</label>
+                    <input type="text" id="newUsername" placeholder="username" maxlength="50">
+                </div>
+                <div class="form-group">
+                    <label for="newUserPassword">Пароль *</label>
+                    <input type="password" id="newUserPassword" placeholder="Не менее 8 символов">
+                </div>
+                <div class="form-group">
+                    <label for="newUserEmail">Email</label>
+                    <input type="email" id="newUserEmail" placeholder="user@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="newUserFullName">Полное имя</label>
+                    <input type="text" id="newUserFullName" placeholder="Иван Иванов">
+                </div>
+                <div class="form-group">
+                    <label for="newUserRole">Роль</label>
+                    <select id="newUserRole">
+                        <option value="operator">Оператор</option>
+                        <option value="admin">Администратор</option>
+                        <option value="viewer">Наблюдатель</option>
+                    </select>
+                </div>
             </div>
-            <div class="form-group">
-                <label>Роль</label>
-                <select id="newUserRole">
-                    <option value="operator">Оператор</option>
-                    <option value="admin">Администратор</option>
-                    <option value="viewer">Наблюдатель</option>
-                </select>
-            </div>
-            <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+            <div class="modal-footer">
                 <button class="btn btn-outline" onclick="closeUserModal()">Отмена</button>
                 <button class="btn btn-primary" onclick="createUser()">Создать</button>
             </div>
         </div>
     </div>
-    
+
+    <!-- ============================================= -->
+    <!-- Toast Container -->
+    <!-- ============================================= -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- ============================================= -->
+    <!-- Scripts -->
+    <!-- ============================================= -->
     <script src="app.js"></script>
+    <script>
+        // Character counter for TTS
+        document.addEventListener('DOMContentLoaded', function() {
+            const textarea = document.getElementById('audioText');
+            const counter = document.getElementById('charCount');
+            if (textarea && counter) {
+                textarea.addEventListener('input', function() {
+                    counter.textContent = this.value.length;
+                });
+            }
+        });
+
+        // Close modals on Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.modal').forEach(modal => {
+                    modal.style.display = 'none';
+                });
+            }
+        });
+
+        // Close modal when clicking outside
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.addEventListener('click', function(e) {
+                if (e.target === this) {
+                    this.style.display = 'none';
+                }
+            });
+        });
+    </script>
 </body>
 </html>
