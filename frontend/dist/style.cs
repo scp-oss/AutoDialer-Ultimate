@@ -371,6 +371,90 @@ th {
     transition: width 0.3s ease;
 }
 
+.error {
+    color: #ef4444;
+    margin-bottom: 1rem;
+    text-align: center;
+}
+
+.pagination {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.pagination button {
+    padding: 0.5rem 1rem;
+    background: #334155;
+    border: 1px solid #475569;
+    color: #e2e8f0;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.pagination button:hover {
+    background: #475569;
+}
+
+.pagination button.active {
+    background: #667eea;
+    border-color: #667eea;
+}
+
+.filters {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.filters select {
+    padding: 0.5rem;
+    background: #334155;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    color: #e2e8f0;
+}
+
+#activeCampaignsList, #recentCalls, #contactsList, #audioList {
+    min-height: 100px;
+}
+
+.campaign-item, .contact-item, .audio-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    border-bottom: 1px solid #334155;
+}
+
+.campaign-item:last-child, .contact-item:last-child, .audio-item:last-child {
+    border-bottom: none;
+}
+
+.audio-item audio {
+    height: 30px;
+    width: 200px;
+}
+
+.loading {
+    text-align: center;
+    color: #64748b;
+    padding: 2rem;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.status-agreed { background: #10b98120; color: #10b981; }
+.status-declined { background: #ef444420; color: #ef4444; }
+.status-busy { background: #f59e0b20;
+
 /* Utilities */
 .text-success { color: #10b981; }
 .text-danger { color: #ef4444; }
