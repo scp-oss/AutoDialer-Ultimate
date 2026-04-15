@@ -108,8 +108,8 @@ autodialer-ultimate/
 ```
 🛠️ Helper Scripts
 Скрипт	Назначение
-``bash
-autodialer-fail2ban-status	Статус всех jail
-autodialer-fail2ban-unban	Разбанить IP
-autodialer-fail2ban-ban	        Забанить IP вручную
-``
+```bash
+autodialer-fail2ban-status     Статус всех jail
+autodialer-fail2ban-unban      Разбанить IP
+autodialer-fail2ban-ban        Забанить IP вручную
+```
