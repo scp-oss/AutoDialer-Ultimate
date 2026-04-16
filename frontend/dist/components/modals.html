@@ -1,0 +1,108 @@
+<!-- Модальное окно входящего звонка -->
+<div id="incomingCallModal" class="modal incoming-call-modal" style="display: none;">
+    <div class="modal-content incoming-call-content">
+        <div class="incoming-call-header">
+            <span class="incoming-label">Входящий звонок</span>
+        </div>
+        
+        <div class="incoming-call-body">
+            <div class="contact-avatar large"></div>
+            <h2 class="caller-name"></h2>
+            <p class="caller-number"></p>
+            <p class="contact-company" style="display: none;"></p>
+        </div>
+        
+        <div class="incoming-call-actions">
+            <button class="call-action decline-call">
+                <span class="icon">📵</span>
+                <span>Отклонить</span>
+            </button>
+            <button class="call-action accept-call">
+                <span class="icon">📞</span>
+                <span>Ответить</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно активного звонка -->
+<div id="activeCallModal" class="modal active-call-modal" style="display: none;">
+    <div class="modal-content active-call-content">
+        <div class="active-call-header">
+            <span class="call-status">Идет разговор</span>
+            <span class="call-duration">0:00</span>
+        </div>
+        
+        <div class="active-call-body">
+            <div class="contact-avatar large"></div>
+            <h2 class="caller-name"></h2>
+            <p class="caller-number"></p>
+        </div>
+        
+        <div class="active-call-controls">
+            <button class="control-btn mute-call" title="Выключить микрофон">
+                <span class="icon">🎤</span>
+                <span>Микрофон</span>
+            </button>
+            <button class="control-btn speaker-call" title="Громкая связь">
+                <span class="icon">🔊</span>
+                <span>Динамик</span>
+            </button>
+            <button class="control-btn dtmf-call" title="DTMF">
+                <span class="icon">🔢</span>
+                <span>Клавиатура</span>
+            </button>
+            <button class="control-btn hold-call" title="Удержание">
+                <span class="icon">⏸️</span>
+                <span>Удержание</span>
+            </button>
+            <button class="control-btn transfer-call" title="Перевести">
+                <span class="icon">🔄</span>
+                <span>Перевести</span>
+            </button>
+        </div>
+        
+        <div class="active-call-actions">
+            <button class="call-action hangup-call">
+                <span class="icon">📵</span>
+                <span>Завершить</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- DTMF клавиатура -->
+<div id="dtmfPad" class="dtmf-pad" style="display: none;">
+    <div class="dtmf-row">
+        <button class="dtmf-digit" data-digit="1">1</button>
+        <button class="dtmf-digit" data-digit="2">2</button>
+        <button class="dtmf-digit" data-digit="3">3</button>
+    </div>
+    <div class="dtmf-row">
+        <button class="dtmf-digit" data-digit="4">4</button>
+        <button class="dtmf-digit" data-digit="5">5</button>
+        <button class="dtmf-digit" data-digit="6">6</button>
+    </div>
+    <div class="dtmf-row">
+        <button class="dtmf-digit" data-digit="7">7</button>
+        <button class="dtmf-digit" data-digit="8">8</button>
+        <button class="dtmf-digit" data-digit="9">9</button>
+    </div>
+    <div class="dtmf-row">
+        <button class="dtmf-digit" data-digit="*">*</button>
+        <button class="dtmf-digit" data-digit="0">0</button>
+        <button class="dtmf-digit" data-digit="#">#</button>
+    </div>
+</div>
+
+<!-- Диалог переадресации -->
+<div id="transferDialog" class="modal transfer-dialog" style="display: none;">
+    <div class="modal-content">
+        <h3>Переадресация звонка</h3>
+        <input type="tel" id="transferNumber" placeholder="Введите номер телефона">
+        <div class="dialog-actions">
+            <button id="transferBtn">Перевести</button>
+            <button id="cancelTransfer">Отмена</button>
+        </div>
+    </div>
+</div>
