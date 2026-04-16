@@ -1,0 +1,561 @@
+<!-- ============================================= -->
+<!-- DASHBOARD TAB -->
+<!-- ============================================= -->
+<div class="dashboard-container">
+    
+    <!-- Заголовок с действиями -->
+    <div class="dashboard-header">
+        <h2>📊 Дашборд</h2>
+        <div class="dashboard-actions">
+            <button class="btn btn-outline btn-sm" id="dashboardRefreshBtn" title="Обновить">
+                🔄 Обновить
+            </button>
+            <div class="chart-period-selector">
+                <button class="btn btn-outline btn-sm" data-chart-period="day">День</button>
+                <button class="btn btn-outline btn-sm active" data-chart-period="week">Неделя</button>
+                <button class="btn btn-outline btn-sm" data-chart-period="month">Месяц</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Быстрые действия -->
+    <div class="quick-actions">
+        <button class="btn btn-primary" onclick="App.dashboard.quickCall()">
+            📞 Быстрый звонок
+        </button>
+        <button class="btn btn-outline" onclick="App.dashboard.quickCampaign()">
+            📋 Новая кампания
+        </button>
+        <button class="btn btn-outline" onclick="App.dashboard.quickImport()">
+            📇 Импорт контактов
+        </button>
+        <button class="btn btn-outline" onclick="App.switchTab('incoming')">
+            📞 Входящие
+        </button>
+    </div>
+
+    <!-- Основные карточки статистики -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon">📞</div>
+            <div class="stat-content">
+                <div class="stat-value" id="dashTotal">0</div>
+                <div class="stat-label">Всего звонков</div>
+            </div>
+        </div>
+        <div class="stat-card stat-success">
+            <div class="stat-icon">✅</div>
+            <div class="stat-content">
+                <div class="stat-value" id="dashAgreed">0</div>
+                <div class="stat-label">Согласий</div>
+            </div>
+        </div>
+        <div class="stat-card stat-info">
+            <div class="stat-icon">📅</div>
+            <div class="stat-content">
+                <div class="stat-value" id="dashToday">0</div>
+                <div class="stat-label">Сегодня</div>
+            </div>
+        </div>
+        <div class="stat-card stat-warning">
+            <div class="stat-icon">📊</div>
+            <div class="stat-content">
+                <div class="stat-value" id="dashConversion">0%</div>
+                <div class="stat-label">Конверсия</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">⏱️</div>
+            <div class="stat-content">
+                <div class="stat-value" id="dashAvgDuration">0:00</div>
+                <div class="stat-label">Ср. длительность</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🎯</div>
+            <div class="stat-content">
+                <div class="stat-value" id="dashAnswerRate">0%</div>
+                <div class="stat-label">Дозвон</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Дополнительные карточки -->
+    <div class="stats-mini-grid">
+        <div class="stat-mini-card">
+            <span class="stat-mini-label">🚫 Занято</span>
+            <span class="stat-mini-value" id="dashBusy">0</span>
+        </div>
+        <div class="stat-mini-card">
+            <span class="stat-mini-label">📵 Нет ответа</span>
+            <span class="stat-mini-value" id="dashNoanswer">0</span>
+        </div>
+        <div class="stat-mini-card">
+            <span class="stat-mini-label">❌ Ошибок</span>
+            <span class="stat-mini-value" id="dashFailed">0</span>
+        </div>
+        <div class="stat-mini-card">
+            <span class="stat-mini-label">⏰ Всего времени</span>
+            <span class="stat-mini-value" id="dashTotalDuration">0 ч</span>
+        </div>
+    </div>
+
+    <!-- Двухколоночный layout -->
+    <div class="dashboard-row">
+        
+        <!-- Левая колонка -->
+        <div class="dashboard-col">
+            
+            <!-- График -->
+            <div class="card">
+                <div class="card-header">
+                    <h3>📈 Статистика звонков</h3>
+                </div>
+                <div class="card-body chart-container">
+                    <canvas id="statsChart"></canvas>
+                </div>
+            </div>
+            
+            <!-- Активные кампании -->
+            <div class="card">
+                <div class="card-header">
+                    <h3>🚀 Активные кампании</h3>
+                    <button class="btn btn-outline btn-sm" onclick="App.switchTab('campaigns')">
+                        Все →
+                    </button>
+                </div>
+                <div class="card-body" id="activeCampaignsList">
+                    <div class="loading">Загрузка...</div>
+                </div>
+            </div>
+            
+        </div>
+        
+        <!-- Правая колонка -->
+        <div class="dashboard-col">
+            
+            <!-- Системный виджет -->
+            <div class="card">
+                <div class="card-header">
+                    <h3>🖥️ Состояние системы</h3>
+                </div>
+                <div class="card-body" id="systemWidget">
+                    <div class="loading">Загрузка...</div>
+                </div>
+            </div>
+            
+            <!-- Последние звонки -->
+            <div class="card">
+                <div class="card-header">
+                    <h3>📜 Последние звонки</h3>
+                    <button class="btn btn-outline btn-sm" onclick="App.switchTab('history')">
+                        История →
+                    </button>
+                </div>
+                <div class="card-body" id="recentCalls">
+                    <div class="loading">Загрузка...</div>
+                </div>
+            </div>
+            
+            <!-- Быстрая статистика по кампаниям -->
+            <div class="card">
+                <div class="card-header">
+                    <h3>📊 Сводка по кампаниям</h3>
+                </div>
+                <div class="card-body" id="campaignsSummary">
+                    <div class="loading">Загрузка...</div>
+                </div>
+            </div>
+            
+        </div>
+        
+    </div>
+    
+</div>
+
+<!-- Дополнительные стили для дашборда -->
+<style>
+    /* Dashboard Container */
+    .dashboard-container {
+        padding: 0;
+    }
+    
+    .dashboard-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: var(--spacing-lg);
+    }
+    
+    .dashboard-header h2 {
+        margin: 0;
+    }
+    
+    .dashboard-actions {
+        display: flex;
+        gap: var(--spacing-md);
+        align-items: center;
+    }
+    
+    .chart-period-selector {
+        display: flex;
+        gap: var(--spacing-xs);
+    }
+    
+    .chart-period-selector .btn.active {
+        background: var(--color-primary);
+        color: white;
+        border-color: var(--color-primary);
+    }
+    
+    /* Quick Actions */
+    .quick-actions {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-bottom: var(--spacing-xl);
+        flex-wrap: wrap;
+    }
+    
+    /* Stats Grid */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: var(--spacing-lg);
+        margin-bottom: var(--spacing-lg);
+    }
+    
+    .stat-card {
+        background: var(--color-bg-card);
+        border-radius: var(--radius-lg);
+        padding: var(--spacing-lg);
+        border: 1px solid var(--color-border);
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-md);
+    }
+    
+    .stat-icon {
+        font-size: 2rem;
+        opacity: 0.7;
+    }
+    
+    .stat-content {
+        flex: 1;
+    }
+    
+    .stat-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: var(--color-primary);
+        line-height: 1.2;
+    }
+    
+    .stat-label {
+        color: var(--color-text-secondary);
+        font-size: 0.875rem;
+    }
+    
+    .stat-success .stat-value { color: var(--color-success); }
+    .stat-warning .stat-value { color: var(--color-warning); }
+    .stat-info .stat-value { color: var(--color-info); }
+    
+    /* Stats Mini Grid */
+    .stats-mini-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: var(--spacing-md);
+        margin-bottom: var(--spacing-xl);
+    }
+    
+    .stat-mini-card {
+        background: var(--color-bg-tertiary);
+        border-radius: var(--radius-md);
+        padding: var(--spacing-md);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border: 1px solid var(--color-border);
+    }
+    
+    .stat-mini-label {
+        color: var(--color-text-secondary);
+        font-size: 0.875rem;
+    }
+    
+    .stat-mini-value {
+        font-weight: 600;
+        font-size: 1.125rem;
+        color: var(--color-text-primary);
+    }
+    
+    /* Dashboard Row (2 columns) */
+    .dashboard-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--spacing-xl);
+    }
+    
+    .dashboard-col {
+        display: flex;
+        flex-direction: column;
+        gap: var(--spacing-xl);
+    }
+    
+    /* Chart Container */
+    .chart-container {
+        position: relative;
+        height: 280px;
+        width: 100%;
+    }
+    
+    #statsChart {
+        width: 100% !important;
+        height: 100% !important;
+    }
+    
+    /* Campaign Item (в дашборде) */
+    .campaign-item {
+        padding: var(--spacing-md);
+        border-bottom: 1px solid var(--color-border);
+        cursor: pointer;
+        transition: background var(--transition-fast);
+    }
+    
+    .campaign-item:last-child {
+        border-bottom: none;
+    }
+    
+    .campaign-item:hover {
+        background: var(--color-bg-tertiary);
+    }
+    
+    .campaign-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: var(--spacing-xs);
+    }
+    
+    .campaign-stats {
+        display: flex;
+        gap: var(--spacing-md);
+        font-size: 0.875rem;
+        color: var(--color-text-secondary);
+    }
+    
+    .campaign-actions {
+        display: flex;
+        gap: var(--spacing-xs);
+        margin-top: var(--spacing-sm);
+        justify-content: flex-end;
+    }
+    
+    /* Call Item (в дашборде) */
+    .call-item {
+        display: grid;
+        grid-template-columns: 70px 140px 90px 1fr auto;
+        gap: var(--spacing-sm);
+        padding: var(--spacing-sm) var(--spacing-md);
+        border-bottom: 1px solid var(--color-border);
+        font-size: 0.875rem;
+        align-items: center;
+        cursor: pointer;
+        transition: background var(--transition-fast);
+    }
+    
+    .call-item:hover {
+        background: var(--color-bg-tertiary);
+    }
+    
+    .call-item:last-child {
+        border-bottom: none;
+    }
+    
+    .call-time {
+        color: var(--color-text-muted);
+    }
+    
+    .call-phone {
+        font-weight: 500;
+    }
+    
+    .call-campaign {
+        color: var(--color-text-secondary);
+    }
+    
+    /* System Widget */
+    .system-widget h4 {
+        margin-top: 0;
+        margin-bottom: var(--spacing-md);
+    }
+    
+    .system-status-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: var(--spacing-md);
+    }
+    
+    .status-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: var(--spacing-sm);
+        background: var(--color-bg-tertiary);
+        border-radius: var(--radius-md);
+    }
+    
+    .system-info {
+        margin-top: var(--spacing-md);
+        padding-top: var(--spacing-md);
+        border-top: 1px solid var(--color-border);
+        text-align: center;
+        color: var(--color-text-muted);
+    }
+    
+    /* Campaigns Summary */
+    #campaignsSummary {
+        max-height: 200px;
+        overflow-y: auto;
+    }
+    
+    .summary-item {
+        display: flex;
+        justify-content: space-between;
+        padding: var(--spacing-sm) 0;
+        border-bottom: 1px solid var(--color-border);
+    }
+    
+    .summary-item:last-child {
+        border-bottom: none;
+    }
+    
+    /* Loading state */
+    .loading {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: var(--spacing-xl);
+        color: var(--color-text-muted);
+    }
+    
+    /* Responsive */
+    @media (max-width: 1400px) {
+        .stats-grid {
+            grid-template-columns: repeat(3, 1fr);
+        }
+    }
+    
+    @media (max-width: 1200px) {
+        .dashboard-row {
+            grid-template-columns: 1fr;
+        }
+        
+        .stats-mini-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+    
+    @media (max-width: 768px) {
+        .stats-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+        
+        .dashboard-header {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: var(--spacing-md);
+        }
+        
+        .quick-actions {
+            flex-direction: column;
+        }
+        
+        .quick-actions .btn {
+            width: 100%;
+        }
+        
+        .call-item {
+            grid-template-columns: 1fr;
+            gap: var(--spacing-xs);
+        }
+        
+        .stat-card {
+            padding: var(--spacing-md);
+        }
+        
+        .stat-value {
+            font-size: 1.5rem;
+        }
+        
+        .chart-container {
+            height: 250px;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .stats-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .stats-mini-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .dashboard-actions {
+            flex-direction: column;
+            width: 100%;
+        }
+        
+        .chart-period-selector {
+            width: 100%;
+        }
+        
+        .chart-period-selector .btn {
+            flex: 1;
+        }
+    }
+</style>
+
+<script>
+    (function() {
+        // Загружаем сводку по кампаниям после рендера
+        setTimeout(async () => {
+            if (App.dashboard && typeof App.dashboard.loadCampaignsSummary === 'function') {
+                await App.dashboard.loadCampaignsSummary();
+            } else {
+                // Простая загрузка если метод не определён
+                try {
+                    const data = await App.apiGet('/campaigns/summary');
+                    const container = document.getElementById('campaignsSummary');
+                    if (container && data) {
+                        container.innerHTML = `
+                            <div class="summary-item">
+                                <span>Всего кампаний</span>
+                                <strong>${data.total || 0}</strong>
+                            </div>
+                            <div class="summary-item">
+                                <span>Активных</span>
+                                <strong style="color: var(--color-success);">${data.running || 0}</strong>
+                            </div>
+                            <div class="summary-item">
+                                <span>Завершено</span>
+                                <strong>${data.completed || 0}</strong>
+                            </div>
+                            <div class="summary-item">
+                                <span>Черновиков</span>
+                                <strong style="color: var(--color-text-muted);">${data.draft || 0}</strong>
+                            </div>
+                        `;
+                    }
+                } catch (e) {
+                    console.error('Failed to load campaigns summary:', e);
+                }
+            }
+            
+            // Загружаем системный виджет
+            if (App.dashboard && typeof App.dashboard.loadSystemWidget === 'function') {
+                await App.dashboard.loadSystemWidget();
+            }
+        }, 100);
+    })();
+</script>
