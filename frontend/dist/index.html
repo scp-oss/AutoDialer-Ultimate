@@ -8,9 +8,7 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <!-- ============================================= -->
     <!-- LOGIN SCREEN -->
-    <!-- ============================================= -->
     <div id="loginScreen">
         <div class="login-container">
             <div class="login-card">
@@ -22,11 +20,11 @@
                     <div id="loginError" class="error-message"></div>
                     <div class="form-group">
                         <label for="loginUsername">Логин</label>
-                        <input type="text" id="loginUsername" name="username" placeholder="Введите логин" value="admin" autocomplete="username" autofocus>
+                        <input type="text" id="loginUsername" name="username" placeholder="Введите логин" autocomplete="username" autofocus>
                     </div>
                     <div class="form-group">
                         <label for="loginPassword">Пароль</label>
-                        <input type="password" id="loginPassword" name="password" placeholder="Введите пароль" value="admin" autocomplete="current-password">
+                        <input type="password" id="loginPassword" name="password" placeholder="Введите пароль" autocomplete="current-password">
                     </div>
                     <button type="submit" class="btn btn-primary btn-block" onclick="App.auth.login()">Войти</button>
                 </form>
@@ -37,9 +35,7 @@
         </div>
     </div>
 
-    <!-- ============================================= -->
     <!-- MAIN APPLICATION SCREEN -->
-    <!-- ============================================= -->
     <div id="appScreen" style="display: none;">
         <!-- System Bar -->
         <div class="system-bar">
@@ -78,41 +74,39 @@
 
         <!-- Main Layout -->
         <div class="layout">
-            <!-- Sidebar Container -->
+            <!-- Sidebar -->
             <aside class="sidebar" id="sidebarContainer">
                 <div class="loading">Загрузка меню...</div>
             </aside>
 
-            <!-- Content Container -->
+            <!-- Content -->
             <main class="content" id="contentContainer">
                 <div class="loading">Загрузка...</div>
             </main>
         </div>
     </div>
 
-    <!-- ============================================= -->
     <!-- MODALS CONTAINER -->
-    <!-- ============================================= -->
     <div id="modalsContainer"></div>
 
-    <!-- ============================================= -->
     <!-- TOAST CONTAINER -->
-    <!-- ============================================= -->
     <div id="toastContainer" class="toast-container"></div>
 
-    <!-- ============================================= -->
     <!-- SCRIPTS -->
-    <!-- ============================================= -->
-    <!-- External libraries -->
+    <!-- External -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     
     <!-- Core -->
     <script src="js/utils.js"></script>
     <script src="js/app.js"></script>
     
-    <!-- Modules -->
+    <!-- Auth (должен быть первым) -->
     <script src="js/auth.js"></script>
+    
+    <!-- System -->
     <script src="js/system.js"></script>
+    
+    <!-- Feature Modules -->
     <script src="js/dashboard.js"></script>
     <script src="js/campaigns.js"></script>
     <script src="js/contacts.js"></script>
@@ -121,22 +115,22 @@
     <script src="js/audio.js"></script>
     <script src="js/incoming.js"></script>
     <script src="js/blacklist.js"></script>
+    
+    <!-- Admin Modules -->
     <script src="js/users.js"></script>
     <script src="js/settings.js"></script>
     <script src="js/audit.js"></script>
     <script src="js/apiTokens.js"></script>
     <script src="js/webhooks.js"></script>
     
-    <!-- Initialize Application -->
+    <!-- Initialize -->
     <script>
         (function() {
-            // Проверяем автологин при загрузке
             const savedToken = localStorage.getItem('refresh_token');
             if (savedToken) {
                 App.state.refreshToken = savedToken;
             }
             
-            // Инициализируем приложение после загрузки DOM
             document.addEventListener('DOMContentLoaded', async () => {
                 try {
                     // Загружаем боковое меню
@@ -152,12 +146,9 @@
                         await App.auth.tryAutoLogin();
                     }
                     
-                    // Запускаем периодическое обновление
-                    App.startPeriodicRefresh();
-                    
                 } catch (error) {
                     console.error('Initialization error:', error);
-                    App.showToast('Ошибка инициализации приложения', 'error');
+                    App.showToast('Ошибка инициализации', 'error');
                 }
             });
         })();
