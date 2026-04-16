@@ -1,1042 +1,993 @@
-// blacklist.js - Полный модуль управления черным списком
+// blacklist.js - Модуль управления чёрным списком
+// Зависимости: app.js (AppState, authFetch, API_BASE, showToast)
 
-class BlacklistManager {
-    constructor() {
-        // Основные хранилища
-        this.blacklist = new Map(); // Быстрый доступ по номеру
-        this.blacklistArray = []; // Для сериализации
-        this.patterns = []; // Регулярные выражения для паттернов
-        this.wildcards = new Map(); // Wildcard паттерны (например, 7495*)
+const BlacklistModule = {
+    currentPage: 1,
+    pageSize: 20,
+    totalPages: 1,
+    totalRecords: 0,
+    searchQuery: '',
+    blacklistItems: [],
+    
+    // Инициализация модуля
+    init() {
+        this.render();
+        this.attachEventListeners();
+        this.loadBlacklist();
+    },
+    
+    // Рендер страницы
+    render() {
+        const container = document.getElementById('blacklistContainer');
+        if (!container) return;
         
-        // Статистика
-        this.stats = {
-            totalBlocked: 0,
-            autoBlocks: 0,
-            manualBlocks: 0,
-            temporaryBlocks: 0,
-            expiredBlocks: 0
-        };
-        
-        // Кеши и оптимизация
-        this.cache = new Map();
-        this.cacheSize = 1000;
-        this.cacheHits = 0;
-        this.cacheMisses = 0;
-        
-        // Настройки
-        this.settings = {
-            autoBlockScam: true,
-            autoBlockSpam: true,
-            autoBlockRobocalls: true,
-            blockPrivateNumbers: false,
-            blockUnknownNumbers: false,
-            blockInternational: false,
-            allowedCountries: ['RU', 'BY', 'KZ'],
-            maxFailedAttempts: 5,
-            blockDuration: 30 * 24 * 60 * 60 * 1000, // 30 дней
-            notifyOnBlock: true,
-            syncWithGlobal: false
-        };
-        
-        // Глобальные черные списки (внешние API)
-        this.globalBlacklists = [
-            { name: 'FCC Spam List', url: '/api/blacklist/fcc', enabled: false },
-            { name: 'Robocall Block List', url: '/api/blacklist/robocall', enabled: false },
-            { name: 'Scam Numbers Database', url: '/api/blacklist/scam', enabled: false }
-        ];
-        
-        // Очередь синхронизации
-        this.syncQueue = [];
-        this.isSyncing = false;
-        
-        // Подписчики на события
-        this.subscribers = [];
-        
-        this.initialize();
-    }
-
-    // Инициализация
-    async initialize() {
-        try {
-            // Загрузка черного списка из localStorage
-            this.loadFromStorage();
-            
-            // Загрузка настроек
-            this.loadSettings();
-            
-            // Загрузка статистики
-            this.loadStats();
-            
-            // Компиляция паттернов
-            this.compilePatterns();
-            
-            // Проверка устаревших записей
-            this.cleanupExpired();
-            
-            // Синхронизация с глобальными списками если включено
-            if (this.settings.syncWithGlobal) {
-                await this.syncWithGlobalBlacklists();
-            }
-            
-            // Запуск периодической очистки
-            this.startPeriodicCleanup();
-            
-            console.log('BlacklistManager initialized:', {
-                total: this.blacklist.size,
-                patterns: this.patterns.length,
-                wildcards: this.wildcards.size
-            });
-        } catch (error) {
-            console.error('Failed to initialize BlacklistManager:', error);
-        }
-    }
-
-    // Загрузка из хранилища
-    loadFromStorage() {
-        try {
-            const stored = localStorage.getItem('blacklist');
-            if (stored) {
-                const data = JSON.parse(stored);
-                this.blacklistArray = data;
+        container.innerHTML = `
+            <div class="blacklist-page">
+                <div class="page-header">
+                    <h2>🚫 Чёрный список</h2>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" id="blacklistAddBtn">
+                            ➕ Добавить номер
+                        </button>
+                        <button class="btn btn-outline" id="blacklistImportBtn">
+                            📤 Импорт
+                        </button>
+                        <button class="btn btn-outline" id="blacklistExportBtn">
+                            📥 Экспорт
+                        </button>
+                    </div>
+                </div>
                 
-                // Восстановление Map
-                data.forEach(item => {
-                    if (item.number) {
-                        this.blacklist.set(this.normalizeNumber(item.number), item);
-                    }
-                });
+                <p class="text-muted">
+                    Номера в чёрном списке не будут обзваниваться ни в одной кампании.
+                    При импорте контактов номера из чёрного списка автоматически пропускаются.
+                </p>
+                
+                <!-- Панель поиска и фильтров -->
+                <div class="blacklist-toolbar">
+                    <div class="search-box">
+                        <input type="text" 
+                               id="blacklistSearch" 
+                               class="form-control" 
+                               placeholder="🔍 Поиск по номеру или причине..."
+                               value="${this.searchQuery}">
+                    </div>
+                    <div class="toolbar-actions">
+                        <button class="btn btn-outline" id="blacklistRefreshBtn">
+                            🔄 Обновить
+                        </button>
+                        <button class="btn btn-danger" id="blacklistClearAllBtn" title="Очистить весь список">
+                            🗑️ Очистить всё
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Статистика -->
+                <div class="blacklist-stats">
+                    <div class="stat-item">
+                        <span class="stat-label">Всего номеров:</span>
+                        <span class="stat-value" id="blacklistTotal">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Добавлено сегодня:</span>
+                        <span class="stat-value" id="blacklistToday">0</span>
+                    </div>
+                </div>
+                
+                <!-- Таблица -->
+                <div class="blacklist-table-container">
+                    <table class="table" id="blacklistTable">
+                        <thead>
+                            <tr>
+                                <th width="40">
+                                    <input type="checkbox" id="blacklistSelectAll">
+                                </th>
+                                <th>Номер телефона</th>
+                                <th>Причина</th>
+                                <th>Дата добавления</th>
+                                <th>Добавил</th>
+                                <th>Источник</th>
+                                <th width="100">Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody id="blacklistTableBody">
+                            <tr><td colspan="7" class="text-center">Загрузка...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Пагинация -->
+                <div id="blacklistPagination" class="pagination-container"></div>
+            </div>
+            
+            <!-- Модальное окно добавления -->
+            <div id="blacklistAddModal" class="modal" style="display: none;">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>Добавить номер в чёрный список</h3>
+                        <button class="close-modal">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="blacklistAddForm">
+                            <div class="form-group">
+                                <label>Номер телефона <span class="required">*</span></label>
+                                <input type="text" 
+                                       id="blacklistPhone" 
+                                       class="form-control" 
+                                       placeholder="Например: +79161234567"
+                                       required>
+                                <small class="form-text">Можно указать несколько номеров через запятую или с новой строки</small>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Причина (опционально)</label>
+                                <select id="blacklistReasonSelect" class="form-control">
+                                    <option value="">Выберите причину или введите свою</option>
+                                    <option value="Жалоба на спам">Жалоба на спам</option>
+                                    <option value="Отказ от обзвона">Отказ от обзвона</option>
+                                    <option value="Неверный номер">Неверный номер</option>
+                                    <option value="Автоответчик">Автоответчик</option>
+                                    <option value="Нецелевой">Нецелевой</option>
+                                    <option value="Дубликат">Дубликат</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Или введите свою причину</label>
+                                <input type="text" 
+                                       id="blacklistReasonCustom" 
+                                       class="form-control" 
+                                       placeholder="Своя причина">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Заметки (опционально)</label>
+                                <textarea id="blacklistNotes" 
+                                          class="form-control" 
+                                          rows="2"
+                                          placeholder="Дополнительные заметки..."></textarea>
+                            </div>
+                            
+                            <div class="form-actions">
+                                <button type="button" class="btn btn-outline" onclick="BlacklistModule.closeAddModal()">
+                                    Отмена
+                                </button>
+                                <button type="submit" class="btn btn-primary">
+                                    Добавить
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Модальное окно импорта -->
+            <div id="blacklistImportModal" class="modal" style="display: none;">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>Импорт номеров в чёрный список</h3>
+                        <button class="close-modal">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="blacklistImportForm">
+                            <div class="form-group">
+                                <label>Список номеров</label>
+                                <textarea id="blacklistImportText" 
+                                          class="form-control" 
+                                          rows="10"
+                                          placeholder="Введите номера (по одному на строку или через запятую)..."
+                                          required></textarea>
+                                <small class="form-text">
+                                    <span id="blacklistImportCount">0</span> номеров
+                                </small>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Причина для всех (опционально)</label>
+                                <input type="text" 
+                                       id="blacklistImportReason" 
+                                       class="form-control" 
+                                       placeholder="Причина добавления">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="blacklistImportSkipDuplicates" checked>
+                                    Пропускать дубликаты
+                                </label>
+                            </div>
+                            
+                            <div class="form-actions">
+                                <button type="button" class="btn btn-outline" onclick="BlacklistModule.closeImportModal()">
+                                    Отмена
+                                </button>
+                                <button type="submit" class="btn btn-primary">
+                                    Импортировать
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Модальное окно редактирования -->
+            <div id="blacklistEditModal" class="modal" style="display: none;">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>Редактировать запись</h3>
+                        <button class="close-modal">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="blacklistEditForm">
+                            <input type="hidden" id="blacklistEditId">
+                            <input type="hidden" id="blacklistEditPhone">
+                            
+                            <div class="form-group">
+                                <label>Номер телефона</label>
+                                <input type="text" 
+                                       id="blacklistEditPhoneDisplay" 
+                                       class="form-control" 
+                                       readonly
+                                       style="background: #f8f9fa;">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Причина</label>
+                                <input type="text" 
+                                       id="blacklistEditReason" 
+                                       class="form-control" 
+                                       placeholder="Причина">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Заметки</label>
+                                <textarea id="blacklistEditNotes" 
+                                          class="form-control" 
+                                          rows="3"
+                                          placeholder="Заметки..."></textarea>
+                            </div>
+                            
+                            <div class="form-actions">
+                                <button type="button" class="btn btn-outline" onclick="BlacklistModule.closeEditModal()">
+                                    Отмена
+                                </button>
+                                <button type="submit" class="btn btn-primary">
+                                    Сохранить
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Модальное окно деталей -->
+            <div id="blacklistDetailModal" class="modal" style="display: none;">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>Детали записи</h3>
+                        <button class="close-modal">&times;</button>
+                    </div>
+                    <div class="modal-body" id="blacklistDetailContent">
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+    
+    // Загрузка чёрного списка
+    async loadBlacklist(page = 1) {
+        this.currentPage = page;
+        
+        const tbody = document.getElementById('blacklistTableBody');
+        if (!tbody) return;
+        
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center">Загрузка...</td></tr>';
+        
+        try {
+            let url = `${API_BASE}/blacklist?page=${page}&page_size=${this.pageSize}`;
+            if (this.searchQuery) {
+                url += `&search=${encodeURIComponent(this.searchQuery)}`;
             }
             
-            // Загрузка паттернов
-            const patternsStored = localStorage.getItem('blacklist_patterns');
-            if (patternsStored) {
-                this.patterns = JSON.parse(patternsStored);
-            }
-            
-            // Загрузка wildcard паттернов
-            const wildcardsStored = localStorage.getItem('blacklist_wildcards');
-            if (wildcardsStored) {
-                const wildcards = JSON.parse(wildcardsStored);
-                wildcards.forEach(w => {
-                    this.wildcards.set(w.prefix, w);
-                });
-            }
-        } catch (error) {
-            console.error('Failed to load blacklist from storage:', error);
-        }
-    }
-
-    // Сохранение в хранилище
-    saveToStorage() {
-        try {
-            // Сохранение основного списка
-            const data = Array.from(this.blacklist.values());
-            localStorage.setItem('blacklist', JSON.stringify(data));
-            this.blacklistArray = data;
-            
-            // Сохранение паттернов
-            localStorage.setItem('blacklist_patterns', JSON.stringify(this.patterns));
-            
-            // Сохранение wildcard паттернов
-            const wildcards = Array.from(this.wildcards.values());
-            localStorage.setItem('blacklist_wildcards', JSON.stringify(wildcards));
-            
-            this.notifySubscribers('saved', { count: this.blacklist.size });
-        } catch (error) {
-            console.error('Failed to save blacklist:', error);
-        }
-    }
-
-    // Загрузка настроек
-    loadSettings() {
-        try {
-            const stored = localStorage.getItem('blacklist_settings');
-            if (stored) {
-                this.settings = { ...this.settings, ...JSON.parse(stored) };
+            const response = await authFetch(url);
+            if (response.ok) {
+                const data = await response.json();
+                this.blacklistItems = data.items || data || [];
+                this.totalRecords = data.total || this.blacklistItems.length;
+                this.totalPages = Math.ceil(this.totalRecords / this.pageSize) || 1;
+                
+                this.renderTable();
+                this.renderPagination();
+                this.updateStats(data.stats);
+            } else {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-error">Ошибка загрузки</td></tr>';
             }
         } catch (error) {
-            console.error('Failed to load blacklist settings:', error);
+            console.error('Blacklist load failed:', error);
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-error">Ошибка сервера</td></tr>';
         }
-    }
-
-    // Сохранение настроек
-    saveSettings() {
-        try {
-            localStorage.setItem('blacklist_settings', JSON.stringify(this.settings));
-            this.notifySubscribers('settings_updated', this.settings);
-        } catch (error) {
-            console.error('Failed to save blacklist settings:', error);
-        }
-    }
-
-    // Загрузка статистики
-    loadStats() {
-        try {
-            const stored = localStorage.getItem('blacklist_stats');
-            if (stored) {
-                this.stats = { ...this.stats, ...JSON.parse(stored) };
-            }
-        } catch (error) {
-            console.error('Failed to load blacklist stats:', error);
-        }
-    }
-
-    // Сохранение статистики
-    saveStats() {
-        try {
-            localStorage.setItem('blacklist_stats', JSON.stringify(this.stats));
-        } catch (error) {
-            console.error('Failed to save blacklist stats:', error);
-        }
-    }
-
-    // Добавление номера в черный список
-    add(number, options = {}) {
-        const {
-            reason = 'manual',
-            category = 'general',
-            notes = '',
-            duration = null, // null = навсегда
-            addedBy = 'user',
-            notify = true
-        } = options;
+    },
+    
+    // Рендер таблицы
+    renderTable() {
+        const tbody = document.getElementById('blacklistTableBody');
         
-        const normalized = this.normalizeNumber(number);
-        
-        // Проверка существования
-        if (this.blacklist.has(normalized)) {
-            return { success: false, error: 'Number already in blacklist' };
+        if (this.blacklistItems.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="text-center">
+                        <div class="empty-state">
+                            <div class="empty-icon">🚫</div>
+                            <p>Чёрный список пуст</p>
+                            <button class="btn btn-primary" onclick="BlacklistModule.openAddModal()">
+                                Добавить номер
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+            return;
         }
         
-        // Валидация номера
-        if (!this.validateNumber(normalized)) {
-            return { success: false, error: 'Invalid phone number' };
+        tbody.innerHTML = this.blacklistItems.map(item => `
+            <tr data-id="${item.id}" class="blacklist-row">
+                <td>
+                    <input type="checkbox" class="blacklist-checkbox" data-id="${item.id}">
+                </td>
+                <td>
+                    <span class="phone-number">${this.formatPhoneNumber(item.phone)}</span>
+                    ${item.is_blocked !== false ? '<span class="badge badge-danger">Заблокирован</span>' : ''}
+                </td>
+                <td>${this.escapeHtml(item.reason || '—')}</td>
+                <td>${this.formatDateTime(item.created_at)}</td>
+                <td>${this.escapeHtml(item.created_by_name || item.created_by || 'system')}</td>
+                <td>
+                    <span class="source-badge source-${item.source || 'manual'}">
+                        ${this.getSourceName(item.source)}
+                    </span>
+                </td>
+                <td>
+                    <div class="action-buttons">
+                        <button class="btn btn-sm btn-outline view-detail" 
+                                data-id="${item.id}"
+                                title="Подробнее">👁️</button>
+                        <button class="btn btn-sm btn-outline edit-item" 
+                                data-id="${item.id}"
+                                title="Редактировать">✏️</button>
+                        <button class="btn btn-sm btn-outline-danger remove-item" 
+                                data-phone="${this.escapeHtml(item.phone)}"
+                                data-id="${item.id}"
+                                title="Удалить">🗑️</button>
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+        
+        this.attachTableEvents();
+    },
+    
+    // Обновление статистики
+    updateStats(stats) {
+        if (!stats) return;
+        
+        document.getElementById('blacklistTotal').textContent = stats.total || this.totalRecords;
+        document.getElementById('blacklistToday').textContent = stats.today || 0;
+    },
+    
+    // Рендер пагинации
+    renderPagination() {
+        const container = document.getElementById('blacklistPagination');
+        if (!container) return;
+        
+        if (this.totalPages <= 1) {
+            container.innerHTML = '';
+            return;
         }
         
-        const entry = {
-            id: this.generateId(),
-            number: normalized,
-            originalNumber: number,
-            reason: reason,
-            category: category,
-            notes: notes,
-            addedAt: new Date().toISOString(),
-            addedBy: addedBy,
-            expiresAt: duration ? new Date(Date.now() + duration).toISOString() : null,
-            blockCount: 0,
-            lastBlocked: null,
-            metadata: {
-                source: options.source || 'local',
-                priority: options.priority || 1,
-                tags: options.tags || []
-            }
-        };
+        let html = '<div class="pagination">';
         
-        // Добавление в Map
-        this.blacklist.set(normalized, entry);
-        
-        // Обновление статистики
-        this.stats.totalBlocked++;
-        if (addedBy === 'auto') {
-            this.stats.autoBlocks++;
+        if (this.currentPage > 1) {
+            html += `<button class="page-btn" data-page="${this.currentPage - 1}">←</button>`;
         } else {
-            this.stats.manualBlocks++;
-        }
-        if (duration) {
-            this.stats.temporaryBlocks++;
+            html += `<button class="page-btn" disabled>←</button>`;
         }
         
-        // Очистка кеша для этого номера
-        this.cache.delete(normalized);
+        const start = Math.max(1, this.currentPage - 2);
+        const end = Math.min(this.totalPages, this.currentPage + 2);
         
-        // Сохранение
-        this.saveToStorage();
-        this.saveStats();
-        
-        // Уведомление
-        if (notify && this.settings.notifyOnBlock) {
-            this.showNotification(`Номер ${number} добавлен в черный список`);
+        if (start > 1) {
+            html += `<button class="page-btn" data-page="1">1</button>`;
+            if (start > 2) html += '<span class="page-dots">...</span>';
         }
         
-        this.notifySubscribers('added', entry);
+        for (let i = start; i <= end; i++) {
+            html += `<button class="page-btn ${i === this.currentPage ? 'active' : ''}" data-page="${i}">${i}</button>`;
+        }
         
-        return { success: true, entry };
-    }
-
-    // Добавление нескольких номеров
-    addMultiple(numbers, options = {}) {
-        const results = {
-            success: [],
-            failed: [],
-            total: numbers.length
-        };
+        if (end < this.totalPages) {
+            if (end < this.totalPages - 1) html += '<span class="page-dots">...</span>';
+            html += `<button class="page-btn" data-page="${this.totalPages}">${this.totalPages}</button>`;
+        }
         
-        numbers.forEach(number => {
-            const result = this.add(number, options);
-            if (result.success) {
-                results.success.push(number);
-            } else {
-                results.failed.push({ number, error: result.error });
-            }
+        if (this.currentPage < this.totalPages) {
+            html += `<button class="page-btn" data-page="${this.currentPage + 1}">→</button>`;
+        } else {
+            html += `<button class="page-btn" disabled>→</button>`;
+        }
+        
+        html += '</div>';
+        
+        container.innerHTML = html;
+        
+        container.querySelectorAll('.page-btn[data-page]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.loadBlacklist(parseInt(btn.dataset.page));
+            });
         });
-        
-        return results;
-    }
-
-    // Добавление паттерна
-    addPattern(pattern, options = {}) {
-        const {
-            description = '',
-            category = 'pattern',
-            isRegex = false
-        } = options;
-        
-        const patternEntry = {
-            id: this.generateId(),
-            pattern: pattern,
-            description: description,
-            category: category,
-            isRegex: isRegex,
-            addedAt: new Date().toISOString(),
-            matchCount: 0,
-            lastMatched: null
-        };
-        
-        // Валидация паттерна
-        if (isRegex) {
-            try {
-                new RegExp(pattern);
-            } catch (e) {
-                return { success: false, error: 'Invalid regular expression' };
-            }
+    },
+    
+    // ============ МОДАЛЬНЫЕ ОКНА ============
+    
+    openAddModal() {
+        const modal = document.getElementById('blacklistAddModal');
+        if (modal) {
+            modal.style.display = 'flex';
+            document.getElementById('blacklistPhone').value = '';
+            document.getElementById('blacklistReasonSelect').value = '';
+            document.getElementById('blacklistReasonCustom').value = '';
+            document.getElementById('blacklistNotes').value = '';
         }
-        
-        this.patterns.push(patternEntry);
-        this.saveToStorage();
-        
-        this.notifySubscribers('pattern_added', patternEntry);
-        
-        return { success: true, entry: patternEntry };
-    }
-
-    // Добавление wildcard паттерна
-    addWildcard(prefix, options = {}) {
-        const {
-            description = '',
-            category = 'wildcard'
-        } = options;
-        
-        const normalized = this.normalizeNumber(prefix);
-        
-        if (this.wildcards.has(normalized)) {
-            return { success: false, error: 'Wildcard already exists' };
+    },
+    
+    closeAddModal() {
+        const modal = document.getElementById('blacklistAddModal');
+        if (modal) modal.style.display = 'none';
+    },
+    
+    openImportModal() {
+        const modal = document.getElementById('blacklistImportModal');
+        if (modal) {
+            modal.style.display = 'flex';
+            document.getElementById('blacklistImportText').value = '';
+            document.getElementById('blacklistImportReason').value = '';
+            document.getElementById('blacklistImportCount').textContent = '0';
         }
-        
-        const entry = {
-            id: this.generateId(),
-            prefix: normalized,
-            description: description,
-            category: category,
-            addedAt: new Date().toISOString(),
-            matchCount: 0,
-            lastMatched: null
-        };
-        
-        this.wildcards.set(normalized, entry);
-        this.saveToStorage();
-        
-        this.notifySubscribers('wildcard_added', entry);
-        
-        return { success: true, entry };
-    }
-
-    // Проверка номера в черном списке
-    isBlocked(number) {
-        const normalized = this.normalizeNumber(number);
-        
-        // Проверка кеша
-        if (this.cache.has(normalized)) {
-            this.cacheHits++;
-            return this.cache.get(normalized);
+    },
+    
+    closeImportModal() {
+        const modal = document.getElementById('blacklistImportModal');
+        if (modal) modal.style.display = 'none';
+    },
+    
+    openEditModal(item) {
+        const modal = document.getElementById('blacklistEditModal');
+        if (modal) {
+            document.getElementById('blacklistEditId').value = item.id;
+            document.getElementById('blacklistEditPhone').value = item.phone;
+            document.getElementById('blacklistEditPhoneDisplay').value = this.formatPhoneNumber(item.phone);
+            document.getElementById('blacklistEditReason').value = item.reason || '';
+            document.getElementById('blacklistEditNotes').value = item.notes || '';
+            modal.style.display = 'flex';
         }
-        
-        this.cacheMisses++;
-        
-        let blocked = false;
-        let reason = null;
-        let entry = null;
-        
-        // 1. Проверка точного совпадения
-        if (this.blacklist.has(normalized)) {
-            entry = this.blacklist.get(normalized);
-            
-            // Проверка срока действия
-            if (this.isExpired(entry)) {
-                this.remove(normalized);
-            } else {
-                blocked = true;
-                reason = entry.reason;
-                
-                // Обновление счетчика
-                entry.blockCount++;
-                entry.lastBlocked = new Date().toISOString();
-                this.blacklist.set(normalized, entry);
-            }
-        }
-        
-        // 2. Проверка wildcard паттернов
-        if (!blocked) {
-            for (const [prefix, wildcardEntry] of this.wildcards) {
-                if (normalized.startsWith(prefix)) {
-                    blocked = true;
-                    reason = `Wildcard: ${prefix}*`;
-                    entry = wildcardEntry;
-                    wildcardEntry.matchCount++;
-                    wildcardEntry.lastMatched = new Date().toISOString();
-                    break;
-                }
-            }
-        }
-        
-        // 3. Проверка регулярных выражений
-        if (!blocked) {
-            for (const pattern of this.patterns) {
-                if (pattern.isRegex) {
-                    const regex = new RegExp(pattern.pattern);
-                    if (regex.test(normalized)) {
-                        blocked = true;
-                        reason = `Pattern: ${pattern.description || pattern.pattern}`;
-                        entry = pattern;
-                        pattern.matchCount++;
-                        pattern.lastMatched = new Date().toISOString();
-                        break;
-                    }
-                } else if (normalized.includes(pattern.pattern)) {
-                    blocked = true;
-                    reason = `Contains: ${pattern.description || pattern.pattern}`;
-                    entry = pattern;
-                    pattern.matchCount++;
-                    pattern.lastMatched = new Date().toISOString();
-                    break;
-                }
-            }
-        }
-        
-        // 4. Проверка настроек
-        if (!blocked) {
-            const settingsCheck = this.checkSettingsBlock(normalized);
-            if (settingsCheck.blocked) {
-                blocked = true;
-                reason = settingsCheck.reason;
-            }
-        }
-        
-        // Кеширование результата
-        this.cache.set(normalized, blocked);
-        this.limitCacheSize();
-        
-        // Сохранение если были обновления счетчиков
-        if (entry && entry.matchCount !== undefined) {
-            this.saveToStorage();
-        }
-        
-        return blocked;
-    }
-
-    // Проверка блокировки по настройкам
-    checkSettingsBlock(number) {
-        // Приватные номера
-        if (this.settings.blockPrivateNumbers && this.isPrivateNumber(number)) {
-            return { blocked: true, reason: 'Private number' };
-        }
-        
-        // Неизвестные номера
-        if (this.settings.blockUnknownNumbers && number === 'unknown') {
-            return { blocked: true, reason: 'Unknown number' };
-        }
-        
-        // Международные номера
-        if (this.settings.blockInternational && this.isInternational(number)) {
-            const country = this.getCountryCode(number);
-            if (!this.settings.allowedCountries.includes(country)) {
-                return { blocked: true, reason: 'International (blocked)' };
-            }
-        }
-        
-        return { blocked: false };
-    }
-
-    // Получение информации о блокировке
-    getBlockInfo(number) {
-        const normalized = this.normalizeNumber(number);
-        
-        if (!this.isBlocked(normalized)) {
-            return { blocked: false };
-        }
-        
-        const entry = this.blacklist.get(normalized);
-        
-        return {
-            blocked: true,
-            number: normalized,
-            reason: entry?.reason || 'Unknown',
-            category: entry?.category || 'general',
-            addedAt: entry?.addedAt || null,
-            expiresAt: entry?.expiresAt || null,
-            blockCount: entry?.blockCount || 0,
-            notes: entry?.notes || ''
-        };
-    }
-
-    // Удаление из черного списка
-    remove(number) {
-        const normalized = this.normalizeNumber(number);
-        
-        if (!this.blacklist.has(normalized)) {
-            return false;
-        }
-        
-        const entry = this.blacklist.get(normalized);
-        this.blacklist.delete(normalized);
-        
-        // Очистка кеша
-        this.cache.delete(normalized);
-        
-        // Обновление статистики
-        if (entry.expiresAt) {
-            this.stats.expiredBlocks++;
-        }
-        
-        this.saveToStorage();
-        this.saveStats();
-        
-        this.notifySubscribers('removed', { number: normalized, entry });
-        
-        return true;
-    }
-
-    // Удаление паттерна
-    removePattern(patternId) {
-        const index = this.patterns.findIndex(p => p.id === patternId);
-        if (index === -1) return false;
-        
-        const pattern = this.patterns[index];
-        this.patterns.splice(index, 1);
-        
-        // Очистка кеша так как паттерн мог влиять на многие номера
-        this.cache.clear();
-        
-        this.saveToStorage();
-        this.notifySubscribers('pattern_removed', pattern);
-        
-        return true;
-    }
-
-    // Удаление wildcard
-    removeWildcard(prefix) {
-        const normalized = this.normalizeNumber(prefix);
-        
-        if (!this.wildcards.has(normalized)) {
-            return false;
-        }
-        
-        const entry = this.wildcards.get(normalized);
-        this.wildcards.delete(normalized);
-        
-        // Очистка кеша
-        this.cache.clear();
-        
-        this.saveToStorage();
-        this.notifySubscribers('wildcard_removed', entry);
-        
-        return true;
-    }
-
-    // Автоматическое добавление при множественных сбросах
-    autoBlockOnFailedAttempts(number) {
-        const key = `failed_attempts_${number}`;
-        const attempts = (parseInt(localStorage.getItem(key)) || 0) + 1;
-        
-        localStorage.setItem(key, attempts);
-        
-        if (attempts >= this.settings.maxFailedAttempts) {
-            this.add(number, {
-                reason: 'Multiple failed attempts',
-                category: 'auto_block',
-                addedBy: 'auto',
-                duration: this.settings.blockDuration,
-                notes: `Auto-blocked after ${attempts} failed attempts`
-            });
-            
-            localStorage.removeItem(key);
-            return true;
-        }
-        
-        // Автоочистка через 24 часа
-        setTimeout(() => {
-            localStorage.removeItem(key);
-        }, 24 * 60 * 60 * 1000);
-        
-        return false;
-    }
-
-    // Очистка устаревших записей
-    cleanupExpired() {
-        const now = new Date();
-        let removed = 0;
-        
-        for (const [number, entry] of this.blacklist) {
-            if (this.isExpired(entry)) {
-                this.blacklist.delete(number);
-                this.cache.delete(number);
-                removed++;
-                this.stats.expiredBlocks++;
-            }
-        }
-        
-        if (removed > 0) {
-            this.saveToStorage();
-            this.saveStats();
-            console.log(`Cleaned up ${removed} expired blacklist entries`);
-        }
-        
-        return removed;
-    }
-
-    // Проверка истечения срока
-    isExpired(entry) {
-        if (!entry.expiresAt) return false;
-        return new Date(entry.expiresAt) < new Date();
-    }
-
-    // Периодическая очистка
-    startPeriodicCleanup() {
-        setInterval(() => {
-            this.cleanupExpired();
-        }, 60 * 60 * 1000); // Каждый час
-    }
-
-    // Импорт черного списка
-    importBlacklist(data, format = 'json') {
+    },
+    
+    closeEditModal() {
+        const modal = document.getElementById('blacklistEditModal');
+        if (modal) modal.style.display = 'none';
+    },
+    
+    async showDetailModal(id) {
         try {
-            let numbers = [];
+            const response = await authFetch(`${API_BASE}/blacklist/${id}`);
+            if (!response.ok) throw new Error('Failed to load');
             
-            if (format === 'json') {
-                const parsed = JSON.parse(data);
-                numbers = parsed.map(item => item.number || item);
-            } else if (format === 'csv') {
-                numbers = data.split('\n')
-                    .map(line => line.split(',')[0].trim())
-                    .filter(num => num && !num.startsWith('#'));
-            } else if (format === 'txt') {
-                numbers = data.split('\n')
-                    .map(line => line.trim())
-                    .filter(num => num && !num.startsWith('#'));
+            const item = await response.json();
+            
+            const content = document.getElementById('blacklistDetailContent');
+            content.innerHTML = `
+                <div class="detail-section">
+                    <h4>Основная информация</h4>
+                    <table class="details-table">
+                        <tr><td>Номер:</td><td>${this.formatPhoneNumber(item.phone)}</td></tr>
+                        <tr><td>Причина:</td><td>${this.escapeHtml(item.reason || '—')}</td></tr>
+                        <tr><td>Добавлен:</td><td>${this.formatDateTime(item.created_at)}</td></tr>
+                        <tr><td>Добавил:</td><td>${this.escapeHtml(item.created_by_name || 'system')}</td></tr>
+                        <tr><td>Источник:</td><td>${this.getSourceName(item.source)}</td></tr>
+                        <tr><td>Статус:</td><td>${item.is_blocked !== false ? '🚫 Заблокирован' : '✅ Активен'}</td></tr>
+                    </table>
+                </div>
+                
+                ${item.notes ? `
+                    <div class="detail-section">
+                        <h4>Заметки</h4>
+                        <p>${this.escapeHtml(item.notes)}</p>
+                    </div>
+                ` : ''}
+                
+                ${item.stats ? `
+                    <div class="detail-section">
+                        <h4>Статистика</h4>
+                        <table class="details-table">
+                            <tr><td>Попыток обзвона:</td><td>${item.stats.attempts || 0}</td></tr>
+                            <tr><td>Последняя попытка:</td><td>${this.formatDateTime(item.stats.last_attempt)}</td></tr>
+                        </table>
+                    </div>
+                ` : ''}
+            `;
+            
+            document.getElementById('blacklistDetailModal').style.display = 'flex';
+        } catch (error) {
+            console.error('Load detail failed:', error);
+            showToast('Ошибка загрузки', 'error');
+        }
+    },
+    
+    closeDetailModal() {
+        const modal = document.getElementById('blacklistDetailModal');
+        if (modal) modal.style.display = 'none';
+    },
+    
+    // ============ ДЕЙСТВИЯ ============
+    
+    async addToBlacklist() {
+        const phoneInput = document.getElementById('blacklistPhone');
+        const reasonSelect = document.getElementById('blacklistReasonSelect');
+        const reasonCustom = document.getElementById('blacklistReasonCustom');
+        const notes = document.getElementById('blacklistNotes');
+        
+        const phones = phoneInput.value
+            .split(/[,\n]/)
+            .map(p => p.trim())
+            .filter(p => p);
+        
+        if (phones.length === 0) {
+            showToast('Введите номер телефона', 'warning');
+            return;
+        }
+        
+        const reason = reasonCustom.value || reasonSelect.value || null;
+        
+        const submitBtn = document.querySelector('#blacklistAddForm button[type="submit"]');
+        const originalText = submitBtn.textContent;
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Добавление...';
+        
+        let successCount = 0;
+        let errorCount = 0;
+        
+        for (const phone of phones) {
+            try {
+                const data = { phone };
+                if (reason) data.reason = reason;
+                if (notes.value) data.notes = notes.value;
+                
+                const response = await authFetch(`${API_BASE}/blacklist`, {
+                    method: 'POST',
+                    body: JSON.stringify(data)
+                });
+                
+                if (response.ok) {
+                    successCount++;
+                } else {
+                    errorCount++;
+                }
+            } catch {
+                errorCount++;
             }
-            
-            const result = this.addMultiple(numbers, {
-                reason: 'imported',
-                source: 'import'
+        }
+        
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalText;
+        
+        showToast(`Добавлено: ${successCount}, ошибок: ${errorCount}`, successCount > 0 ? 'success' : 'error');
+        
+        if (successCount > 0) {
+            this.closeAddModal();
+            await this.loadBlacklist();
+        }
+    },
+    
+    async importBlacklist() {
+        const text = document.getElementById('blacklistImportText').value;
+        const reason = document.getElementById('blacklistImportReason').value;
+        const skipDuplicates = document.getElementById('blacklistImportSkipDuplicates').checked;
+        
+        const phones = text
+            .split(/[,\n]/)
+            .map(p => p.trim())
+            .filter(p => p);
+        
+        if (phones.length === 0) {
+            showToast('Введите номера телефонов', 'warning');
+            return;
+        }
+        
+        const submitBtn = document.querySelector('#blacklistImportForm button[type="submit"]');
+        const originalText = submitBtn.textContent;
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Импорт...';
+        
+        try {
+            const response = await authFetch(`${API_BASE}/blacklist/import`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    phones,
+                    reason: reason || null,
+                    skip_duplicates: skipDuplicates
+                })
             });
             
-            this.notifySubscribers('imported', result);
-            
-            return result;
+            if (response.ok) {
+                const data = await response.json();
+                showToast(`Импортировано: ${data.imported}, пропущено: ${data.skipped}`, 'success');
+                this.closeImportModal();
+                await this.loadBlacklist();
+            } else {
+                const err = await response.json();
+                showToast(err.detail || 'Ошибка импорта', 'error');
+            }
         } catch (error) {
-            console.error('Failed to import blacklist:', error);
-            return { success: [], failed: [], error: error.message };
+            console.error('Import failed:', error);
+            showToast('Ошибка сервера', 'error');
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = originalText;
         }
-    }
-
-    // Экспорт черного списка
-    exportBlacklist(format = 'json') {
-        const data = Array.from(this.blacklist.values());
+    },
+    
+    async removeFromBlacklist(phone, id = null) {
+        const identifier = id || phone;
         
-        if (format === 'json') {
-            return JSON.stringify(data, null, 2);
-        } else if (format === 'csv') {
-            const headers = ['Number', 'Reason', 'Category', 'Added At', 'Expires At'];
-            const rows = data.map(entry => [
-                entry.number,
-                entry.reason,
-                entry.category,
-                entry.addedAt,
-                entry.expiresAt || ''
+        if (!confirm(`Удалить ${phone} из чёрного списка?`)) return;
+        
+        try {
+            const response = await authFetch(`${API_BASE}/blacklist/${encodeURIComponent(identifier)}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                showToast('Номер удалён из чёрного списка', 'success');
+                await this.loadBlacklist();
+            } else {
+                const err = await response.json();
+                showToast(err.detail || 'Ошибка удаления', 'error');
+            }
+        } catch (error) {
+            console.error('Remove failed:', error);
+            showToast('Ошибка сервера', 'error');
+        }
+    },
+    
+    async removeSelected() {
+        const selected = Array.from(document.querySelectorAll('.blacklist-checkbox:checked'))
+            .map(cb => ({
+                id: cb.dataset.id,
+                phone: cb.closest('tr').querySelector('.phone-number')?.textContent || ''
+            }));
+        
+        if (selected.length === 0) {
+            showToast('Выберите номера для удаления', 'warning');
+            return;
+        }
+        
+        if (!confirm(`Удалить ${selected.length} номер(ов) из чёрного списка?`)) return;
+        
+        let successCount = 0;
+        let errorCount = 0;
+        
+        for (const item of selected) {
+            try {
+                const response = await authFetch(`${API_BASE}/blacklist/${item.id}`, {
+                    method: 'DELETE'
+                });
+                if (response.ok) {
+                    successCount++;
+                } else {
+                    errorCount++;
+                }
+            } catch {
+                errorCount++;
+            }
+        }
+        
+        showToast(`Удалено: ${successCount}, ошибок: ${errorCount}`, successCount > 0 ? 'success' : 'error');
+        await this.loadBlacklist();
+    },
+    
+    async clearAll() {
+        if (!confirm('ВНИМАНИЕ! Вы уверены, что хотите очистить ВЕСЬ чёрный список? Это действие нельзя отменить!')) return;
+        
+        if (!confirm('Подтвердите ещё раз: удалить ВСЕ номера из чёрного списка?')) return;
+        
+        try {
+            const response = await authFetch(`${API_BASE}/blacklist/clear`, {
+                method: 'POST'
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                showToast(`Удалено ${data.deleted} номеров`, 'success');
+                await this.loadBlacklist();
+            } else {
+                showToast('Ошибка очистки', 'error');
+            }
+        } catch (error) {
+            console.error('Clear all failed:', error);
+            showToast('Ошибка сервера', 'error');
+        }
+    },
+    
+    async updateItem() {
+        const id = document.getElementById('blacklistEditId').value;
+        const reason = document.getElementById('blacklistEditReason').value;
+        const notes = document.getElementById('blacklistEditNotes').value;
+        
+        try {
+            const response = await authFetch(`${API_BASE}/blacklist/${id}`, {
+                method: 'PUT',
+                body: JSON.stringify({ reason: reason || null, notes: notes || null })
+            });
+            
+            if (response.ok) {
+                showToast('Запись обновлена', 'success');
+                this.closeEditModal();
+                await this.loadBlacklist();
+            } else {
+                const err = await response.json();
+                showToast(err.detail || 'Ошибка обновления', 'error');
+            }
+        } catch (error) {
+            console.error('Update failed:', error);
+            showToast('Ошибка сервера', 'error');
+        }
+    },
+    
+    async exportBlacklist() {
+        showToast('Подготовка экспорта...', 'info');
+        
+        try {
+            const response = await authFetch(`${API_BASE}/blacklist/export`);
+            if (response.ok) {
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `blacklist_${new Date().toISOString().split('T')[0]}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                
+                showToast('Экспорт завершен', 'success');
+            } else {
+                // Fallback - клиентский экспорт
+                await this.exportToCSVClientSide();
+            }
+        } catch (error) {
+            console.error('Export failed:', error);
+            await this.exportToCSVClientSide();
+        }
+    },
+    
+    async exportToCSVClientSide() {
+        try {
+            const response = await authFetch(`${API_BASE}/blacklist?page_size=10000`);
+            if (!response.ok) throw new Error('Failed to load');
+            
+            const data = await response.json();
+            const items = data.items || data || [];
+            
+            if (!items.length) {
+                showToast('Нет данных для экспорта', 'warning');
+                return;
+            }
+            
+            const headers = ['Номер', 'Причина', 'Дата добавления', 'Добавил', 'Источник', 'Заметки'];
+            const rows = items.map(item => [
+                item.phone,
+                item.reason || '',
+                this.formatDateTime(item.created_at),
+                item.created_by_name || 'system',
+                this.getSourceName(item.source),
+                item.notes || ''
             ]);
             
-            return [
+            const csvContent = [
                 headers.join(','),
-                ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+                ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
             ].join('\n');
-        } else if (format === 'txt') {
-            return data.map(entry => entry.number).join('\n');
-        }
-    }
-
-    // Синхронизация с глобальными списками
-    async syncWithGlobalBlacklists() {
-        if (this.isSyncing) return;
-        
-        this.isSyncing = true;
-        
-        try {
-            for (const list of this.globalBlacklists) {
-                if (!list.enabled) continue;
-                
-                const response = await fetch(list.url);
-                const data = await response.json();
-                
-                const result = this.addMultiple(data.numbers || data, {
-                    reason: `Global: ${list.name}`,
-                    source: 'global',
-                    priority: 2
-                });
-                
-                console.log(`Synced with ${list.name}:`, result);
-            }
             
-            this.notifySubscribers('synced', { success: true });
+            const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `blacklist_${new Date().toISOString().split('T')[0]}.csv`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+            
+            showToast(`Экспортировано ${items.length} записей`, 'success');
         } catch (error) {
-            console.error('Failed to sync with global blacklists:', error);
-            this.notifySubscribers('synced', { success: false, error });
-        } finally {
-            this.isSyncing = false;
+            console.error('Client-side export failed:', error);
+            showToast('Не удалось выполнить экспорт', 'error');
         }
-    }
-
-    // Получение статистики
-    getStatistics() {
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    },
+    
+    // ============ ОБРАБОТЧИКИ СОБЫТИЙ ============
+    
+    attachEventListeners() {
+        // Кнопки в заголовке
+        document.getElementById('blacklistAddBtn')?.addEventListener('click', () => this.openAddModal());
+        document.getElementById('blacklistImportBtn')?.addEventListener('click', () => this.openImportModal());
+        document.getElementById('blacklistExportBtn')?.addEventListener('click', () => this.exportBlacklist());
+        document.getElementById('blacklistRefreshBtn')?.addEventListener('click', () => this.loadBlacklist());
+        document.getElementById('blacklistClearAllBtn')?.addEventListener('click', () => this.clearAll());
         
-        const todayBlocks = Array.from(this.blacklist.values())
-            .filter(entry => new Date(entry.addedAt) >= today).length;
-        
-        return {
-            ...this.stats,
-            totalActive: this.blacklist.size,
-            patternsCount: this.patterns.length,
-            wildcardsCount: this.wildcards.size,
-            todayBlocks: todayBlocks,
-            cacheEfficiency: this.cacheHits / (this.cacheHits + this.cacheMisses) || 0,
-            topCategories: this.getTopCategories(),
-            topReasons: this.getTopReasons()
-        };
-    }
-
-    // Топ категорий
-    getTopCategories(limit = 5) {
-        const categories = {};
-        
-        for (const entry of this.blacklist.values()) {
-            categories[entry.category] = (categories[entry.category] || 0) + 1;
-        }
-        
-        return Object.entries(categories)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, limit)
-            .map(([name, count]) => ({ name, count }));
-    }
-
-    // Топ причин блокировки
-    getTopReasons(limit = 5) {
-        const reasons = {};
-        
-        for (const entry of this.blacklist.values()) {
-            reasons[entry.reason] = (reasons[entry.reason] || 0) + 1;
-        }
-        
-        return Object.entries(reasons)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, limit)
-            .map(([name, count]) => ({ name, count }));
-    }
-
-    // Получение всех записей с пагинацией
-    getEntries(page = 1, limit = 50, filters = {}) {
-        let entries = Array.from(this.blacklist.values());
-        
-        // Фильтрация
-        if (filters.category) {
-            entries = entries.filter(e => e.category === filters.category);
-        }
-        if (filters.reason) {
-            entries = entries.filter(e => e.reason === filters.reason);
-        }
-        if (filters.search) {
-            const search = filters.search.toLowerCase();
-            entries = entries.filter(e => 
-                e.number.includes(search) || 
-                e.notes?.toLowerCase().includes(search)
-            );
-        }
-        
-        // Сортировка
-        entries.sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
-        
-        // Пагинация
-        const total = entries.length;
-        const start = (page - 1) * limit;
-        const end = start + limit;
-        
-        return {
-            entries: entries.slice(start, end),
-            total,
-            page,
-            totalPages: Math.ceil(total / limit)
-        };
-    }
-
-    // Поиск по черному списку
-    search(query) {
-        const normalized = this.normalizeNumber(query);
-        const results = [];
-        
-        // Поиск по точному номеру
-        if (this.blacklist.has(normalized)) {
-            results.push({
-                type: 'exact',
-                entry: this.blacklist.get(normalized)
-            });
-        }
-        
-        // Поиск по wildcard
-        for (const [prefix, entry] of this.wildcards) {
-            if (normalized.startsWith(prefix)) {
-                results.push({
-                    type: 'wildcard',
-                    entry: entry
-                });
-            }
-        }
-        
-        // Поиск по подстроке
-        for (const entry of this.blacklist.values()) {
-            if (entry.number.includes(normalized) && 
-                entry.number !== normalized) {
-                results.push({
-                    type: 'partial',
-                    entry: entry
-                });
-            }
-        }
-        
-        return results;
-    }
-
-    // Проверка нескольких номеров
-    checkMultiple(numbers) {
-        const results = {};
-        
-        numbers.forEach(number => {
-            results[number] = this.isBlocked(number);
+        // Поиск
+        let searchTimeout;
+        document.getElementById('blacklistSearch')?.addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                this.searchQuery = e.target.value;
+                this.currentPage = 1;
+                this.loadBlacklist();
+            }, 300);
         });
         
-        return results;
-    }
-
-    // Очистка всего черного списка
-    clearAll() {
-        const count = this.blacklist.size;
-        
-        this.blacklist.clear();
-        this.patterns = [];
-        this.wildcards.clear();
-        this.cache.clear();
-        
-        this.saveToStorage();
-        
-        this.notifySubscribers('cleared', { count });
-        
-        return count;
-    }
-
-    // Сброс статистики
-    resetStats() {
-        this.stats = {
-            totalBlocked: this.blacklist.size,
-            autoBlocks: 0,
-            manualBlocks: 0,
-            temporaryBlocks: 0,
-            expiredBlocks: 0
-        };
-        
-        this.saveStats();
-    }
-
-    // Валидация номера
-    validateNumber(number) {
-        // Базовая проверка на цифры и допустимые символы
-        const cleaned = number.replace(/[\s\-\(\)\+]/g, '');
-        
-        // Проверка длины
-        if (cleaned.length < 10 || cleaned.length > 15) {
-            return false;
-        }
-        
-        // Проверка на только цифры и +
-        return /^\+?\d+$/.test(cleaned);
-    }
-
-    // Нормализация номера
-    normalizeNumber(number) {
-        if (!number) return '';
-        
-        // Удаление всех нецифровых символов кроме +
-        let normalized = number.replace(/[^\d\+]/g, '');
-        
-        // Приведение к международному формату
-        if (normalized.startsWith('8')) {
-            normalized = '+7' + normalized.substring(1);
-        } else if (normalized.length === 10) {
-            normalized = '+7' + normalized;
-        }
-        
-        return normalized;
-    }
-
-    // Проверка на приватный номер
-    isPrivateNumber(number) {
-        const privateIndicators = ['private', 'unknown', 'hidden', 'anonymous', ''];
-        return privateIndicators.includes(number.toLowerCase());
-    }
-
-    // Проверка на международный номер
-    isInternational(number) {
-        const country = this.getCountryCode(number);
-        return country && country !== 'RU';
-    }
-
-    // Получение кода страны
-    getCountryCode(number) {
-        const match = number.match(/^\+(\d{1,3})/);
-        if (!match) return null;
-        
-        const code = match[1];
-        const countryCodes = {
-            '1': 'US',
-            '7': 'RU',
-            '44': 'UK',
-            '49': 'DE',
-            '33': 'FR',
-            '39': 'IT',
-            '86': 'CN',
-            '81': 'JP'
-        };
-        
-        return countryCodes[code] || code;
-    }
-
-    // Ограничение размера кеша
-    limitCacheSize() {
-        if (this.cache.size > this.cacheSize) {
-            const entries = Array.from(this.cache.entries());
-            const toDelete = entries.slice(0, Math.floor(this.cacheSize * 0.2));
-            toDelete.forEach(([key]) => this.cache.delete(key));
-        }
-    }
-
-    // Показ уведомления
-    showNotification(message) {
-        if (Notification.permission === 'granted') {
-            new Notification('Черный список', {
-                body: message,
-                icon: '/assets/icons/blocked.png'
+        // Выбрать все
+        document.getElementById('blacklistSelectAll')?.addEventListener('change', (e) => {
+            document.querySelectorAll('.blacklist-checkbox').forEach(cb => {
+                cb.checked = e.target.checked;
             });
-        }
+        });
         
-        // Интеграция с системой уведомлений
-        if (window.notificationManager) {
-            window.notificationManager.show({
-                title: 'Черный список',
-                message: message,
-                type: 'info'
+        // Форма добавления
+        document.getElementById('blacklistAddForm')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.addToBlacklist();
+        });
+        
+        // Форма импорта
+        document.getElementById('blacklistImportForm')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.importBlacklist();
+        });
+        
+        // Форма редактирования
+        document.getElementById('blacklistEditForm')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.updateItem();
+        });
+        
+        // Подсчёт номеров при импорте
+        document.getElementById('blacklistImportText')?.addEventListener('input', (e) => {
+            const phones = e.target.value
+                .split(/[,\n]/)
+                .map(p => p.trim())
+                .filter(p => p);
+            document.getElementById('blacklistImportCount').textContent = phones.length;
+        });
+        
+        // Закрытие модальных окон
+        document.querySelectorAll('.close-modal').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const modal = e.target.closest('.modal');
+                if (modal) modal.style.display = 'none';
             });
-        }
-    }
-
-    // Генерация ID
-    generateId() {
-        return 'bl_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    }
-
-    // Подписка на события
-    subscribe(callback) {
-        this.subscribers.push(callback);
-    }
-
-    // Отписка
-    unsubscribe(callback) {
-        this.subscribers = this.subscribers.filter(cb => cb !== callback);
-    }
-
-    // Уведомление подписчиков
-    notifySubscribers(event, data) {
-        this.subscribers.forEach(callback => {
-            try {
-                callback(event, data);
-            } catch (error) {
-                console.error('Error in subscriber callback:', error);
+        });
+        
+        // Клик вне модального окна
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.style.display = 'none';
+                }
+            });
+        });
+        
+        // Кнопка удаления выбранных (добавляется динамически)
+        this.addDeleteSelectedButton();
+    },
+    
+    attachTableEvents() {
+        document.querySelectorAll('.view-detail').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.showDetailModal(btn.dataset.id);
+            });
+        });
+        
+        document.querySelectorAll('.edit-item').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = btn.dataset.id;
+                const item = this.blacklistItems.find(i => i.id == id);
+                if (item) this.openEditModal(item);
+            });
+        });
+        
+        document.querySelectorAll('.remove-item').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.removeFromBlacklist(btn.dataset.phone, btn.dataset.id);
+            });
+        });
+        
+        // Клик по строке
+        document.querySelectorAll('.blacklist-row').forEach(row => {
+            row.addEventListener('click', () => {
+                const id = row.dataset.id;
+                this.showDetailModal(id);
+            });
+        });
+    },
+    
+    addDeleteSelectedButton() {
+        const toolbar = document.querySelector('.blacklist-toolbar .toolbar-actions');
+        if (!toolbar) return;
+        
+        const existingBtn = document.getElementById('blacklistDeleteSelectedBtn');
+        if (existingBtn) existingBtn.remove();
+        
+        const btn = document.createElement('button');
+        btn.id = 'blacklistDeleteSelectedBtn';
+        btn.className = 'btn btn-danger';
+        btn.innerHTML = '🗑️ Удалить выбранные';
+        btn.style.display = 'none';
+        btn.addEventListener('click', () => this.removeSelected());
+        
+        toolbar.insertBefore(btn, document.getElementById('blacklistClearAllBtn'));
+        
+        // Обновление видимости при изменении выбора
+        document.addEventListener('change', (e) => {
+            if (e.target.classList.contains('blacklist-checkbox') || e.target.id === 'blacklistSelectAll') {
+                const selectedCount = document.querySelectorAll('.blacklist-checkbox:checked').length;
+                btn.style.display = selectedCount > 0 ? 'inline-block' : 'none';
+                btn.innerHTML = `🗑️ Удалить выбранные (${selectedCount})`;
             }
         });
+    },
+    
+    // ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
+    
+    formatPhoneNumber(phone) {
+        if (!phone) return '—';
+        const cleaned = phone.replace(/\D/g, '');
+        if (cleaned.length === 11) {
+            return `+${cleaned[0]} (${cleaned.slice(1, 4)}) ${cleaned.slice(4, 7)}-${cleaned.slice(7, 9)}-${cleaned.slice(9, 11)}`;
+        }
+        return phone;
+    },
+    
+    formatDateTime(dateStr) {
+        if (!dateStr) return '—';
+        const date = new Date(dateStr);
+        return date.toLocaleString('ru-RU', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        }).replace(',', '');
+    },
+    
+    getSourceName(source) {
+        const sources = {
+            'manual': 'Вручную',
+            'import': 'Импорт',
+            'campaign': 'Кампания',
+            'api': 'API',
+            'system': 'Система'
+        };
+        return sources[source] || source || 'Вручную';
+    },
+    
+    escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
+};
 
-    // Получение размера черного списка
-    get size() {
-        return this.blacklist.size;
-    }
-
-    // Проверка пустоты
-    get isEmpty() {
-        return this.blacklist.size === 0;
-    }
-}
-
-// Создание глобального экземпляра
-window.blacklistManager = new BlacklistManager();
-
-// Экспорт для модульной системы
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = BlacklistManager;
-}
-
-// Примеры использования:
-/*
-// Добавление номера
-blacklistManager.add('+79161234567', {
-    reason: 'Спам',
-    category: 'spam',
-    notes: 'Назойливая реклама'
-});
-
-// Добавление паттерна
-blacklistManager.addPattern('^\\+7495\\d{7}$', {
-    description: 'Все московские номера',
-    isRegex: true
-});
-
-// Добавление wildcard
-blacklistManager.addWildcard('+7800', {
-    description: 'Бесплатные номера'
-});
-
-// Проверка номера
-if (blacklistManager.isBlocked('+79161234567')) {
-    console.log('Номер в черном списке');
-}
-
-// Получение информации
-const info = blacklistManager.getBlockInfo('+79161234567');
-
-// Импорт списка
-blacklistManager.importBlacklist(jsonData, 'json');
-
-// Экспорт списка
-const csv = blacklistManager.exportBlacklist('csv');
-
-// Статистика
-const stats = blacklistManager.getStatistics();
-
-// Поиск
-const results = blacklistManager.search('7495');
-*/
+// Экспорт глобально
+window.BlacklistModule = BlacklistModule;
