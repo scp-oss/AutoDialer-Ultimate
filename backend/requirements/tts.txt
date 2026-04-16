@@ -1,0 +1,10 @@
+# =============================================
+# AutoDialer Ultimate - TTS Requirements
+# =============================================
+# Optional: Install only if TTS feature is needed
+
+# Piper TTS
+piper-tts>=1.2.0,<2.0.0
+
+# Audio Processing
+pydub>=0.25.1,<0.26.0
