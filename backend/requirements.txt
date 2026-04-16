@@ -1,61 +1,52 @@
 # =============================================
-# AutoDialer Ultimate - Python Requirements
-# Версия: 3.0.0
+# AutoDialer Ultimate - Base Requirements
 # =============================================
+# Core dependencies for production
 
-# Core
-fastapi==0.115.11
-uvicorn[standard]==0.34.0
-pydantic==2.10.6
-pydantic-settings==2.7.1
+# Web Framework
+fastapi>=0.110.0,<0.111.0
+uvicorn[standard]>=0.29.0,<0.30.0
+gunicorn>=22.0.0,<23.0.0
 
 # Database
-asyncpg==0.30.0
-sqlalchemy==2.0.36
-alembic==1.14.1
+sqlalchemy>=2.0.29,<2.1.0
+alembic>=1.13.1,<1.14.0
+asyncpg>=0.29.0,<0.30.0
 
 # Redis
-redis==5.2.1
-hiredis==2.3.2
+redis[hiredis]>=5.0.3,<6.0.0
 
-# AMI (Asterisk Manager Interface)
-panoramisk==0.2.0
+# Authentication & Security
+python-jose[cryptography]>=3.3.0,<4.0.0
+passlib[bcrypt]>=1.7.4,<2.0.0
+bcrypt>=4.1.2,<5.0.0
+python-multipart>=0.0.9,<0.1.0
 
-# Authentication
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-bcrypt==4.2.0
-python-multipart==0.0.20
+# Asterisk AMI
+panoramisk>=1.4.1,<2.0.0
 
-# HTTP & WebSocket
-httpx==0.28.1
-aiofiles==24.1.0
-gunicorn==23.0.0
+# Task Queue
+celery[redis]>=5.3.6,<6.0.0
 
-# Monitoring
-prometheus-client==0.21.0
+# HTTP Clients
+httpx>=0.27.0,<0.28.0
+aiohttp>=3.9.5,<4.0.0
+
+# Data Validation
+pydantic>=2.7.1,<3.0.0
+pydantic-settings>=2.2.1,<3.0.0
 
 # Utilities
-cachetools==5.5.0
-tenacity==9.0.0
-python-dateutil==2.9.0
-python-dotenv==1.0.1
-PyYAML==6.0.2
+python-dotenv>=1.0.0,<2.0.0
+pyyaml>=6.0.1,<7.0.0
 
-# Fast JSON (optional, fallback to json)
-orjson==3.10.12
+# Monitoring
+prometheus-client>=0.20.0,<0.21.0
+prometheus-fastapi-instrumentator>=6.1.0,<7.0.0
 
-# Development
-watchfiles==1.0.4
+# Logging
+python-json-logger>=2.0.7,<3.0.0
 
-# =============================================
-# Transcription (распознавание речи)
-# =============================================
-# Основной движок - Whisper (рекомендуется)
-openai-whisper
-
-# Альтернативный движок - Vosk (легче, быстрее на CPU)
-# vosk
-
-# Для Google Cloud Speech-to-Text (опционально)
-# google-cloud-speech
+# Performance
+uvloop>=0.19.0,<0.20.0
+httptools>=0.6.1,<0.7.0
