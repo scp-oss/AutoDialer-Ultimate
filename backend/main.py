@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 AutoDialer Ultimate - Main FastAPI Application
 Version: 3.0.0
@@ -37,6 +38,12 @@ from rate_limiter import TokenBucket, GlobalRateLimiter, SlidingWindowRateLimite
 from leader_election import LeaderElection
 from task_registry import TaskRegistry
 
+# =============================================
+# Import routers
+# =============================================
+from routers import incoming
+from transcription_service import TranscriptionService, get_transcription_service
+
 
 # =============================================
 # Prometheus Metrics
@@ -48,6 +55,7 @@ http_requests = Counter('autodialer_http_requests', 'HTTP requests', ['method', 
 campaign_counter = Counter('autodialer_campaigns_total', 'Campaigns created')
 contact_counter = Counter('autodialer_contacts_total', 'Contacts imported')
 audio_generation_counter = Counter('autodialer_audio_generated', 'Audio files generated')
+incoming_calls_counter = Counter('autodialer_incoming_calls_total', 'Incoming calls', ['status'])
 
 
 # =============================================
@@ -57,6 +65,7 @@ db_pool = None
 redis_client = None
 dialer_manager = None
 task_registry = TaskRegistry()
+transcription_service = None
 
 # Circuit breakers
 db_breaker = CircuitBreaker("database", failure_threshold=3, recovery_timeout=30)
@@ -322,7 +331,7 @@ class PaginatedResponse(BaseModel):
 # =============================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global db_pool, redis_client, dialer_manager
+    global db_pool, redis_client, dialer_manager, transcription_service
     global rate_limiter, global_cps_limiter, cleanup_leader, tts_semaphore
     
     # Startup
@@ -377,6 +386,14 @@ async def lifespan(app: FastAPI):
     # Initialize leader election
     cleanup_leader = LeaderElection(redis_client, "leader:cleanup", ttl=120)
     
+    # Initialize transcription service
+    try:
+        transcription_service = get_transcription_service()
+        logger.info(f"✅ Transcription service initialized: {transcription_service.get_info()}")
+    except Exception as e:
+        logger.error(f"Transcription service initialization failed: {e}")
+        transcription_service = None
+    
     # Initialize system enabled flag if not exists
     if not await redis_client.exists("system_enabled"):
         await redis_client.set("system_enabled", "true")
@@ -395,6 +412,12 @@ async def lifespan(app: FastAPI):
         logger.error(f"AMI connection failed: {e}")
         dialer_manager = None
     
+    # Initialize incoming router
+    if transcription_service:
+        incoming.init_incoming_router(db_pool, redis_client, transcription_service)
+    app.include_router(incoming.router)
+    logger.info("✅ Incoming calls router registered")
+    
     # Register signal handlers for graceful shutdown
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -404,6 +427,10 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(cleanup_old_audio_files())
     asyncio.create_task(process_retry_queue())
     asyncio.create_task(update_metrics_periodically())
+    
+    # Start transcription queue processor if service available
+    if transcription_service and transcription_service.engine.value != "none":
+        asyncio.create_task(process_transcription_queue())
     
     # Store start time for uptime calculation
     app.state.start_time = start_time
@@ -463,7 +490,7 @@ async def graceful_shutdown():
 async def cleanup_old_audio_files():
     """Background task to cleanup old audio files"""
     while True:
-        await asyncio.sleep(86400)  # Once per day
+        await asyncio.sleep(86400)
         
         if await cleanup_leader.try_acquire():
             try:
@@ -530,6 +557,12 @@ async def process_retry_queue():
                         logger.debug(f"Processed {len(rows)} retry tasks")
         except Exception as e:
             logger.error(f"Retry queue error: {e}")
+
+
+async def process_transcription_queue():
+    """Background task to process transcription queue"""
+    from transcription_service import process_transcription_queue as process_queue
+    await process_queue(db_pool, redis_client)
 
 
 async def update_metrics_periodically():
@@ -644,6 +677,17 @@ async def health_check():
     else:
         status["components"]["ami"] = "unhealthy" if dialer_manager else "not_initialized"
         overall_healthy = False
+    
+    # Check Transcription
+    if transcription_service:
+        info = transcription_service.get_info()
+        status["components"]["transcription"] = {
+            "status": "healthy" if info["engine"] != "none" else "degraded",
+            "engine": info["engine"],
+            "model": info["model"]
+        }
+    else:
+        status["components"]["transcription"] = {"status": "not_initialized"}
     
     # Active calls
     if dialer_manager:
@@ -1450,35 +1494,6 @@ async def import_contacts(
     return {"imported": imported, "skipped": skipped, "blacklisted": blacklisted}
 
 
-@app.post("/api/contacts/assign")
-async def assign_contacts_to_campaign(
-    campaign_id: int,
-    contact_ids: List[int],
-    user: TokenData = Depends(get_current_user)
-):
-    """Assign contacts to campaign"""
-    async with db_pool.acquire() as conn:
-        # Check campaign exists
-        camp = await conn.fetchval("SELECT id FROM campaigns WHERE id = $1", campaign_id)
-        if not camp:
-            raise HTTPException(404, "Campaign not found")
-        
-        assigned = 0
-        for cid in contact_ids:
-            try:
-                await conn.execute("""
-                    INSERT INTO campaign_contacts (campaign_id, contact_id)
-                    VALUES ($1, $2)
-                    ON CONFLICT DO NOTHING
-                """, campaign_id, cid)
-                assigned += 1
-            except:
-                pass
-    
-    logger.info(f"Assigned {assigned} contacts to campaign {campaign_id} by {user.username}")
-    return {"assigned": assigned}
-
-
 # =============================================
 # Blacklist Endpoints
 # =============================================
@@ -1548,7 +1563,7 @@ async def remove_from_blacklist(phone: str, admin: TokenData = Depends(require_a
 
 
 # =============================================
-# Audio Endpoints
+; Audio Endpoints
 # =============================================
 @app.post("/api/audio/generate")
 async def generate_audio(
@@ -1882,13 +1897,23 @@ async def update_setting(
             dialer_manager.max_calls = int(req.value)
         elif key == 'default_cps' and dialer_manager:
             dialer_manager.cps_limiter.rate = int(req.value)
+        elif key == 'incoming_greeting':
+            # Update global variable in Asterisk
+            if dialer_manager and dialer_manager.connected:
+                await dialer_manager.manager.send_action(
+                    panoramisk.message.Action('Setvar', {
+                        'Variable': 'GLOBAL(INCOMING_GREETING)',
+                        'Value': req.value
+                    })
+                )
+                logger.info(f"Incoming greeting updated to: {req.value}")
     
     logger.info(f"Setting {key} updated by {admin.username}")
     return {"status": "updated"}
 
 
 # =============================================
-# Audit Log Endpoints (Admin only)
+; Audit Log Endpoints (Admin only)
 # =============================================
 @app.get("/api/audit")
 async def get_audit_log(
