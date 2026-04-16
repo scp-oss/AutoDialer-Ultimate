@@ -1,0 +1,567 @@
+<!-- ============================================= -->
+<!-- AUDIT TAB (Admin Only) -->
+<!-- ============================================= -->
+<div class="audit-container">
+    
+    <!-- Заголовок с действиями -->
+    <div class="page-header">
+        <h2>📋 Журнал аудита</h2>
+        <div class="header-actions">
+            <button class="btn btn-outline" id="auditRefreshBtn" title="Обновить">
+                🔄 Обновить
+            </button>
+            <button class="btn btn-outline" id="auditExportBtn" title="Экспорт">
+                📥 Экспорт
+            </button>
+            <button class="btn btn-danger" id="auditClearBtn" title="Очистить старые записи">
+                🗑️ Очистить
+            </button>
+        </div>
+    </div>
+    
+    <!-- Описание -->
+    <p class="text-muted">
+        Журнал всех действий пользователей и системных событий.
+        Записи хранятся <span id="auditRetentionDays">90</span> дней.
+    </p>
+    
+    <!-- Панель фильтров -->
+    <div class="audit-filters">
+        <div class="filter-row">
+            <div class="filter-group">
+                <label>Действие</label>
+                <select id="auditFilterAction" class="form-control">
+                    <option value="">Все действия</option>
+                </select>
+            </div>
+            
+            <div class="filter-group">
+                <label>Пользователь</label>
+                <input type="text" 
+                       id="auditFilterUsername" 
+                       class="form-control" 
+                       placeholder="Логин пользователя">
+            </div>
+            
+            <div class="filter-group">
+                <label>IP адрес</label>
+                <input type="text" 
+                       id="auditFilterIp" 
+                       class="form-control" 
+                       placeholder="IP адрес">
+            </div>
+        </div>
+        
+        <div class="filter-row">
+            <div class="filter-group">
+                <label>Дата с</label>
+                <input type="datetime-local" 
+                       id="auditFilterDateFrom" 
+                       class="form-control">
+            </div>
+            
+            <div class="filter-group">
+                <label>Дата по</label>
+                <input type="datetime-local" 
+                       id="auditFilterDateTo" 
+                       class="form-control">
+            </div>
+            
+            <div class="filter-group filter-actions">
+                <button class="btn btn-primary" id="auditApplyFiltersBtn">
+                    🔍 Применить
+                </button>
+                <button class="btn btn-outline" id="auditResetFiltersBtn">
+                    🔄 Сбросить
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Статистика -->
+    <div class="audit-stats">
+        <div class="stat-item">
+            <span class="stat-label">Всего записей:</span>
+            <span class="stat-value" id="auditTotalRecords">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">За сегодня:</span>
+            <span class="stat-value" id="auditTodayRecords">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Уникальных пользователей:</span>
+            <span class="stat-value" id="auditUniqueUsers">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Ошибок:</span>
+            <span class="stat-value text-danger" id="auditErrors">0</span>
+        </div>
+    </div>
+    
+    <!-- Таблица -->
+    <div class="audit-table-container">
+        <table class="table" id="auditTable">
+            <thead>
+                <tr>
+                    <th width="170">Дата/Время</th>
+                    <th width="130">Пользователь</th>
+                    <th width="160">Действие</th>
+                    <th>Детали</th>
+                    <th width="130">IP адрес</th>
+                    <th width="60"></th>
+                </tr>
+            </thead>
+            <tbody id="auditTableBody">
+                <tr><td colspan="6" class="text-center"><div class="loading">Загрузка...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Пагинация -->
+    <div id="auditPagination" class="pagination-container"></div>
+    
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ДЕТАЛЕЙ -->
+<!-- ============================================= -->
+<div id="auditDetailModal" class="modal" style="display: none;">
+    <div class="modal-content modal-large">
+        <div class="modal-header">
+            <h3>📋 Детали события</h3>
+            <button class="modal-close" onclick="App.audit.closeDetailModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="auditDetailContent">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" 
+                    class="btn btn-outline" 
+                    onclick="App.audit.closeDetailModal()">
+                Закрыть
+            </button>
+            <button type="button" 
+                    class="btn btn-outline" 
+                    id="auditCopyDetailsBtn">
+                📋 Копировать детали
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ОЧИСТКИ -->
+<!-- ============================================= -->
+<div id="auditClearModal" class="modal" style="display: none;">
+    <div class="modal-content modal-sm">
+        <div class="modal-header">
+            <h3>🗑️ Очистка журнала</h3>
+            <button class="modal-close" onclick="App.audit.closeClearModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p>Удалить записи старше:</p>
+            <select id="auditClearDays" class="form-control">
+                <option value="30">30 дней</option>
+                <option value="60">60 дней</option>
+                <option value="90" selected>90 дней</option>
+                <option value="180">180 дней</option>
+                <option value="365">365 дней</option>
+            </select>
+            
+            <p class="text-warning" style="margin-top: var(--spacing-lg);">
+                ⚠️ Это действие нельзя отменить!
+            </p>
+            
+            <div class="form-actions">
+                <button type="button" 
+                        class="btn btn-outline" 
+                        onclick="App.audit.closeClearModal()">
+                    Отмена
+                </button>
+                <button type="button" 
+                        class="btn btn-danger" 
+                        id="auditConfirmClearBtn">
+                    Очистить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- ДОПОЛНИТЕЛЬНЫЕ СТИЛИ -->
+<!-- ============================================= -->
+<style>
+    /* Audit Container */
+    .audit-container {
+        padding: 0;
+    }
+    
+    /* Audit Filters */
+    .audit-filters {
+        background: var(--color-bg-tertiary);
+        padding: var(--spacing-lg);
+        border-radius: var(--radius-lg);
+        margin-bottom: var(--spacing-lg);
+    }
+    
+    .filter-row {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-bottom: var(--spacing-md);
+        flex-wrap: wrap;
+    }
+    
+    .filter-row:last-child {
+        margin-bottom: 0;
+    }
+    
+    .filter-group {
+        flex: 1;
+        min-width: 180px;
+    }
+    
+    .filter-group label {
+        display: block;
+        margin-bottom: var(--spacing-xs);
+        font-size: 0.8rem;
+        color: var(--color-text-muted);
+    }
+    
+    .filter-actions {
+        display: flex;
+        gap: var(--spacing-sm);
+        align-items: flex-end;
+    }
+    
+    /* Audit Stats */
+    .audit-stats {
+        display: flex;
+        gap: var(--spacing-xl);
+        padding: var(--spacing-lg);
+        background: var(--color-bg-card);
+        border-radius: var(--radius-lg);
+        margin-bottom: var(--spacing-xl);
+        border: 1px solid var(--color-border);
+    }
+    
+    .audit-stats .stat-item {
+        display: flex;
+        align-items: baseline;
+        gap: var(--spacing-sm);
+    }
+    
+    .audit-stats .stat-label {
+        color: var(--color-text-muted);
+        font-size: 0.9rem;
+    }
+    
+    .audit-stats .stat-value {
+        font-size: 1.5rem;
+        font-weight: 600;
+    }
+    
+    /* Table */
+    .audit-table-container {
+        overflow-x: auto;
+        margin-bottom: var(--spacing-lg);
+    }
+    
+    #auditTable {
+        width: 100%;
+    }
+    
+    #auditTable tbody tr {
+        cursor: pointer;
+        transition: background var(--transition-fast);
+    }
+    
+    #auditTable tbody tr:hover {
+        background: var(--color-bg-tertiary);
+    }
+    
+    #auditTable tbody tr[data-action*="error"],
+    #auditTable tbody tr[data-action*="failed"] {
+        background: var(--color-danger-bg);
+    }
+    
+    #auditTable tbody tr[data-action*="delete"],
+    #auditTable tbody tr[data-action*="remove"] {
+        background: var(--color-warning-bg);
+    }
+    
+    .username {
+        font-weight: 500;
+    }
+    
+    .user-id {
+        display: block;
+        font-size: 0.75rem;
+        color: var(--color-text-muted);
+    }
+    
+    /* Action Badge */
+    .action-badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: var(--radius-full);
+        font-size: 0.8rem;
+        font-weight: 500;
+        white-space: nowrap;
+    }
+    
+    .action-badge.action-create {
+        background: var(--color-success-bg);
+        color: var(--color-success);
+    }
+    
+    .action-badge.action-update {
+        background: var(--color-info-bg);
+        color: var(--color-info);
+    }
+    
+    .action-badge.action-delete {
+        background: var(--color-danger-bg);
+        color: var(--color-danger);
+    }
+    
+    .action-badge.action-auth {
+        background: var(--color-primary-light);
+        background: rgba(102, 126, 234, 0.2);
+        color: var(--color-primary);
+    }
+    
+    .action-badge.action-error {
+        background: var(--color-danger-bg);
+        color: var(--color-danger);
+    }
+    
+    .action-badge.action-default {
+        background: var(--color-bg-card);
+        color: var(--color-text-secondary);
+    }
+    
+    /* Details Preview */
+    .details-preview {
+        max-width: 350px;
+        font-size: 0.85rem;
+        color: var(--color-text-secondary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .ip-address {
+        font-family: var(--font-mono);
+        font-size: 0.85rem;
+        color: var(--color-text-muted);
+    }
+    
+    /* Audit Detail */
+    .audit-detail {
+        max-height: 60vh;
+        overflow-y: auto;
+    }
+    
+    .detail-section {
+        margin-bottom: var(--spacing-lg);
+        padding-bottom: var(--spacing-lg);
+        border-bottom: 1px solid var(--color-border);
+    }
+    
+    .detail-section:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+    
+    .detail-section h4 {
+        margin-top: 0;
+        margin-bottom: var(--spacing-md);
+        color: var(--color-text-secondary);
+    }
+    
+    .details-table {
+        width: 100%;
+    }
+    
+    .details-table td {
+        padding: var(--spacing-xs) 0;
+    }
+    
+    .details-table td:first-child {
+        font-weight: 500;
+        color: var(--color-text-muted);
+        width: 160px;
+    }
+    
+    .audit-detail pre {
+        background: var(--color-bg-tertiary);
+        padding: var(--spacing-md);
+        border-radius: var(--radius-md);
+        overflow-x: auto;
+        font-size: 0.8rem;
+        max-height: 300px;
+    }
+    
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: var(--spacing-3xl) var(--spacing-xl);
+    }
+    
+    .empty-icon {
+        font-size: 4rem;
+        margin-bottom: var(--spacing-lg);
+        opacity: 0.5;
+    }
+    
+    .empty-state p {
+        margin-bottom: var(--spacing-lg);
+        color: var(--color-text-muted);
+    }
+    
+    /* Form Actions */
+    .form-actions {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-top: var(--spacing-lg);
+        justify-content: flex-end;
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .filter-row {
+            flex-direction: column;
+        }
+        
+        .filter-group {
+            width: 100%;
+        }
+        
+        .audit-stats {
+            flex-wrap: wrap;
+            gap: var(--spacing-md);
+        }
+        
+        .details-table td:first-child {
+            width: 120px;
+        }
+        
+        .form-actions {
+            flex-direction: column;
+        }
+        
+        .form-actions .btn {
+            width: 100%;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .audit-stats {
+            flex-direction: column;
+            gap: var(--spacing-sm);
+        }
+        
+        .filter-actions {
+            flex-direction: column;
+            width: 100%;
+        }
+        
+        .filter-actions .btn {
+            width: 100%;
+        }
+    }
+</style>
+
+<script>
+    (function() {
+        const auditModule = App.audit;
+        if (auditModule) {
+            // Загрузка действий для фильтра
+            auditModule.loadActions = async function() {
+                try {
+                    const response = await App.apiGet('/audit/actions');
+                    const actions = response.actions || response || [];
+                    
+                    const select = document.getElementById('auditFilterAction');
+                    if (select) {
+                        select.innerHTML = '<option value="">Все действия</option>';
+                        actions.forEach(action => {
+                            const option = document.createElement('option');
+                            option.value = action;
+                            option.textContent = this.formatActionName(action);
+                            if (this.filters.action === action) {
+                                option.selected = true;
+                            }
+                            select.appendChild(option);
+                        });
+                    }
+                } catch (error) {
+                    console.error('Failed to load actions:', error);
+                }
+            };
+            
+            // Кнопка обновления
+            document.getElementById('auditRefreshBtn')?.addEventListener('click', () => {
+                auditModule.loadAuditLog();
+            });
+            
+            // Кнопка экспорта
+            document.getElementById('auditExportBtn')?.addEventListener('click', () => {
+                auditModule.exportAudit();
+            });
+            
+            // Кнопка очистки
+            document.getElementById('auditClearBtn')?.addEventListener('click', () => {
+                auditModule.openClearModal();
+            });
+            
+            // Применение фильтров
+            document.getElementById('auditApplyFiltersBtn')?.addEventListener('click', () => {
+                auditModule.applyFilters();
+            });
+            
+            // Сброс фильтров
+            document.getElementById('auditResetFiltersBtn')?.addEventListener('click', () => {
+                document.getElementById('auditFilterAction').value = '';
+                document.getElementById('auditFilterUsername').value = '';
+                document.getElementById('auditFilterIp').value = '';
+                document.getElementById('auditFilterDateFrom').value = '';
+                document.getElementById('auditFilterDateTo').value = '';
+                auditModule.resetFilters();
+            });
+            
+            // Подтверждение очистки
+            document.getElementById('auditConfirmClearBtn')?.addEventListener('click', () => {
+                auditModule.clearOldLogs();
+            });
+            
+            // Копирование деталей
+            document.getElementById('auditCopyDetailsBtn')?.addEventListener('click', () => {
+                const content = document.getElementById('auditDetailContent');
+                if (content) {
+                    const text = content.innerText;
+                    navigator.clipboard?.writeText(text).then(() => {
+                        App.showToast('Детали скопированы', 'success');
+                    });
+                }
+            });
+            
+            // Поиск по Enter
+            document.getElementById('auditFilterUsername')?.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    auditModule.applyFilters();
+                }
+            });
+            
+            document.getElementById('auditFilterIp')?.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    auditModule.applyFilters();
+                }
+            });
+        }
+    })();
+</script>
