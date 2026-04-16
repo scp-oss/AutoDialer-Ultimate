@@ -1,952 +1,1185 @@
-// audio.js - Модуль управления аудио для AutoDialer Ultimate
-// Интеграция с FastAPI бэкендом и Asterisk
-
-class AudioManager {
-    constructor() {
-        // API endpoints
-        this.apiBase = '/api/audio';
-        this.wsBase = null; // WebSocket для real-time аудио
-        
-        // Состояние
-        this.audioContext = null;
-        this.masterGain = null;
-        this.isInitialized = false;
-        this.isPlaying = false;
-        
-        // Аудио элементы
-        this.sounds = new Map();
-        this.currentSource = null;
-        this.audioQueue = [];
-        
-        // Настройки
-        this.settings = {
-            volume: 0.7,
-            muted: false,
-            ttsVoice: 'denis', // Русские голоса Piper: denis, irina, random
-            ttsSpeed: 1.0,
-            autoPlay: true,
-            notificationSound: true,
-            ringtoneVolume: 0.5,
-            playbackDevice: 'default'
-        };
-        
-        // WebSocket соединение
-        this.ws = null;
-        this.wsReconnectTimer = null;
-        this.wsReconnectDelay = 5000;
-        
-        // Кеш аудио файлов
-        this.audioCache = new Map();
-        this.maxCacheSize = 50;
-        
-        // Статистика
-        this.stats = {
-            ttsGenerated: 0,
-            audioPlayed: 0,
-            cacheHits: 0,
-            cacheMisses: 0
-        };
-        
-        // Подписчики на события
-        this.subscribers = new Map();
-        
-        this.initialize();
-    }
-    
-    // Инициализация
-    async initialize() {
-        try {
-            // Загрузка настроек
-            await this.loadSettings();
-            
-            // Инициализация Web Audio API
-            await this.initAudioContext();
-            
-            // Подключение WebSocket
-            this.connectWebSocket();
-            
-            // Загрузка стандартных звуков
-            await this.preloadDefaultSounds();
-            
-            this.isInitialized = true;
-            this.emit('initialized', { success: true });
-            
-            console.log('AudioManager initialized for AutoDialer Ultimate');
-        } catch (error) {
-            console.error('Failed to initialize AudioManager:', error);
-            this.emit('error', { error: error.message });
-        }
-    }
-    
-    // Инициализация аудио контекста
-    async initAudioContext() {
-        try {
-            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            
-            // Создание мастер-цепи
-            this.masterGain = this.audioContext.createGain();
-            this.masterGain.gain.value = this.settings.muted ? 0 : this.settings.volume;
-            this.masterGain.connect(this.audioContext.destination);
-            
-            // Анализатор для визуализации
-            this.analyser = this.audioContext.createAnalyser();
-            this.analyser.fftSize = 256;
-            this.masterGain.connect(this.analyser);
-            
-            // Возобновление контекста при взаимодействии
-            if (this.audioContext.state === 'suspended') {
-                await this.audioContext.resume();
-            }
-        } catch (error) {
-            console.error('Failed to initialize audio context:', error);
-            throw error;
-        }
-    }
-    
-    // Подключение WebSocket для real-time аудио
-    connectWebSocket() {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        this.wsBase = `${protocol}//${window.location.host}/ws/audio`;
-        
-        try {
-            this.ws = new WebSocket(this.wsBase);
-            
-            this.ws.onopen = () => {
-                console.log('Audio WebSocket connected');
-                this.emit('ws_connected');
-                
-                // Отправка информации о клиенте
-                this.ws.send(JSON.stringify({
-                    type: 'register',
-                    clientType: 'audio',
-                    capabilities: ['tts', 'playback', 'streaming']
-                }));
-            };
-            
-            this.ws.onmessage = (event) => {
-                this.handleWebSocketMessage(event.data);
-            };
-            
-            this.ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                this.emit('ws_error', { error });
-            };
-            
-            this.ws.onclose = () => {
-                console.log('Audio WebSocket closed');
-                this.emit('ws_disconnected');
-                this.scheduleReconnect();
-            };
-        } catch (error) {
-            console.error('Failed to connect WebSocket:', error);
-            this.scheduleReconnect();
-        }
-    }
-    
-    // Обработка сообщений WebSocket
-    handleWebSocketMessage(data) {
-        try {
-            const message = JSON.parse(data);
-            
-            switch (message.type) {
-                case 'audio_stream':
-                    this.handleAudioStream(message.data);
-                    break;
-                    
-                case 'tts_generated':
-                    this.handleTTSGenerated(message.data);
-                    break;
-                    
-                case 'playback_status':
-                    this.emit('playback_status', message.data);
-                    break;
-                    
-                case 'error':
-                    console.error('WebSocket error:', message.error);
-                    this.emit('error', { error: message.error });
-                    break;
-                    
-                default:
-                    console.warn('Unknown WebSocket message type:', message.type);
-            }
-        } catch (error) {
-            console.error('Failed to parse WebSocket message:', error);
-        }
-    }
-    
-    // Обработка аудио потока
-    async handleAudioStream(data) {
-        try {
-            const { audioData, format, sampleRate } = data;
-            
-            // Декодирование base64
-            const binaryString = atob(audioData);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            
-            // Декодирование аудио
-            const audioBuffer = await this.audioContext.decodeAudioData(bytes.buffer);
-            
-            // Воспроизведение
-            this.playAudioBuffer(audioBuffer);
-            
-        } catch (error) {
-            console.error('Failed to handle audio stream:', error);
-        }
-    }
-    
-    // Обработка сгенерированного TTS
-    async handleTTSGenerated(data) {
-        try {
-            const { audioUrl, text, voice, campaignId } = data;
-            
-            // Загрузка и воспроизведение
-            await this.playFromUrl(audioUrl);
-            
-            this.stats.ttsGenerated++;
-            
-            this.emit('tts_generated', {
-                text,
-                voice,
-                campaignId,
-                url: audioUrl
-            });
-            
-        } catch (error) {
-            console.error('Failed to handle TTS generated:', error);
-        }
-    }
-    
-    // Планирование переподключения
-    scheduleReconnect() {
-        if (this.wsReconnectTimer) {
-            clearTimeout(this.wsReconnectTimer);
-        }
-        
-        this.wsReconnectTimer = setTimeout(() => {
-            console.log('Reconnecting WebSocket...');
-            this.connectWebSocket();
-        }, this.wsReconnectDelay);
-    }
-    
-    // Предзагрузка стандартных звуков
-    async preloadDefaultSounds() {
-        const sounds = {
-            'ringtone': '/assets/sounds/ringtone.mp3',
-            'busy': '/assets/sounds/busy.mp3',
-            'dial': '/assets/sounds/dial.mp3',
-            'hangup': '/assets/sounds/hangup.mp3',
-            'notification': '/assets/sounds/notification.mp3',
-            'success': '/assets/sounds/success.mp3',
-            'error': '/assets/sounds/error.mp3'
-        };
-        
-        for (const [name, url] of Object.entries(sounds)) {
-            try {
-                await this.loadSound(name, url);
-            } catch (error) {
-                console.warn(`Failed to preload sound ${name}:`, error);
-            }
-        }
-    }
-    
-    // Загрузка звука
-    async loadSound(name, url) {
-        try {
-            const response = await fetch(url);
-            const arrayBuffer = await response.arrayBuffer();
-            const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
-            
-            this.sounds.set(name, audioBuffer);
-            this.audioCache.set(url, audioBuffer);
-            
-            return audioBuffer;
-        } catch (error) {
-            console.error(`Failed to load sound ${name}:`, error);
-            throw error;
-        }
-    }
-    
-    // Воспроизведение звука по имени
-    playSound(name, options = {}) {
-        const {
-            volume = 1.0,
-            loop = false,
-            onEnd = null
-        } = options;
-        
-        const sound = this.sounds.get(name);
-        if (!sound) {
-            console.warn(`Sound ${name} not found`);
-            return null;
-        }
-        
-        return this.playAudioBuffer(sound, { volume, loop, onEnd });
-    }
-    
-    // Воспроизведение аудио буфера
-    playAudioBuffer(audioBuffer, options = {}) {
-        if (!this.audioContext || !this.masterGain) {
-            console.error('Audio context not initialized');
-            return null;
-        }
-        
-        const {
-            volume = 1.0,
-            loop = false,
-            onEnd = null,
-            startTime = 0
-        } = options;
-        
-        try {
-            // Создание источника
-            const source = this.audioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.loop = loop;
-            
-            // Создание громкости
-            const gainNode = this.audioContext.createGain();
-            gainNode.gain.value = volume;
-            
-            // Подключение
-            source.connect(gainNode);
-            gainNode.connect(this.masterGain);
-            
-            // Обработка окончания
-            source.onended = () => {
-                this.isPlaying = false;
-                this.currentSource = null;
-                if (onEnd) onEnd();
-                this.emit('playback_ended');
-                
-                // Воспроизведение следующего в очереди
-                this.playNextInQueue();
-            };
-            
-            // Запуск
-            source.start(0, startTime);
-            this.isPlaying = true;
-            this.currentSource = source;
-            
-            this.stats.audioPlayed++;
-            
-            this.emit('playback_started', { duration: audioBuffer.duration });
-            
-            return {
-                source,
-                gainNode,
-                stop: () => {
-                    try {
-                        source.stop();
-                    } catch (e) {
-                        // Игнорируем ошибку если уже остановлен
-                    }
-                },
-                setVolume: (val) => {
-                    gainNode.gain.value = val;
-                }
-            };
-            
-        } catch (error) {
-            console.error('Failed to play audio buffer:', error);
-            return null;
-        }
-    }
-    
-    // Воспроизведение из URL
-    async playFromUrl(url, options = {}) {
-        try {
-            // Проверка кеша
-            let audioBuffer = this.audioCache.get(url);
-            
-            if (audioBuffer) {
-                this.stats.cacheHits++;
-                return this.playAudioBuffer(audioBuffer, options);
-            }
-            
-            this.stats.cacheMisses++;
-            
-            // Загрузка
-            const response = await fetch(url);
-            const arrayBuffer = await response.arrayBuffer();
-            audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
-            
-            // Кеширование
-            this.cacheAudio(url, audioBuffer);
-            
-            return this.playAudioBuffer(audioBuffer, options);
-            
-        } catch (error) {
-            console.error('Failed to play from URL:', error);
-            throw error;
-        }
-    }
-    
-    // Кеширование аудио
-    cacheAudio(url, audioBuffer) {
-        // Ограничение размера кеша
-        if (this.audioCache.size >= this.maxCacheSize) {
-            const firstKey = this.audioCache.keys().next().value;
-            this.audioCache.delete(firstKey);
-        }
-        
-        this.audioCache.set(url, audioBuffer);
-    }
-    
-    // Генерация TTS через API
-    async generateTTS(text, options = {}) {
-        const {
-            voice = this.settings.ttsVoice,
-            speed = this.settings.ttsSpeed,
-            campaignId = null,
-            format = 'mp3'
-        } = options;
-        
-        try {
-            const response = await fetch(`${this.apiBase}/tts/generate`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.getAuthToken()}`
-                },
-                body: JSON.stringify({
-                    text,
-                    voice,
-                    speed,
-                    campaign_id: campaignId,
-                    format
-                })
-            });
-            
-            if (!response.ok) {
-                throw new Error(`TTS generation failed: ${response.statusText}`);
-            }
-            
-            const data = await response.json();
-            
-            this.stats.ttsGenerated++;
-            
-            this.emit('tts_generated', {
-                text,
-                voice,
-                audioUrl: data.audio_url
-            });
-            
-            return data;
-            
-        } catch (error) {
-            console.error('Failed to generate TTS:', error);
-            throw error;
-        }
-    }
-    
-    // Генерация и воспроизведение TTS
-    async speak(text, options = {}) {
-        try {
-            const { audio_url } = await this.generateTTS(text, options);
-            
-            if (this.settings.autoPlay) {
-                await this.playFromUrl(audio_url, options);
-            }
-            
-            return audio_url;
-            
-        } catch (error) {
-            console.error('Failed to speak:', error);
-            throw error;
-        }
-    }
-    
-    // Воспроизведение рингтона
-    playRingtone(loop = true) {
-        this.stopRingtone();
-        
-        this.currentRingtone = this.playSound('ringtone', {
-            volume: this.settings.ringtoneVolume,
-            loop: loop
-        });
-        
-        this.emit('ringtone_started');
-        
-        return this.currentRingtone;
-    }
-    
-    // Остановка рингтона
-    stopRingtone() {
-        if (this.currentRingtone) {
-            this.currentRingtone.stop();
-            this.currentRingtone = null;
-            this.emit('ringtone_stopped');
-        }
-    }
-    
-    // Добавление в очередь воспроизведения
-    queueAudio(audioId, options = {}) {
-        this.audioQueue.push({
-            id: audioId,
-            options
-        });
-        
-        if (!this.isPlaying) {
-            this.playNextInQueue();
-        }
-    }
-    
-    // Воспроизведение следующего в очереди
-    async playNextInQueue() {
-        if (this.audioQueue.length === 0 || this.isPlaying) {
-            return;
-        }
-        
-        const item = this.audioQueue.shift();
-        
-        try {
-            await this.playFromUrl(item.id, {
-                ...item.options,
-                onEnd: () => {
-                    this.playNextInQueue();
-                    if (item.options.onEnd) {
-                        item.options.onEnd();
-                    }
-                }
-            });
-        } catch (error) {
-            console.error('Failed to play queued audio:', error);
-            // Продолжаем со следующим
-            this.playNextInQueue();
-        }
-    }
-    
-    // Очистка очереди
-    clearQueue() {
-        this.audioQueue = [];
-        this.emit('queue_cleared');
-    }
-    
-    // Остановка воспроизведения
-    stop() {
-        if (this.currentSource) {
-            try {
-                this.currentSource.stop();
-            } catch (e) {
-                // Игнорируем
-            }
-            this.currentSource = null;
-        }
-        
-        this.isPlaying = false;
-        this.emit('playback_stopped');
-    }
-    
-    // Пауза
-    pause() {
-        if (this.audioContext && this.audioContext.state === 'running') {
-            this.audioContext.suspend();
-            this.emit('playback_paused');
-        }
-    }
-    
-    // Продолжить
-    resume() {
-        if (this.audioContext && this.audioContext.state === 'suspended') {
-            this.audioContext.resume();
-            this.emit('playback_resumed');
-        }
-    }
-    
-    // Установка громкости
-    setVolume(value) {
-        this.settings.volume = Math.max(0, Math.min(1, value));
-        
-        if (this.masterGain && !this.settings.muted) {
-            this.masterGain.gain.value = this.settings.volume;
-        }
-        
-        this.saveSettings();
-        this.emit('volume_changed', { volume: this.settings.volume });
-    }
-    
-    // Включение/выключение звука
-    setMuted(muted) {
-        this.settings.muted = muted;
-        
-        if (this.masterGain) {
-            this.masterGain.gain.value = muted ? 0 : this.settings.volume;
-        }
-        
-        this.saveSettings();
-        this.emit('mute_changed', { muted });
-    }
-    
-    // Получение списка доступных TTS голосов
-    async getAvailableVoices() {
-        try {
-            const response = await fetch(`${this.apiBase}/tts/voices`, {
-                headers: {
-                    'Authorization': `Bearer ${this.getAuthToken()}`
-                }
-            });
-            
-            if (!response.ok) {
-                throw new Error(`Failed to get voices: ${response.statusText}`);
-            }
-            
-            const data = await response.json();
-            return data.voices;
-            
-        } catch (error) {
-            console.error('Failed to get voices:', error);
-            
-            // Возвращаем список по умолчанию
-            return [
-                { id: 'denis', name: 'Денис (Русский)', language: 'ru-RU' },
-                { id: 'irina', name: 'Ирина (Русский)', language: 'ru-RU' },
-                { id: 'random', name: 'Случайный', language: 'ru-RU' }
-            ];
-        }
-    }
-    
-    // Установка TTS голоса
-    async setTTSVoice(voiceId) {
-        this.settings.ttsVoice = voiceId;
-        await this.saveSettings();
-        this.emit('tts_voice_changed', { voice: voiceId });
-    }
-    
-    // Получение визуализации аудио
-    getVisualizationData() {
-        if (!this.analyser) return null;
-        
-        const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-        this.analyser.getByteFrequencyData(dataArray);
-        
-        return {
-            frequencies: Array.from(dataArray),
-            average: dataArray.reduce((a, b) => a + b, 0) / dataArray.length
-        };
-    }
-    
-    // Запись аудио с микрофона
-    async startRecording(options = {}) {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
-                }
-            });
-            
-            this.mediaRecorder = new MediaRecorder(stream);
-            this.recordedChunks = [];
-            
-            this.mediaRecorder.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                    this.recordedChunks.push(event.data);
-                }
-            };
-            
-            this.mediaRecorder.onstop = async () => {
-                const blob = new Blob(this.recordedChunks, { type: 'audio/webm' });
-                
-                // Отправка на сервер
-                if (options.upload) {
-                    await this.uploadRecording(blob, options);
-                }
-                
-                if (options.onComplete) {
-                    options.onComplete(blob);
-                }
-                
-                this.emit('recording_completed', { blob });
-            };
-            
-            this.mediaRecorder.start();
-            this.emit('recording_started');
-            
-            return true;
-            
-        } catch (error) {
-            console.error('Failed to start recording:', error);
-            this.emit('recording_error', { error: error.message });
-            return false;
-        }
-    }
-    
-    // Остановка записи
-    stopRecording() {
-        if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-            this.mediaRecorder.stop();
-            this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
-            this.emit('recording_stopped');
-        }
-    }
-    
-    // Загрузка записи на сервер
-    async uploadRecording(blob, options = {}) {
-        try {
-            const formData = new FormData();
-            formData.append('audio', blob, `recording_${Date.now()}.webm`);
-            
-            if (options.campaignId) {
-                formData.append('campaign_id', options.campaignId);
-            }
-            
-            if (options.contactId) {
-                formData.append('contact_id', options.contactId);
-            }
-            
-            const response = await fetch(`${this.apiBase}/recordings/upload`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.getAuthToken()}`
-                },
-                body: formData
-            });
-            
-            if (!response.ok) {
-                throw new Error(`Upload failed: ${response.statusText}`);
-            }
-            
-            const data = await response.json();
-            
-            this.emit('recording_uploaded', data);
-            
-            return data;
-            
-        } catch (error) {
-            console.error('Failed to upload recording:', error);
-            throw error;
-        }
-    }
-    
-    // Загрузка настроек
-    async loadSettings() {
-        try {
-            const stored = localStorage.getItem('autodialer_audio_settings');
-            if (stored) {
-                this.settings = { ...this.settings, ...JSON.parse(stored) };
-            }
-            
-            // Загрузка с сервера
-            const response = await fetch(`${this.apiBase}/settings`, {
-                headers: {
-                    'Authorization': `Bearer ${this.getAuthToken()}`
-                }
-            });
-            
-            if (response.ok) {
-                const data = await response.json();
-                this.settings = { ...this.settings, ...data };
-            }
-            
-        } catch (error) {
-            console.warn('Failed to load audio settings:', error);
-        }
-    }
-    
-    // Сохранение настроек
-    async saveSettings() {
-        try {
-            localStorage.setItem('autodialer_audio_settings', JSON.stringify(this.settings));
-            
-            // Сохранение на сервере
-            await fetch(`${this.apiBase}/settings`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.getAuthToken()}`
-                },
-                body: JSON.stringify(this.settings)
-            });
-            
-        } catch (error) {
-            console.warn('Failed to save audio settings:', error);
-        }
-    }
-    
-    // Получение токена авторизации
-    getAuthToken() {
-        // Получение из localStorage или из глобального состояния
-        return localStorage.getItem('access_token') || '';
-    }
-    
-    // Получение статистики
-    getStatistics() {
-        return {
-            ...this.stats,
-            cacheSize: this.audioCache.size,
-            queueLength: this.audioQueue.length,
-            isPlaying: this.isPlaying,
-            audioContextState: this.audioContext?.state
-        };
-    }
-    
-    // Подписка на события
-    on(event, callback) {
-        if (!this.subscribers.has(event)) {
-            this.subscribers.set(event, new Set());
-        }
-        this.subscribers.get(event).add(callback);
-    }
-    
-    // Отписка от событий
-    off(event, callback) {
-        if (this.subscribers.has(event)) {
-            this.subscribers.get(event).delete(callback);
-        }
-    }
-    
-    // Эмит события
-    emit(event, data) {
-        if (this.subscribers.has(event)) {
-            this.subscribers.get(event).forEach(callback => {
-                try {
-                    callback(data);
-                } catch (error) {
-                    console.error(`Error in ${event} subscriber:`, error);
-                }
-            });
-        }
-    }
-    
-    // Очистка ресурсов
-    destroy() {
-        this.stop();
-        this.stopRingtone();
-        this.stopRecording();
-        this.clearQueue();
-        
-        if (this.ws) {
-            this.ws.close();
-            this.ws = null;
-        }
-        
-        if (this.wsReconnectTimer) {
-            clearTimeout(this.wsReconnectTimer);
-        }
-        
-        if (this.audioContext) {
-            this.audioContext.close();
-            this.audioContext = null;
-        }
-        
-        this.sounds.clear();
-        this.audioCache.clear();
-        this.subscribers.clear();
-        
-        this.isInitialized = false;
-    }
-}
-
-// Создание глобального экземпляра
-window.audioManager = new AudioManager();
-
-// Экспорт для модульной системы
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = AudioManager;
-}
-
-// Интеграция с React (если используется)
-if (typeof window !== 'undefined') {
-    // Экспорт для использования в React компонентах
-    window.AudioManager = AudioManager;
-}
-
-/*
-Примеры использования в AutoDialer Ultimate:
-
-// В React компоненте:
-import { useEffect } from 'react';
-
-function CampaignPlayer({ campaignId, message }) {
-    useEffect(() => {
-        // Подписка на события
-        audioManager.on('playback_started', (data) => {
-            console.log('Playing:', data);
-        });
-        
-        audioManager.on('playback_ended', () => {
-            console.log('Playback ended');
-        });
-        
-        return () => {
-            audioManager.off('playback_started');
-            audioManager.off('playback_ended');
-        };
-    }, []);
-    
-    const handlePlayTTS = async () => {
-        try {
-            // Генерация и воспроизведение TTS
-            await audioManager.speak(message, {
-                voice: 'denis',
-                campaignId: campaignId
-            });
-        } catch (error) {
-            console.error('TTS failed:', error);
-        }
-    };
-    
-    const handlePlayRingtone = () => {
-        audioManager.playRingtone(true);
-        
-        // Остановить через 30 секунд
-        setTimeout(() => {
-            audioManager.stopRingtone();
-        }, 30000);
-    };
-    
-    const handleRecordMessage = async () => {
-        await audioManager.startRecording({
-            campaignId: campaignId,
-            upload: true,
-            onComplete: (blob) => {
-                console.log('Recording completed:', blob);
-            }
-        });
-    };
-    
-    return (
-        <div>
-            <button onClick={handlePlayTTS}>Воспроизвести TTS</button>
-            <button onClick={handlePlayRingtone}>Тест рингтона</button>
-            <button onClick={handleRecordMessage}>Записать сообщение</button>
-            <button onClick={() => audioManager.stop()}>Стоп</button>
+// audio.js
+(function() {
+  const container = document.getElementById('page-content');
+  
+  // Состояние модуля
+  let currentTab = 'library';
+  let audioFiles = [];
+  let selectedFiles = new Set();
+  let currentPage = 1;
+  let perPage = 20;
+  let totalPages = 1;
+  let searchQuery = '';
+  let sortField = 'created_at';
+  let sortOrder = 'desc';
+  
+  // TTS состояние
+  let ttsProviders = [];
+  let ttsVoices = [];
+  let selectedProvider = '';
+  let selectedVoice = '';
+  let selectedLanguage = 'ru-RU';
+  
+  // Рендер страницы
+  const renderAudio = async () => {
+    container.innerHTML = `
+      <div class="page-header">
+        <h2>🎵 Управление аудио</h2>
+        <div class="header-actions">
+          <button class="btn btn-primary" id="upload-audio-btn">📤 Загрузить файл</button>
+          <button class="btn btn-success" id="tts-generate-btn">🔊 Генерация речи</button>
         </div>
-    );
-}
-
-// В компоненте мониторинга звонков:
-function CallMonitor() {
-    const [visualization, setVisualization] = useState(null);
+      </div>
+      
+      <!-- Вкладки -->
+      <div class="tabs-container">
+        <div class="tabs">
+          <button class="tab ${currentTab === 'library' ? 'active' : ''}" data-tab="library">
+            📚 Библиотека аудио
+          </button>
+          <button class="tab ${currentTab === 'tts' ? 'active' : ''}" data-tab="tts">
+            🤖 Text-to-Speech
+          </button>
+          <button class="tab ${currentTab === 'upload' ? 'active' : ''}" data-tab="upload">
+            ⬆️ Загрузка файлов
+          </button>
+        </div>
+      </div>
+      
+      <div id="tab-content" class="tab-content"></div>
+    `;
     
-    useEffect(() => {
-        const interval = setInterval(() => {
-            const data = audioManager.getVisualizationData();
-            setVisualization(data);
-        }, 50);
+    // Загрузка провайдеров TTS
+    await loadTTSProviders();
+    
+    // Отрисовка активной вкладки
+    await renderActiveTab();
+    
+    // Привязка обработчиков
+    attachEventListeners();
+  };
+  
+  // Отрисовка активной вкладки
+  const renderActiveTab = async () => {
+    const tabContent = document.getElementById('tab-content');
+    
+    switch (currentTab) {
+      case 'library':
+        await renderLibraryTab(tabContent);
+        break;
+      case 'tts':
+        await renderTTSTab(tabContent);
+        break;
+      case 'upload':
+        await renderUploadTab(tabContent);
+        break;
+    }
+  };
+  
+  // ============ ВКЛАДКА БИБЛИОТЕКИ ============
+  const renderLibraryTab = async (container) => {
+    container.innerHTML = `
+      <div class="library-container">
+        <!-- Панель поиска и фильтров -->
+        <div class="library-toolbar">
+          <div class="search-box">
+            <input type="text" 
+                   id="search-audio" 
+                   class="form-control" 
+                   placeholder="🔍 Поиск по названию..."
+                   value="${searchQuery}">
+          </div>
+          
+          <div class="toolbar-actions">
+            <select id="sort-select" class="form-control">
+              <option value="created_at_desc" ${sortField === 'created_at' && sortOrder === 'desc' ? 'selected' : ''}>
+                📅 Сначала новые
+              </option>
+              <option value="created_at_asc" ${sortField === 'created_at' && sortOrder === 'asc' ? 'selected' : ''}>
+                📅 Сначала старые
+              </option>
+              <option value="name_asc" ${sortField === 'name' && sortOrder === 'asc' ? 'selected' : ''}>
+                🔤 Название (А-Я)
+              </option>
+              <option value="name_desc" ${sortField === 'name' && sortOrder === 'desc' ? 'selected' : ''}>
+                🔤 Название (Я-А)
+              </option>
+              <option value="size_desc" ${sortField === 'size' && sortOrder === 'desc' ? 'selected' : ''}>
+                📦 Размер (большие)
+              </option>
+              <option value="size_asc" ${sortField === 'size' && sortOrder === 'asc' ? 'selected' : ''}>
+                📦 Размер (маленькие)
+              </option>
+            </select>
+            
+            ${selectedFiles.size > 0 ? `
+              <button class="btn btn-danger" id="delete-selected-btn">
+                🗑️ Удалить выбранные (${selectedFiles.size})
+              </button>
+            ` : ''}
+            
+            <button class="btn btn-outline" id="refresh-library-btn">
+              🔄 Обновить
+            </button>
+          </div>
+        </div>
         
-        return () => clearInterval(interval);
-    }, []);
+        <!-- Таблица с файлами -->
+        <div class="audio-table-container">
+          <table class="table" id="audio-table">
+            <thead>
+              <tr>
+                <th width="40">
+                  <input type="checkbox" id="select-all-checkbox">
+                </th>
+                <th>Название</th>
+                <th>Тип</th>
+                <th>Длительность</th>
+                <th>Размер</th>
+                <th>Создан</th>
+                <th>Действия</th>
+              </tr>
+            </thead>
+            <tbody id="audio-tbody">
+              <tr><td colspan="7" class="text-center">Загрузка...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        
+        <!-- Пагинация -->
+        <div class="pagination-container" id="library-pagination"></div>
+      </div>
+    `;
     
-    // Отображение визуализации аудио
-    return (
-        <canvas 
-            ref={canvasRef}
-            // Рисование визуализации
-        />
-    );
-}
-
-// Интеграция с WebSocket для real-time аудио:
-audioManager.on('ws_connected', () => {
-    console.log('Ready for real-time audio streaming');
-});
-
-// Получение статистики:
-const stats = audioManager.getStatistics();
-console.log('Audio stats:', stats);
-*/
+    await loadAudioFiles();
+    attachLibraryEventListeners();
+  };
+  
+  // Загрузка аудио файлов
+  const loadAudioFiles = async () => {
+    const tbody = document.getElementById('audio-tbody');
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center">Загрузка...</td></tr>';
+    
+    try {
+      const params = new URLSearchParams({
+        page: currentPage,
+        per_page: perPage,
+        search: searchQuery,
+        sort_by: sortField,
+        sort_order: sortOrder
+      });
+      
+      const response = await App.apiGet(`/api/audio?${params.toString()}`);
+      
+      audioFiles = response.items || response.files || response;
+      const pagination = response.pagination || {
+        page: currentPage,
+        per_page: perPage,
+        total: audioFiles.length,
+        pages: Math.ceil(audioFiles.length / perPage)
+      };
+      
+      totalPages = pagination.pages;
+      
+      if (audioFiles.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7" class="text-center">
+              <div class="empty-state">
+                <div class="empty-icon">🎵</div>
+                <p>Нет аудиофайлов</p>
+                <button class="btn btn-primary" id="upload-empty-btn">Загрузить первый файл</button>
+              </div>
+            </td>
+          </tr>
+        `;
+        document.getElementById('upload-empty-btn')?.addEventListener('click', () => {
+          currentTab = 'upload';
+          renderActiveTab();
+        });
+        return;
+      }
+      
+      tbody.innerHTML = audioFiles.map(file => `
+        <tr data-file-id="${file.id}" class="${selectedFiles.has(file.id) ? 'selected' : ''}">
+          <td>
+            <input type="checkbox" 
+                   class="file-checkbox" 
+                   data-id="${file.id}"
+                   ${selectedFiles.has(file.id) ? 'checked' : ''}>
+          </td>
+          <td>
+            <div class="file-info">
+              <div class="file-icon">${getFileIcon(file.mime_type)}</div>
+              <div class="file-details">
+                <strong>${escapeHtml(file.name)}</strong>
+                ${file.description ? `<small>${escapeHtml(file.description)}</small>` : ''}
+                ${file.source === 'tts' ? '<span class="badge badge-tts">TTS</span>' : ''}
+              </div>
+            </div>
+          </td>
+          <td>${formatFileType(file.mime_type)}</td>
+          <td>${formatDuration(file.duration)}</td>
+          <td>${formatFileSize(file.size)}</td>
+          <td>${formatDateTime(file.created_at)}</td>
+          <td>
+            <div class="action-buttons">
+              <button class="btn btn-sm btn-outline play-audio" 
+                      data-id="${file.id}" 
+                      data-url="${file.url}"
+                      title="Прослушать">
+                ▶️
+              </button>
+              <button class="btn btn-sm btn-outline download-audio" 
+                      data-id="${file.id}"
+                      title="Скачать">
+                📥
+              </button>
+              <button class="btn btn-sm btn-outline edit-audio" 
+                      data-id="${file.id}"
+                      title="Редактировать">
+                ✏️
+              </button>
+              <button class="btn btn-sm btn-outline-danger delete-audio" 
+                      data-id="${file.id}"
+                      title="Удалить">
+                🗑️
+              </button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+      
+      // Обновление пагинации
+      renderPagination('library-pagination', currentPage, totalPages, (page) => {
+        currentPage = page;
+        loadAudioFiles();
+      });
+      
+      // Привязка обработчиков к строкам
+      attachFileRowEventListeners();
+      
+    } catch (err) {
+      console.error('Ошибка загрузки аудио:', err);
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-error">Ошибка загрузки файлов</td></tr>';
+      App.showNotification('Не удалось загрузить аудиофайлы', 'error');
+    }
+  };
+  
+  // ============ ВКЛАДКА TTS ============
+  const renderTTSTab = async (container) => {
+    container.innerHTML = `
+      <div class="tts-container">
+        <div class="row">
+          <div class="col-md-6">
+            <div class="tts-form-panel">
+              <h3>🎤 Генерация речи из текста</h3>
+              
+              <form id="tts-form">
+                <div class="form-group">
+                  <label>Провайдер TTS</label>
+                  <select id="tts-provider" class="form-control" required>
+                    <option value="">Выберите провайдера</option>
+                    ${ttsProviders.map(p => `
+                      <option value="${p.id}" ${selectedProvider === p.id ? 'selected' : ''}>
+                        ${p.name}
+                      </option>
+                    `).join('')}
+                  </select>
+                </div>
+                
+                <div class="form-group">
+                  <label>Язык</label>
+                  <select id="tts-language" class="form-control">
+                    <option value="ru-RU" ${selectedLanguage === 'ru-RU' ? 'selected' : ''}>🇷🇺 Русский</option>
+                    <option value="en-US" ${selectedLanguage === 'en-US' ? 'selected' : ''}>🇺🇸 English (US)</option>
+                    <option value="en-GB" ${selectedLanguage === 'en-GB' ? 'selected' : ''}>🇬🇧 English (UK)</option>
+                    <option value="de-DE" ${selectedLanguage === 'de-DE' ? 'selected' : ''}>🇩🇪 Deutsch</option>
+                    <option value="fr-FR" ${selectedLanguage === 'fr-FR' ? 'selected' : ''}>🇫🇷 Français</option>
+                    <option value="es-ES" ${selectedLanguage === 'es-ES' ? 'selected' : ''}>🇪🇸 Español</option>
+                    <option value="it-IT" ${selectedLanguage === 'it-IT' ? 'selected' : ''}>🇮🇹 Italiano</option>
+                  </select>
+                </div>
+                
+                <div class="form-group">
+                  <label>Голос</label>
+                  <select id="tts-voice" class="form-control" required>
+                    <option value="">Сначала выберите провайдера</option>
+                  </select>
+                  <small class="form-text">Выберите голос из доступных</small>
+                </div>
+                
+                <div class="form-group">
+                  <label>Текст для озвучки</label>
+                  <textarea id="tts-text" 
+                            class="form-control" 
+                            rows="6" 
+                            placeholder="Введите текст..."
+                            maxlength="5000"
+                            required></textarea>
+                  <small class="form-text">
+                    <span id="char-count">0</span>/5000 символов
+                  </small>
+                </div>
+                
+                <div class="form-group">
+                  <label>Настройки голоса</label>
+                  <div class="voice-settings">
+                    <div class="setting-item">
+                      <label>Скорость</label>
+                      <input type="range" 
+                             id="tts-speed" 
+                             min="0.5" 
+                             max="2.0" 
+                             step="0.1" 
+                             value="1.0">
+                      <span id="speed-value">1.0x</span>
+                    </div>
+                    
+                    <div class="setting-item">
+                      <label>Тон</label>
+                      <input type="range" 
+                             id="tts-pitch" 
+                             min="-20" 
+                             max="20" 
+                             step="1" 
+                             value="0">
+                      <span id="pitch-value">0</span>
+                    </div>
+                    
+                    <div class="setting-item">
+                      <label>Громкость</label>
+                      <input type="range" 
+                             id="tts-volume" 
+                             min="0" 
+                             max="100" 
+                             step="5" 
+                             value="100">
+                      <span id="volume-value">100%</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="form-group">
+                  <label>Название файла (опционально)</label>
+                  <input type="text" 
+                         id="tts-filename" 
+                         class="form-control" 
+                         placeholder="Оставьте пустым для авто-генерации">
+                </div>
+                
+                <div class="form-group">
+                  <label>Описание (опционально)</label>
+                  <textarea id="tts-description" 
+                            class="form-control" 
+                            rows="2"
+                            placeholder="Добавьте описание..."></textarea>
+                </div>
+                
+                <div class="form-actions">
+                  <button type="submit" class="btn btn-success btn-lg">
+                    🔊 Сгенерировать речь
+                  </button>
+                  <button type="button" class="btn btn-outline" id="preview-tts-btn">
+                    👂 Предпросмотр
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+          
+          <div class="col-md-6">
+            <div class="tts-history-panel">
+              <h3>📋 История генераций</h3>
+              <div id="tts-history-list">
+                <p class="text-muted">Загрузка...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    // Загрузка голосов если провайдер уже выбран
+    if (selectedProvider) {
+      await loadVoices(selectedProvider);
+    }
+    
+    attachTTSEventListeners();
+    loadTTSHistory();
+  };
+  
+  // ============ ВКЛАДКА ЗАГРУЗКИ ============
+  const renderUploadTab = async (container) => {
+    container.innerHTML = `
+      <div class="upload-container">
+        <div class="upload-area" id="drop-zone">
+          <div class="upload-icon">📁</div>
+          <h3>Перетащите файлы сюда</h3>
+          <p>или</p>
+          <button class="btn btn-primary" id="select-files-btn">Выберите файлы</button>
+          <input type="file" 
+                 id="file-input" 
+                 multiple 
+                 accept=".mp3,.wav,.ogg,.m4a,.aac,.flac"
+                 style="display: none;">
+          <p class="upload-hint">
+            Поддерживаемые форматы: MP3, WAV, OGG, M4A, AAC, FLAC<br>
+            Максимальный размер: 50 МБ
+          </p>
+        </div>
+        
+        <div id="upload-queue" style="display: none;">
+          <h3>Очередь загрузки</h3>
+          <div class="queue-list" id="queue-list"></div>
+        </div>
+        
+        <div class="upload-tips">
+          <h4>💡 Советы</h4>
+          <ul>
+            <li>Для лучшего качества используйте WAV или FLAC</li>
+            <li>Для TTS рекомендуется моно, 16 кГц</li>
+            <li>Названия файлов должны быть информативными</li>
+            <li>Максимальная длительность: 10 минут</li>
+          </ul>
+        </div>
+      </div>
+    `;
+    
+    attachUploadEventListeners();
+  };
+  
+  // ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
+  
+  // Загрузка провайдеров TTS
+  const loadTTSProviders = async () => {
+    try {
+      ttsProviders = await App.apiGet('/api/audio/tts/providers');
+    } catch (err) {
+      console.error('Ошибка загрузки провайдеров:', err);
+      ttsProviders = [
+        { id: 'google', name: 'Google Cloud TTS' },
+        { id: 'azure', name: 'Azure Speech Services' },
+        { id: 'aws', name: 'Amazon Polly' },
+        { id: 'local', name: 'Локальный синтезатор' }
+      ];
+    }
+  };
+  
+  // Загрузка голосов
+  const loadVoices = async (providerId) => {
+    try {
+      const voiceSelect = document.getElementById('tts-voice');
+      voiceSelect.innerHTML = '<option value="">Загрузка голосов...</option>';
+      
+      const response = await App.apiGet(`/api/audio/tts/voices?provider=${providerId}&language=${selectedLanguage}`);
+      ttsVoices = response.voices || response;
+      
+      if (ttsVoices.length === 0) {
+        voiceSelect.innerHTML = '<option value="">Нет доступных голосов</option>';
+        return;
+      }
+      
+      voiceSelect.innerHTML = ttsVoices.map(voice => `
+        <option value="${voice.id}" ${selectedVoice === voice.id ? 'selected' : ''}>
+          ${voice.name} (${voice.gender || 'нейтральный'})
+        </option>
+      `).join('');
+      
+    } catch (err) {
+      console.error('Ошибка загрузки голосов:', err);
+      document.getElementById('tts-voice').innerHTML = '<option value="">Ошибка загрузки</option>';
+    }
+  };
+  
+  // Загрузка истории TTS
+  const loadTTSHistory = async () => {
+    const container = document.getElementById('tts-history-list');
+    
+    try {
+      const history = await App.apiGet('/api/audio?source=tts&limit=10');
+      const items = history.items || history;
+      
+      if (!items || items.length === 0) {
+        container.innerHTML = '<p class="text-muted">История пуста</p>';
+        return;
+      }
+      
+      container.innerHTML = items.map(item => `
+        <div class="history-item">
+          <div class="history-info">
+            <strong>${escapeHtml(item.name)}</strong>
+            <small>${formatDateTime(item.created_at)}</small>
+            <p class="history-text">${escapeHtml(item.text_preview || '')}</p>
+          </div>
+          <div class="history-actions">
+            <button class="btn btn-sm btn-outline play-history" data-url="${item.url}">▶️</button>
+            <button class="btn btn-sm btn-outline use-history" data-text="${escapeHtml(item.text)}">📋</button>
+          </div>
+        </div>
+      `).join('');
+      
+      // Привязка обработчиков
+      container.querySelectorAll('.play-history').forEach(btn => {
+        btn.addEventListener('click', () => playAudio(btn.dataset.url));
+      });
+      
+      container.querySelectorAll('.use-history').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.getElementById('tts-text').value = btn.dataset.text;
+          updateCharCount();
+        });
+      });
+      
+    } catch (err) {
+      console.error('Ошибка загрузки истории:', err);
+      container.innerHTML = '<p class="text-error">Ошибка загрузки</p>';
+    }
+  };
+  
+  // Генерация TTS
+  const generateTTS = async (formData) => {
+    const submitBtn = document.querySelector('#tts-form button[type="submit"]');
+    const originalText = submitBtn.textContent;
+    submitBtn.disabled = true;
+    submitBtn.textContent = '⏳ Генерация...';
+    
+    try {
+      const data = {
+        provider: formData.provider,
+        voice: formData.voice,
+        language: formData.language,
+        text: formData.text,
+        speed: parseFloat(formData.speed),
+        pitch: parseInt(formData.pitch),
+        volume: parseInt(formData.volume),
+        filename: formData.filename || null,
+        description: formData.description || null
+      };
+      
+      const response = await App.apiPost('/api/audio/tts/generate', data);
+      
+      App.showNotification('Речь успешно сгенерирована!', 'success');
+      
+      // Показать результат
+      showTTSResult(response);
+      
+      // Переключиться на библиотеку или обновить
+      if (confirm('Речь сгенерирована! Перейти в библиотеку?')) {
+        currentTab = 'library';
+        await renderActiveTab();
+      }
+      
+    } catch (err) {
+      console.error('Ошибка генерации:', err);
+      App.showNotification('Ошибка генерации речи: ' + (err.message || 'Неизвестная ошибка'), 'error');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalText;
+    }
+  };
+  
+  // Показать результат TTS
+  const showTTSResult = (audioFile) => {
+    const modalContent = `
+      <div class="tts-result">
+        <h4>✅ Речь успешно сгенерирована!</h4>
+        
+        <div class="audio-player-container">
+          <audio controls src="${audioFile.url}" style="width: 100%;"></audio>
+        </div>
+        
+        <div class="file-details">
+          <p><strong>Название:</strong> ${escapeHtml(audioFile.name)}</p>
+          <p><strong>Длительность:</strong> ${formatDuration(audioFile.duration)}</p>
+          <p><strong>Размер:</strong> ${formatFileSize(audioFile.size)}</p>
+        </div>
+        
+        <div class="text-preview">
+          <h5>Текст:</h5>
+          <div class="preview-content">${escapeHtml(audioFile.text_preview || '')}</div>
+        </div>
+        
+        <div class="modal-actions">
+          <button class="btn btn-primary" onclick="App.hideModal()">Закрыть</button>
+          <button class="btn btn-success" id="use-now-btn">Использовать в кампании</button>
+          <button class="btn btn-outline" id="download-tts-btn">Скачать</button>
+        </div>
+      </div>
+    `;
+    
+    App.showModal('Результат генерации', modalContent);
+    
+    document.getElementById('download-tts-btn')?.addEventListener('click', () => {
+      downloadFile(audioFile.url, audioFile.name);
+    });
+    
+    document.getElementById('use-now-btn')?.addEventListener('click', () => {
+      App.hideModal();
+      // Переход к созданию кампании с этим аудио
+      window.location.hash = '#/campaigns/new';
+      // Сохранить ID аудио в sessionStorage
+      sessionStorage.setItem('selected_audio_id', audioFile.id);
+    });
+  };
+  
+  // Загрузка файлов
+  const uploadFiles = async (files) => {
+    const queueContainer = document.getElementById('upload-queue');
+    const queueList = document.getElementById('queue-list');
+    
+    queueContainer.style.display = 'block';
+    
+    for (const file of files) {
+      // Проверка размера
+      if (file.size > 50 * 1024 * 1024) {
+        App.showNotification(`Файл ${file.name} слишком большой (>50MB)`, 'error');
+        continue;
+      }
+      
+      const itemId = `upload-${Date.now()}-${Math.random()}`;
+      
+      // Добавление в очередь
+      const queueItem = document.createElement('div');
+      queueItem.className = 'queue-item';
+      queueItem.id = itemId;
+      queueItem.innerHTML = `
+        <div class="queue-item-info">
+          <span class="queue-filename">${escapeHtml(file.name)}</span>
+          <span class="queue-size">${formatFileSize(file.size)}</span>
+        </div>
+        <div class="queue-progress">
+          <div class="progress-bar" style="width: 0%"></div>
+        </div>
+        <div class="queue-status">Ожидание...</div>
+      `;
+      queueList.appendChild(queueItem);
+      
+      // Загрузка
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      try {
+        const response = await App.apiUpload('/api/audio/upload', formData, (progress) => {
+          const progressBar = queueItem.querySelector('.progress-bar');
+          const status = queueItem.querySelector('.queue-status');
+          progressBar.style.width = `${progress}%`;
+          status.textContent = `Загрузка: ${progress}%`;
+        });
+        
+        queueItem.querySelector('.queue-status').innerHTML = '✅ Загружено';
+        queueItem.classList.add('uploaded');
+        
+        App.showNotification(`Файл ${file.name} загружен`, 'success');
+        
+        // Удаление из очереди через 3 секунды
+        setTimeout(() => {
+          queueItem.remove();
+          if (queueList.children.length === 0) {
+            queueContainer.style.display = 'none';
+          }
+        }, 3000);
+        
+      } catch (err) {
+        queueItem.querySelector('.queue-status').innerHTML = '❌ Ошибка';
+        queueItem.classList.add('error');
+        App.showNotification(`Ошибка загрузки ${file.name}`, 'error');
+      }
+    }
+  };
+  
+  // Воспроизведение аудио
+  const playAudio = (url) => {
+    const audioPlayer = document.createElement('audio');
+    audioPlayer.src = url;
+    audioPlayer.controls = true;
+    audioPlayer.style.width = '100%';
+    audioPlayer.autoplay = true;
+    
+    App.showModal('Воспроизведение', audioPlayer.outerHTML, null, {
+      onClose: () => audioPlayer.pause()
+    });
+  };
+  
+  // Скачивание файла
+  const downloadFile = (url, filename) => {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+  
+  // Удаление файла
+  const deleteFile = async (id) => {
+    if (!confirm('Удалить файл? Это действие нельзя отменить.')) return;
+    
+    try {
+      await App.apiDelete(`/api/audio/${id}`);
+      App.showNotification('Файл удален', 'success');
+      
+      selectedFiles.delete(id);
+      await loadAudioFiles();
+      
+    } catch (err) {
+      console.error('Ошибка удаления:', err);
+      App.showNotification('Ошибка удаления файла', 'error');
+    }
+  };
+  
+  // Удаление выбранных файлов
+  const deleteSelectedFiles = async () => {
+    if (selectedFiles.size === 0) return;
+    
+    if (!confirm(`Удалить ${selectedFiles.size} файл(ов)?`)) return;
+    
+    try {
+      const ids = Array.from(selectedFiles);
+      await App.apiPost('/api/audio/bulk-delete', { ids });
+      
+      App.showNotification(`Удалено ${ids.length} файлов`, 'success');
+      selectedFiles.clear();
+      await loadAudioFiles();
+      
+    } catch (err) {
+      console.error('Ошибка массового удаления:', err);
+      App.showNotification('Ошибка удаления файлов', 'error');
+    }
+  };
+  
+  // Редактирование файла
+  const editFile = async (id) => {
+    try {
+      const file = await App.apiGet(`/api/audio/${id}`);
+      
+      const modalContent = `
+        <form id="edit-audio-form">
+          <div class="form-group">
+            <label>Название</label>
+            <input type="text" name="name" class="form-control" value="${escapeHtml(file.name)}" required>
+          </div>
+          
+          <div class="form-group">
+            <label>Описание</label>
+            <textarea name="description" class="form-control" rows="3">${escapeHtml(file.description || '')}</textarea>
+          </div>
+          
+          <div class="form-group">
+            <label>Теги (через запятую)</label>
+            <input type="text" name="tags" class="form-control" value="${(file.tags || []).join(', ')}">
+          </div>
+          
+          <div class="form-group">
+            <label>
+              <input type="checkbox" name="is_public" ${file.is_public ? 'checked' : ''}>
+              Доступен всем пользователям
+            </label>
+          </div>
+          
+          <button type="submit" class="btn btn-primary">Сохранить</button>
+        </form>
+      `;
+      
+      App.showModal('Редактирование аудио', modalContent, async (form) => {
+        const data = Object.fromEntries(new FormData(form).entries());
+        data.tags = data.tags ? data.tags.split(',').map(t => t.trim()).filter(t => t) : [];
+        data.is_public = form.querySelector('[name="is_public"]').checked;
+        
+        try {
+          await App.apiPut(`/api/audio/${id}`, data);
+          App.showNotification('Изменения сохранены', 'success');
+          App.hideModal();
+          await loadAudioFiles();
+        } catch (err) {
+          App.showNotification('Ошибка сохранения', 'error');
+        }
+      });
+      
+    } catch (err) {
+      console.error('Ошибка загрузки файла:', err);
+      App.showNotification('Ошибка загрузки данных', 'error');
+    }
+  };
+  
+  // ============ ОБРАБОТЧИКИ СОБЫТИЙ ============
+  
+  const attachEventListeners = () => {
+    // Переключение вкладок
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', async (e) => {
+        const tabName = e.currentTarget.dataset.tab;
+        currentTab = tabName;
+        
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        e.currentTarget.classList.add('active');
+        
+        await renderActiveTab();
+      });
+    });
+    
+    // Кнопки в заголовке
+    document.getElementById('upload-audio-btn')?.addEventListener('click', () => {
+      currentTab = 'upload';
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelector('[data-tab="upload"]').classList.add('active');
+      renderActiveTab();
+    });
+    
+    document.getElementById('tts-generate-btn')?.addEventListener('click', () => {
+      currentTab = 'tts';
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelector('[data-tab="tts"]').classList.add('active');
+      renderActiveTab();
+    });
+  };
+  
+  const attachLibraryEventListeners = () => {
+    // Поиск
+    let searchTimeout;
+    document.getElementById('search-audio')?.addEventListener('input', (e) => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        searchQuery = e.target.value;
+        currentPage = 1;
+        loadAudioFiles();
+      }, 300);
+    });
+    
+    // Сортировка
+    document.getElementById('sort-select')?.addEventListener('change', (e) => {
+      const [field, order] = e.target.value.split('_');
+      sortField = field;
+      sortOrder = order;
+      currentPage = 1;
+      loadAudioFiles();
+    });
+    
+    // Выбрать все
+    document.getElementById('select-all-checkbox')?.addEventListener('change', (e) => {
+      const checked = e.target.checked;
+      document.querySelectorAll('.file-checkbox').forEach(cb => {
+        cb.checked = checked;
+        const id = parseInt(cb.dataset.id);
+        if (checked) {
+          selectedFiles.add(id);
+        } else {
+          selectedFiles.delete(id);
+        }
+      });
+      
+      // Обновить кнопку удаления
+      updateDeleteButton();
+    });
+    
+    // Удалить выбранные
+    document.getElementById('delete-selected-btn')?.addEventListener('click', deleteSelectedFiles);
+    
+    // Обновить
+    document.getElementById('refresh-library-btn')?.addEventListener('click', loadAudioFiles);
+  };
+  
+  const attachFileRowEventListeners = () => {
+    // Чекбоксы
+    document.querySelectorAll('.file-checkbox').forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        const id = parseInt(e.target.dataset.id);
+        if (e.target.checked) {
+          selectedFiles.add(id);
+        } else {
+          selectedFiles.delete(id);
+        }
+        updateDeleteButton();
+        
+        // Обновить "выбрать все"
+        const allChecked = document.querySelectorAll('.file-checkbox:checked').length === audioFiles.length;
+        document.getElementById('select-all-checkbox').checked = allChecked;
+      });
+    });
+    
+    // Воспроизведение
+    document.querySelectorAll('.play-audio').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const url = e.currentTarget.dataset.url;
+        playAudio(url);
+      });
+    });
+    
+    // Скачивание
+    document.querySelectorAll('.download-audio').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const id = e.currentTarget.dataset.id;
+        const file = audioFiles.find(f => f.id == id);
+        if (file) {
+          downloadFile(file.url, file.name);
+        }
+      });
+    });
+    
+    // Редактирование
+    document.querySelectorAll('.edit-audio').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const id = e.currentTarget.dataset.id;
+        editFile(id);
+      });
+    });
+    
+    // Удаление
+    document.querySelectorAll('.delete-audio').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const id = e.currentTarget.dataset.id;
+        deleteFile(id);
+      });
+    });
+  };
+  
+  const attachTTSEventListeners = () => {
+    // Выбор провайдера
+    document.getElementById('tts-provider')?.addEventListener('change', async (e) => {
+      selectedProvider = e.target.value;
+      if (selectedProvider) {
+        await loadVoices(selectedProvider);
+      }
+    });
+    
+    // Выбор языка
+    document.getElementById('tts-language')?.addEventListener('change', async (e) => {
+      selectedLanguage = e.target.value;
+      if (selectedProvider) {
+        await loadVoices(selectedProvider);
+      }
+    });
+    
+    // Выбор голоса
+    document.getElementById('tts-voice')?.addEventListener('change', (e) => {
+      selectedVoice = e.target.value;
+    });
+    
+    // Подсчет символов
+    const textArea = document.getElementById('tts-text');
+    textArea?.addEventListener('input', updateCharCount);
+    
+    // Слайдеры
+    document.getElementById('tts-speed')?.addEventListener('input', (e) => {
+      document.getElementById('speed-value').textContent = e.target.value + 'x';
+    });
+    
+    document.getElementById('tts-pitch')?.addEventListener('input', (e) => {
+      document.getElementById('pitch-value').textContent = e.target.value;
+    });
+    
+    document.getElementById('tts-volume')?.addEventListener('input', (e) => {
+      document.getElementById('volume-value').textContent = e.target.value + '%';
+    });
+    
+    // Отправка формы
+    document.getElementById('tts-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const formData = {
+        provider: document.getElementById('tts-provider').value,
+        voice: document.getElementById('tts-voice').value,
+        language: document.getElementById('tts-language').value,
+        text: document.getElementById('tts-text').value,
+        speed: document.getElementById('tts-speed').value,
+        pitch: document.getElementById('tts-pitch').value,
+        volume: document.getElementById('tts-volume').value,
+        filename: document.getElementById('tts-filename').value,
+        description: document.getElementById('tts-description').value
+      };
+      
+      await generateTTS(formData);
+    });
+    
+    // Предпросмотр
+    document.getElementById('preview-tts-btn')?.addEventListener('click', async () => {
+      const text = document.getElementById('tts-text').value;
+      if (!text) {
+        App.showNotification('Введите текст для предпросмотра', 'warning');
+        return;
+      }
+      
+      try {
+        const response = await App.apiPost('/api/audio/tts/preview', {
+          provider: selectedProvider,
+          voice: selectedVoice,
+          text: text.substring(0, 200) // Ограничение для предпросмотра
+        });
+        
+        playAudio(response.url);
+      } catch (err) {
+        App.showNotification('Ошибка предпросмотра', 'error');
+      }
+    });
+  };
+  
+  const attachUploadEventListeners = () => {
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    const selectBtn = document.getElementById('select-files-btn');
+    
+    // Выбор файлов
+    selectBtn?.addEventListener('click', () => {
+      fileInput.click();
+    });
+    
+    fileInput?.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        uploadFiles(e.target.files);
+        fileInput.value = '';
+      }
+    });
+    
+    // Drag & Drop
+    dropZone?.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('drag-over');
+    });
+    
+    dropZone?.addEventListener('dragleave', () => {
+      dropZone.classList.remove('drag-over');
+    });
+    
+    dropZone?.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        uploadFiles(files);
+      }
+    });
+  };
+  
+  // Обновление кнопки удаления выбранных
+  const updateDeleteButton = () => {
+    const btn = document.getElementById('delete-selected-btn');
+    if (btn) {
+      if (selectedFiles.size > 0) {
+        btn.textContent = `🗑️ Удалить выбранные (${selectedFiles.size})`;
+        btn.style.display = 'inline-block';
+      } else {
+        btn.style.display = 'none';
+      }
+    }
+  };
+  
+  // Обновление счетчика символов
+  const updateCharCount = () => {
+    const textArea = document.getElementById('tts-text');
+    const counter = document.getElementById('char-count');
+    if (textArea && counter) {
+      counter.textContent = textArea.value.length;
+    }
+  };
+  
+  // ============ УТИЛИТЫ ============
+  
+  const formatFileSize = (bytes) => {
+    if (!bytes) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+    
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+    
+    return `${size.toFixed(1)} ${units[unitIndex]}`;
+  };
+  
+  const formatDuration = (seconds) => {
+    if (!seconds) return '0:00';
+    
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+  
+  const formatDateTime = (dateStr) => {
+    if (!dateStr) return '—';
+    const date = new Date(dateStr);
+    return date.toLocaleString('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+  
+  const formatFileType = (mimeType) => {
+    const types = {
+      'audio/mpeg': 'MP3',
+      'audio/wav': 'WAV',
+      'audio/ogg': 'OGG',
+      'audio/mp4': 'M4A',
+      'audio/aac': 'AAC',
+      'audio/flac': 'FLAC'
+    };
+    return types[mimeType] || mimeType?.split('/')[1]?.toUpperCase() || 'Неизвестно';
+  };
+  
+  const getFileIcon = (mimeType) => {
+    if (mimeType?.includes('wav')) return '🎵';
+    if (mimeType?.includes('mp3')) return '🎸';
+    return '🎤';
+  };
+  
+  const escapeHtml = (text) => {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  };
+  
+  const renderPagination = (containerId, current, total, onPageChange) => {
+    const container = document.getElementById(containerId);
+    if (!container || total <= 1) {
+      if (container) container.innerHTML = '';
+      return;
+    }
+    
+    let html = '<div class="pagination">';
+    
+    // Предыдущая
+    html += `<button class="page-btn" ${current === 1 ? 'disabled' : ''} data-page="${current - 1}">←</button>`;
+    
+    // Страницы
+    const start = Math.max(1, current - 2);
+    const end = Math.min(total, current + 2);
+    
+    if (start > 1) {
+      html += `<button class="page-btn" data-page="1">1</button>`;
+      if (start > 2) html += '<span class="page-dots">...</span>';
+    }
+    
+    for (let i = start; i <= end; i++) {
+      html += `<button class="page-btn ${i === current ? 'active' : ''}" data-page="${i}">${i}</button>`;
+    }
+    
+    if (end < total) {
+      if (end < total - 1) html += '<span class="page-dots">...</span>';
+      html += `<button class="page-btn" data-page="${total}">${total}</button>`;
+    }
+    
+    // Следующая
+    html += `<button class="page-btn" ${current === total ? 'disabled' : ''} data-page="${current + 1}">→</button>`;
+    
+    html += '</div>';
+    
+    container.innerHTML = html;
+    
+    // Привязка событий
+    container.querySelectorAll('.page-btn[data-page]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const page = parseInt(btn.dataset.page);
+        if (!isNaN(page)) onPageChange(page);
+      });
+    });
+  };
+  
+  // Экспорт
+  window.AudioPage = { render: renderAudio };
+})();
