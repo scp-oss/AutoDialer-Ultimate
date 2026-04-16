@@ -1,0 +1,617 @@
+<!-- ============================================= -->
+<!-- BLACKLIST TAB -->
+<!-- ============================================= -->
+<div class="blacklist-container">
+    
+    <!-- Заголовок с действиями -->
+    <div class="page-header">
+        <h2>🚫 Чёрный список</h2>
+        <div class="header-actions">
+            <button class="btn btn-outline" id="blacklistRefreshBtn" title="Обновить">
+                🔄 Обновить
+            </button>
+            <button class="btn btn-outline" id="blacklistExportBtn" title="Экспорт">
+                📥 Экспорт
+            </button>
+            <button class="btn btn-outline" id="blacklistImportBtn" title="Импорт">
+                📤 Импорт
+            </button>
+            <button class="btn btn-primary" id="blacklistAddBtn">
+                ➕ Добавить номер
+            </button>
+        </div>
+    </div>
+    
+    <!-- Описание -->
+    <p class="text-muted">
+        Номера в чёрном списке не будут обзваниваться ни в одной кампании.
+        При импорте контактов номера из чёрного списка автоматически пропускаются.
+    </p>
+    
+    <!-- Панель поиска и статистики -->
+    <div class="blacklist-toolbar">
+        <div class="search-box">
+            <input type="text" 
+                   id="blacklistSearch" 
+                   class="form-control" 
+                   placeholder="🔍 Поиск по номеру или причине..."
+                   autocomplete="off">
+        </div>
+        <div class="blacklist-stats-mini">
+            <span>Всего: <strong id="blacklistTotal">0</strong></span>
+            <span>Сегодня: <strong id="blacklistToday">0</strong></span>
+        </div>
+        <div class="toolbar-actions">
+            <button class="btn btn-outline btn-sm" id="blacklistClearFiltersBtn">
+                🔄 Сбросить
+            </button>
+            <button class="btn btn-danger btn-sm" id="blacklistDeleteSelectedBtn" style="display: none;">
+                🗑️ Удалить выбранные
+            </button>
+        </div>
+    </div>
+    
+    <!-- Таблица -->
+    <div class="blacklist-table-container">
+        <table class="table" id="blacklistTable">
+            <thead>
+                <tr>
+                    <th width="40">
+                        <input type="checkbox" id="blacklistSelectAll">
+                    </th>
+                    <th>Номер телефона</th>
+                    <th>Причина</th>
+                    <th>Дата добавления</th>
+                    <th>Добавил</th>
+                    <th>Источник</th>
+                    <th width="100">Действия</th>
+                </tr>
+            </thead>
+            <tbody id="blacklistTableBody">
+                <tr><td colspan="7" class="text-center"><div class="loading">Загрузка...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Пагинация -->
+    <div id="blacklistPagination" class="pagination-container"></div>
+    
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ДОБАВЛЕНИЯ -->
+<!-- ============================================= -->
+<div id="blacklistAddModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Добавить номер в чёрный список</h3>
+            <button class="modal-close" onclick="App.blacklist.closeAddModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="blacklistAddForm" onsubmit="return false;">
+                <div class="form-group">
+                    <label>Номер телефона <span class="required">*</span></label>
+                    <textarea id="blacklistPhone" 
+                              class="form-control" 
+                              rows="3"
+                              placeholder="Введите номера (по одному на строку или через запятую)..."
+                              required></textarea>
+                    <small class="form-text">
+                        <span id="blacklistPhoneCount">0</span> номеров
+                    </small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Причина (опционально)</label>
+                    <select id="blacklistReasonSelect" class="form-control">
+                        <option value="">Выберите причину или введите свою</option>
+                        <option value="Жалоба на спам">Жалоба на спам</option>
+                        <option value="Отказ от обзвона">Отказ от обзвона</option>
+                        <option value="Неверный номер">Неверный номер</option>
+                        <option value="Автоответчик">Автоответчик</option>
+                        <option value="Нецелевой">Нецелевой</option>
+                        <option value="Дубликат">Дубликат</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Или введите свою причину</label>
+                    <input type="text" 
+                           id="blacklistReasonCustom" 
+                           class="form-control" 
+                           placeholder="Своя причина">
+                </div>
+                
+                <div class="form-group">
+                    <label>Заметки (опционально)</label>
+                    <textarea id="blacklistNotes" 
+                              class="form-control" 
+                              rows="2"
+                              placeholder="Дополнительные заметки..."></textarea>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" 
+                            class="btn btn-outline" 
+                            onclick="App.blacklist.closeAddModal()">
+                        Отмена
+                    </button>
+                    <button type="submit" 
+                            class="btn btn-primary">
+                        Добавить
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ИМПОРТА -->
+<!-- ============================================= -->
+<div id="blacklistImportModal" class="modal" style="display: none;">
+    <div class="modal-content modal-large">
+        <div class="modal-header">
+            <h3>Импорт номеров в чёрный список</h3>
+            <button class="modal-close" onclick="App.blacklist.closeImportModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="blacklistImportForm" onsubmit="return false;">
+                <div class="form-group">
+                    <label>Список номеров</label>
+                    <textarea id="blacklistImportText" 
+                              class="form-control" 
+                              rows="10"
+                              placeholder="Введите номера (по одному на строку или через запятую)..."
+                              required></textarea>
+                    <small class="form-text">
+                        <span id="blacklistImportCount">0</span> номеров
+                    </small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Причина для всех (опционально)</label>
+                    <input type="text" 
+                           id="blacklistImportReason" 
+                           class="form-control" 
+                           placeholder="Причина добавления">
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="blacklistImportSkipDuplicates" checked>
+                        Пропускать дубликаты
+                    </label>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" 
+                            class="btn btn-outline" 
+                            onclick="App.blacklist.closeImportModal()">
+                        Отмена
+                    </button>
+                    <button type="submit" 
+                            class="btn btn-primary">
+                        Импортировать
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО РЕДАКТИРОВАНИЯ -->
+<!-- ============================================= -->
+<div id="blacklistEditModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Редактировать запись</h3>
+            <button class="modal-close" onclick="App.blacklist.closeEditModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="blacklistEditForm" onsubmit="return false;">
+                <input type="hidden" id="blacklistEditId">
+                <input type="hidden" id="blacklistEditPhone">
+                
+                <div class="form-group">
+                    <label>Номер телефона</label>
+                    <input type="text" 
+                           id="blacklistEditPhoneDisplay" 
+                           class="form-control" 
+                           readonly
+                           style="background: var(--color-bg-tertiary);">
+                </div>
+                
+                <div class="form-group">
+                    <label>Причина</label>
+                    <input type="text" 
+                           id="blacklistEditReason" 
+                           class="form-control" 
+                           placeholder="Причина">
+                </div>
+                
+                <div class="form-group">
+                    <label>Заметки</label>
+                    <textarea id="blacklistEditNotes" 
+                              class="form-control" 
+                              rows="3"
+                              placeholder="Заметки..."></textarea>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" 
+                            class="btn btn-outline" 
+                            onclick="App.blacklist.closeEditModal()">
+                        Отмена
+                    </button>
+                    <button type="submit" 
+                            class="btn btn-primary">
+                        Сохранить
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ДЕТАЛЕЙ -->
+<!-- ============================================= -->
+<div id="blacklistDetailModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Детали записи</h3>
+            <button class="modal-close" onclick="App.blacklist.closeDetailModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="blacklistDetailContent">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" 
+                    class="btn btn-outline" 
+                    onclick="App.blacklist.closeDetailModal()">
+                Закрыть
+            </button>
+            <button type="button" 
+                    class="btn btn-primary" 
+                    id="blacklistEditFromDetailBtn">
+                ✏️ Редактировать
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ПОДТВЕРЖДЕНИЯ ОЧИСТКИ -->
+<!-- ============================================= -->
+<div id="blacklistClearModal" class="modal" style="display: none;">
+    <div class="modal-content modal-sm">
+        <div class="modal-header">
+            <h3>⚠️ Подтверждение</h3>
+            <button class="modal-close" onclick="App.hideModal('blacklistClearModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p>Вы уверены, что хотите очистить ВЕСЬ чёрный список?</p>
+            <p class="text-danger">Это действие нельзя отменить!</p>
+            
+            <div class="form-actions">
+                <button type="button" 
+                        class="btn btn-outline" 
+                        onclick="App.hideModal('blacklistClearModal')">
+                    Отмена
+                </button>
+                <button type="button" 
+                        class="btn btn-danger" 
+                        id="blacklistConfirmClearBtn">
+                    Очистить всё
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- ДОПОЛНИТЕЛЬНЫЕ СТИЛИ -->
+<!-- ============================================= -->
+<style>
+    /* Blacklist Container */
+    .blacklist-container {
+        padding: 0;
+    }
+    
+    /* Blacklist Toolbar */
+    .blacklist-toolbar {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-lg);
+        margin-bottom: var(--spacing-lg);
+        flex-wrap: wrap;
+    }
+    
+    .search-box {
+        flex: 1;
+        min-width: 250px;
+    }
+    
+    .blacklist-stats-mini {
+        display: flex;
+        gap: var(--spacing-lg);
+        color: var(--color-text-muted);
+    }
+    
+    .blacklist-stats-mini strong {
+        color: var(--color-text-primary);
+    }
+    
+    .toolbar-actions {
+        display: flex;
+        gap: var(--spacing-sm);
+    }
+    
+    /* Table */
+    .blacklist-table-container {
+        overflow-x: auto;
+        margin-bottom: var(--spacing-lg);
+    }
+    
+    #blacklistTable tbody tr {
+        cursor: pointer;
+        transition: background var(--transition-fast);
+    }
+    
+    #blacklistTable tbody tr:hover {
+        background: var(--color-bg-tertiary);
+    }
+    
+    #blacklistTable tbody tr.selected {
+        background: var(--color-primary-light);
+        background: rgba(102, 126, 234, 0.1);
+    }
+    
+    .phone-number {
+        font-weight: 500;
+        font-family: var(--font-mono);
+    }
+    
+    .source-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: var(--radius-full);
+        font-size: 0.75rem;
+        background: var(--color-bg-tertiary);
+        color: var(--color-text-secondary);
+    }
+    
+    .source-badge.source-manual {
+        background: var(--color-info-bg);
+        color: var(--color-info);
+    }
+    
+    .source-badge.source-import {
+        background: var(--color-success-bg);
+        color: var(--color-success);
+    }
+    
+    .source-badge.source-campaign {
+        background: var(--color-warning-bg);
+        color: var(--color-warning);
+    }
+    
+    /* Detail */
+    .blacklist-detail {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    
+    .detail-section {
+        margin-bottom: var(--spacing-lg);
+        padding-bottom: var(--spacing-lg);
+        border-bottom: 1px solid var(--color-border);
+    }
+    
+    .detail-section:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+    
+    .detail-section h4 {
+        margin-top: 0;
+        margin-bottom: var(--spacing-md);
+        color: var(--color-text-secondary);
+    }
+    
+    .details-table {
+        width: 100%;
+    }
+    
+    .details-table td {
+        padding: var(--spacing-xs) 0;
+    }
+    
+    .details-table td:first-child {
+        font-weight: 500;
+        color: var(--color-text-muted);
+        width: 150px;
+    }
+    
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: var(--spacing-3xl) var(--spacing-xl);
+    }
+    
+    .empty-icon {
+        font-size: 4rem;
+        margin-bottom: var(--spacing-lg);
+        opacity: 0.5;
+    }
+    
+    .empty-state p {
+        margin-bottom: var(--spacing-lg);
+        color: var(--color-text-muted);
+    }
+    
+    /* Form Actions */
+    .form-actions {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-top: var(--spacing-lg);
+        justify-content: flex-end;
+    }
+    
+    .required {
+        color: var(--color-danger);
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .blacklist-toolbar {
+            flex-direction: column;
+            align-items: stretch;
+            gap: var(--spacing-md);
+        }
+        
+        .blacklist-stats-mini {
+            justify-content: space-between;
+        }
+        
+        .toolbar-actions {
+            justify-content: flex-end;
+        }
+        
+        .form-actions {
+            flex-direction: column;
+        }
+        
+        .form-actions .btn {
+            width: 100%;
+        }
+        
+        .details-table td:first-child {
+            width: 120px;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .toolbar-actions {
+            flex-direction: column;
+        }
+        
+        .toolbar-actions .btn {
+            width: 100%;
+        }
+    }
+</style>
+
+<script>
+    (function() {
+        const blacklistModule = App.blacklist;
+        if (blacklistModule) {
+            // Счётчик номеров в форме добавления
+            const phoneInput = document.getElementById('blacklistPhone');
+            const phoneCount = document.getElementById('blacklistPhoneCount');
+            if (phoneInput && phoneCount) {
+                phoneInput.addEventListener('input', () => {
+                    const phones = phoneInput.value.split(/[,\n]/).map(p => p.trim()).filter(p => p);
+                    phoneCount.textContent = phones.length;
+                });
+            }
+            
+            // Счётчик номеров в форме импорта
+            const importText = document.getElementById('blacklistImportText');
+            const importCount = document.getElementById('blacklistImportCount');
+            if (importText && importCount) {
+                importText.addEventListener('input', () => {
+                    const phones = importText.value.split(/[,\n]/).map(p => p.trim()).filter(p => p);
+                    importCount.textContent = phones.length;
+                });
+            }
+            
+            // Кнопка добавления
+            document.getElementById('blacklistAddBtn')?.addEventListener('click', () => {
+                blacklistModule.openAddModal();
+            });
+            
+            // Кнопка импорта
+            document.getElementById('blacklistImportBtn')?.addEventListener('click', () => {
+                blacklistModule.openImportModal();
+            });
+            
+            // Кнопка экспорта
+            document.getElementById('blacklistExportBtn')?.addEventListener('click', () => {
+                blacklistModule.exportBlacklist();
+            });
+            
+            // Кнопка обновления
+            document.getElementById('blacklistRefreshBtn')?.addEventListener('click', () => {
+                blacklistModule.loadBlacklist();
+            });
+            
+            // Кнопка очистки фильтров
+            document.getElementById('blacklistClearFiltersBtn')?.addEventListener('click', () => {
+                const searchInput = document.getElementById('blacklistSearch');
+                if (searchInput) searchInput.value = '';
+                blacklistModule.searchQuery = '';
+                blacklistModule.loadBlacklist(1);
+            });
+            
+            // Поиск с дебаунсом
+            const searchInput = document.getElementById('blacklistSearch');
+            if (searchInput) {
+                let searchTimeout;
+                searchInput.addEventListener('input', (e) => {
+                    clearTimeout(searchTimeout);
+                    searchTimeout = setTimeout(() => {
+                        blacklistModule.searchQuery = e.target.value;
+                        blacklistModule.loadBlacklist(1);
+                    }, 300);
+                });
+            }
+            
+            // Форма добавления
+            document.getElementById('blacklistAddForm')?.addEventListener('submit', () => {
+                blacklistModule.addToBlacklist();
+            });
+            
+            // Форма импорта
+            document.getElementById('blacklistImportForm')?.addEventListener('submit', () => {
+                blacklistModule.importBlacklist();
+            });
+            
+            // Форма редактирования
+            document.getElementById('blacklistEditForm')?.addEventListener('submit', () => {
+                blacklistModule.updateItem();
+            });
+            
+            // Кнопка редактирования из деталей
+            document.getElementById('blacklistEditFromDetailBtn')?.addEventListener('click', () => {
+                const id = blacklistModule.currentItemId;
+                if (id) {
+                    blacklistModule.closeDetailModal();
+                    blacklistModule.openEditModalById(id);
+                }
+            });
+            
+            // Выбрать все
+            document.getElementById('blacklistSelectAll')?.addEventListener('change', (e) => {
+                document.querySelectorAll('.blacklist-checkbox').forEach(cb => {
+                    cb.checked = e.target.checked;
+                });
+                blacklistModule.updateDeleteSelectedButton();
+            });
+            
+            // Кнопка очистки всего
+            document.getElementById('blacklistClearAllBtn')?.addEventListener('click', () => {
+                App.showModal('blacklistClearModal');
+            });
+            
+            document.getElementById('blacklistConfirmClearBtn')?.addEventListener('click', () => {
+                blacklistModule.clearAll();
+            });
+        }
+    })();
+</script>
