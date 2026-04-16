@@ -1,451 +1,627 @@
 #!/bin/bash
 # =============================================
-# AutoDialer Ultimate - System Setup Script
+# AutoDialer Ultimate - System Setup
 # Version: 3.0.0
+# Description: Настройка системы и установка зависимостей
 # =============================================
 
-set -e
+set -euo pipefail
 
+# =============================================
+# Определение директорий
+# =============================================
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/../.env" ]; then
+    source "$SCRIPT_DIR/../.env"
+fi
+
+# =============================================
 # Цвета для вывода
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-print_step() { echo -e "${GREEN}[STEP]${NC} $1"; }
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${CYAN}[SUCCESS]${NC} $1"; }
-print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-
 # =============================================
-# System Update
-# =============================================
-print_step "Updating system packages..."
-apt update && apt upgrade -y
+if [ -t 1 ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    NC='\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; BLUE=''; CYAN=''; BOLD=''; NC=''
+fi
 
 # =============================================
-# Install Base Dependencies
+# Функции логирования
 # =============================================
-print_step "Installing base dependencies..."
-apt install -y \
-    curl \
-    wget \
-    git \
-    gnupg \
-    lsb-release \
-    ca-certificates \
-    software-properties-common \
-    apt-transport-https \
-    build-essential \
-    pkg-config \
-    autoconf \
-    automake \
-    libtool \
-    libtool-bin \
-    cmake \
-    make \
-    gcc \
-    g++ \
-    unzip \
-    tar \
-    bzip2 \
-    xz-utils \
-    net-tools \
-    iproute2 \
-    dnsutils \
-    htop \
-    iotop \
-    vim \
-    nano \
-    less \
-    jq \
-    tree
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_step() { echo -e "\n${BOLD}${CYAN}▶ $1${NC}"; }
 
 # =============================================
-# Install Development Libraries
+# Проверка прав root
 # =============================================
-print_step "Installing development libraries..."
-apt install -y \
-    libssl-dev \
-    libncurses5-dev \
-    libnewt-dev \
-    libxml2-dev \
-    linux-headers-$(uname -r) \
-    libsqlite3-dev \
-    uuid-dev \
-    libjansson-dev \
-    libedit-dev \
-    libldap2-dev \
-    libsasl2-dev \
-    libssl-dev \
-    libcurl4-openssl-dev \
-    libspeex-dev \
-    libspeexdsp-dev \
-    libgsm1-dev \
-    libopus-dev \
-    libvorbis-dev \
-    libogg-dev \
-    libspandsp-dev \
-    libical-dev \
-    libneon27-dev \
-    libiksemel-dev \
-    libpopt-dev \
-    libcap2-bin \
-    libsystemd-dev \
-    liburiparser-dev \
-    libxslt1-dev \
-    libpq-dev \
-    libmariadb-dev \
-    libmariadb-dev-compat \
-    libsnmp-dev \
-    libvpb-dev \
-    libpri-dev \
-    libss7-dev \
-    libopenr2-dev \
-    libresample1-dev \
-    libavcodec-dev \
-    libavformat-dev \
-    libavutil-dev \
-    libswscale-dev \
-    libavfilter-dev \
-    libsrtp2-dev \
-    libpjproject-dev
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        log_error "Требуются права root. Используйте: sudo $0"
+        exit 1
+    fi
+}
 
 # =============================================
-# Install Python and Tools
+# Проверка идемпотентности
 # =============================================
-print_step "Installing Python and tools..."
-apt install -y \
-    python3 \
-    python3-pip \
-    python3-venv \
-    python3-dev \
-    python3-setuptools \
-    python3-wheel \
-    virtualenv
+INSTALLED_MARKER="/opt/autodialer/.system_setup_done"
 
-# Update pip
-pip3 install --upgrade pip setuptools wheel
+check_already_installed() {
+    if [ -f "$INSTALLED_MARKER" ]; then
+        log_warn "Системные зависимости уже установлены (найден $INSTALLED_MARKER)"
+        log_info "Для принудительной переустановки удалите маркер: rm -f $INSTALLED_MARKER"
+        exit 0
+    fi
+}
 
 # =============================================
-# Install Database and Cache
+# Проверка ОС
 # =============================================
-print_step "Installing PostgreSQL and Redis..."
-apt install -y \
-    postgresql \
-    postgresql-contrib \
-    postgresql-client \
-    redis-server
+check_os() {
+    log_step "Проверка операционной системы..."
+    
+    if [ ! -f /etc/os-release ]; then
+        log_error "Не удалось определить ОС"
+        exit 1
+    fi
+    
+    source /etc/os-release
+    
+    if [[ "$ID" = "debian" ]] || [[ "$ID_LIKE" = *"debian"* ]]; then
+        log_success "ОС: $PRETTY_NAME"
+        
+        if [[ "$VERSION_ID" != "12" ]]; then
+            log_warn "Рекомендуется Debian 12. Обнаружена версия: $VERSION_ID"
+            log_warn "Установка может работать некорректно"
+        fi
+    else
+        log_error "Требуется Debian или Ubuntu. Обнаружено: $ID"
+        exit 1
+    fi
+}
 
 # =============================================
-# Install Web Server
+# Проверка ресурсов
 # =============================================
-print_step "Installing Nginx..."
-apt install -y \
-    nginx \
-    nginx-extras
+check_resources() {
+    log_step "Проверка системных ресурсов..."
+    
+    # Проверка RAM
+    TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
+    if [ "$TOTAL_RAM" -ge 3500 ]; then
+        log_success "RAM: ${TOTAL_RAM}MB"
+    else
+        log_warn "Рекомендуется минимум 4GB RAM. Обнаружено: ${TOTAL_RAM}MB"
+        log_warn "Производительность может быть снижена"
+    fi
+    
+    # Проверка CPU
+    CPU_CORES=$(nproc)
+    if [ "$CPU_CORES" -ge 2 ]; then
+        log_success "CPU ядер: $CPU_CORES"
+    else
+        log_warn "Рекомендуется минимум 2 ядра CPU. Обнаружено: $CPU_CORES"
+    fi
+    
+    # Проверка диска
+    FREE_DISK=$(df -BG /opt 2>/dev/null | awk 'NR==2 {print $4}' | sed 's/G//')
+    if [ -z "$FREE_DISK" ]; then
+        FREE_DISK=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
+    fi
+    if [ "${FREE_DISK:-0}" -ge 20 ]; then
+        log_success "Свободное место: ${FREE_DISK}GB"
+    else
+        log_error "Требуется минимум 20GB. Обнаружено: ${FREE_DISK}GB"
+        exit 1
+    fi
+}
 
 # =============================================
-# Install Security Tools
+# Обновление системы
 # =============================================
-print_step "Installing security tools..."
-apt install -y \
-    ufw \
-    fail2ban \
-    iptables-persistent \
-    openssl \
-    certbot \
-    python3-certbot-nginx
+update_system() {
+    log_step "Обновление системных пакетов..."
+    
+    log_info "Обновление списка пакетов..."
+    apt-get update -qq
+    
+    log_info "Обновление установленных пакетов..."
+    apt-get upgrade -y -qq
+    
+    log_success "Система обновлена"
+}
 
 # =============================================
-# Install Audio Processing Tools
+# Установка базовых утилит
 # =============================================
-print_step "Installing audio processing tools..."
-apt install -y \
-    sox \
-    libsox-fmt-all \
-    ffmpeg \
-    lame \
-    flac \
-    vorbis-tools
+install_base_utils() {
+    log_step "Установка базовых утилит..."
+    
+    apt-get install -y -qq \
+        curl wget git \
+        ca-certificates gnupg lsb-release \
+        software-properties-common \
+        unzip zip \
+        net-tools iproute2 \
+        dnsutils \
+        jq \
+        vim nano \
+        htop iotop
+    
+    log_success "Базовые утилиты установлены"
+}
 
 # =============================================
-# Install Monitoring Tools
+# Установка инструментов сборки
 # =============================================
-print_step "Installing monitoring tools..."
-apt install -y \
-    prometheus \
-    prometheus-node-exporter \
-    grafana
+install_build_tools() {
+    log_step "Установка инструментов сборки..."
+    
+    apt-get install -y -qq \
+        build-essential \
+        gcc g++ make \
+        cmake pkg-config \
+        automake autoconf libtool \
+        patch
+    
+    log_success "Инструменты сборки установлены"
+}
 
 # =============================================
-# System Limits Configuration
+# Установка Python и зависимостей
 # =============================================
-print_step "Configuring system limits..."
+install_python_deps() {
+    log_step "Установка Python и зависимостей..."
+    
+    apt-get install -y -qq \
+        python3 \
+        python3-pip \
+        python3-venv \
+        python3-dev \
+        python3-setuptools \
+        python3-wheel \
+        libpq-dev \
+        libffi-dev \
+        libssl-dev \
+        libxml2-dev \
+        libxslt1-dev \
+        libjpeg-dev \
+        zlib1g-dev
+    
+    # Обновление pip
+    log_info "Обновление pip..."
+    python3 -m pip install --upgrade pip setuptools wheel -q
+    
+    log_success "Python и зависимости установлены"
+}
 
-cat >> /etc/security/limits.conf << 'EOF'
-# AutoDialer Ultimate Limits
-* soft nofile 655350
-* hard nofile 655350
-* soft nproc 655350
-* hard nproc 655350
-root soft nofile 655350
-root hard nofile 655350
-asterisk soft nofile 655350
-asterisk hard nofile 655350
-asterisk soft nproc 655350
-asterisk hard nproc 655350
-autodialer soft nofile 655350
-autodialer hard nofile 655350
-postgres soft nofile 65535
-postgres hard nofile 65535
-redis soft nofile 65535
-redis hard nofile 65535
-nginx soft nofile 65535
-nginx hard nofile 65535
+# =============================================
+# Установка аудио зависимостей
+# =============================================
+install_audio_deps() {
+    log_step "Установка аудио зависимостей..."
+    
+    apt-get install -y -qq \
+        ffmpeg \
+        sox \
+        libsox-fmt-all \
+        alsa-utils \
+        pulseaudio-utils \
+        libsndfile1 \
+        libsndfile1-dev
+    
+    # Проверка ffmpeg
+    if command -v ffmpeg &>/dev/null; then
+        log_success "ffmpeg установлен: $(ffmpeg -version 2>/dev/null | head -1)"
+    else
+        log_warn "ffmpeg не установлен (TTS может не работать)"
+    fi
+    
+    log_success "Аудио зависимости установлены"
+}
+
+# =============================================
+# Установка клиентов БД
+# =============================================
+install_db_clients() {
+    log_step "Установка клиентов баз данных..."
+    
+    # PostgreSQL клиент
+    apt-get install -y -qq postgresql-client
+    
+    # Redis клиент
+    apt-get install -y -qq redis-tools
+    
+    log_success "Клиенты БД установлены"
+}
+
+# =============================================
+# Установка Nginx
+# =============================================
+install_nginx() {
+    log_step "Установка Nginx..."
+    
+    if command -v nginx &>/dev/null; then
+        log_info "Nginx уже установлен: $(nginx -v 2>&1)"
+    else
+        apt-get install -y -qq nginx
+        log_success "Nginx установлен"
+    fi
+    
+    # Создание директорий для логов
+    mkdir -p /var/log/nginx
+    chown -R www-data:www-data /var/log/nginx
+    
+    # Базовая конфигурация если ещё не настроена
+    if [ ! -f /etc/nginx/sites-available/autodialer ]; then
+        log_info "Базовая конфигурация Nginx будет создана позже"
+    fi
+}
+
+# =============================================
+# Установка Certbot (опционально)
+# =============================================
+install_certbot() {
+    if [ -z "${DOMAIN_NAME:-}" ]; then
+        log_info "Домен не указан, пропуск установки Certbot"
+        return 0
+    fi
+    
+    log_step "Установка Certbot для SSL..."
+    
+    if command -v certbot &>/dev/null; then
+        log_info "Certbot уже установлен"
+    else
+        apt-get install -y -qq certbot python3-certbot-nginx
+        log_success "Certbot установлен"
+    fi
+}
+
+# =============================================
+# Создание пользователя autodialer
+# =============================================
+create_user() {
+    log_step "Создание пользователя autodialer..."
+    
+    if id -u autodialer &>/dev/null; then
+        log_info "Пользователь autodialer уже существует"
+    else
+        useradd -r -s /bin/bash -m -d /opt/autodialer autodialer
+        log_success "Пользователь autodialer создан"
+    fi
+    
+    # Добавление в группы
+    usermod -aG audio autodialer 2>/dev/null || true
+    usermod -aG www-data autodialer 2>/dev/null || true
+    
+    log_success "Группы настроены"
+}
+
+# =============================================
+# Настройка системных лимитов
+# =============================================
+setup_limits() {
+    log_step "Настройка системных лимитов..."
+    
+    # Лимиты открытых файлов
+    cat > /etc/security/limits.d/99-autodialer.conf << 'EOF'
+# AutoDialer Ultimate - System Limits
+autodialer soft nofile 65536
+autodialer hard nofile 65536
+autodialer soft nproc 32768
+autodialer hard nproc 32768
+autodialer soft memlock unlimited
+autodialer hard memlock unlimited
+
+# Для root тоже увеличиваем
+root soft nofile 65536
+root hard nofile 65536
 EOF
 
-# =============================================
-# Sysctl Configuration
-# =============================================
-print_step "Configuring sysctl parameters..."
-
-cat >> /etc/sysctl.conf << 'EOF'
-# AutoDialer Ultimate Network Tuning
-fs.file-max = 2097152
-fs.nr_open = 2097152
-fs.inotify.max_user_watches = 524288
-
-# Network
+    # Sysctl параметры
+    cat > /etc/sysctl.d/99-autodialer.conf << 'EOF'
+# AutoDialer Ultimate - Network Optimizations
 net.core.somaxconn = 65535
-net.core.netdev_max_backlog = 65535
-net.core.rmem_default = 8388608
-net.core.wmem_default = 8388608
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-net.ipv4.tcp_rmem = 4096 87380 16777216
-net.ipv4.tcp_wmem = 4096 65536 16777216
-net.ipv4.tcp_max_syn_backlog = 65535
-net.ipv4.tcp_fin_timeout = 10
+net.core.netdev_max_backlog = 5000
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_tw_reuse = 1
-net.ipv4.tcp_tw_recycle = 1
-net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_timestamps = 1
-net.ipv4.tcp_sack = 1
-net.ipv4.tcp_window_scaling = 1
 net.ipv4.ip_local_port_range = 1024 65535
-net.ipv4.udp_rmem_min = 8192
-net.ipv4.udp_wmem_min = 8192
+net.ipv4.tcp_fin_timeout = 30
+net.ipv4.tcp_keepalive_time = 600
+net.ipv4.tcp_keepalive_intvl = 60
+net.ipv4.tcp_keepalive_probes = 5
 
-# Memory
+# Memory optimizations
 vm.swappiness = 10
 vm.dirty_ratio = 15
 vm.dirty_background_ratio = 5
-vm.dirty_expire_centisecs = 3000
-vm.dirty_writeback_centisecs = 500
 vm.overcommit_memory = 1
-vm.max_map_count = 262144
 
-# Kernel
-kernel.pid_max = 4194304
-kernel.threads-max = 2097152
-kernel.sched_autogroup_enabled = 1
-kernel.sched_migration_cost_ns = 5000000
-kernel.sched_latency_ns = 18000000
-kernel.sched_min_granularity_ns = 3000000
-kernel.sched_wakeup_granularity_ns = 4000000
+# File handles
+fs.file-max = 2097152
+fs.inotify.max_user_watches = 524288
+
+# Redis optimizations
+net.core.somaxconn = 1024
+vm.overcommit_memory = 1
 EOF
 
-# Apply sysctl settings
-sysctl -p || true
-
-# =============================================
-# Create Required Users and Groups
-# =============================================
-print_step "Creating system users and groups..."
-
-# Create asterisk user if not exists
-if ! id -u asterisk &>/dev/null; then
-    useradd -r -m -d /var/lib/asterisk -s /sbin/nologin -c "Asterisk PBX" asterisk
-    print_info "Created asterisk user"
-fi
-
-# Create autodialer user if not exists
-if ! id -u autodialer &>/dev/null; then
-    useradd -r -m -d /opt/autodialer -s /bin/false -c "AutoDialer Service" autodialer
-    print_info "Created autodialer user"
-fi
-
-# Add users to groups
-usermod -a -G audio asterisk || true
-usermod -a -G asterisk autodialer || true
-
-# =============================================
-# Create Required Directories
-# =============================================
-print_step "Creating required directories..."
-
-mkdir -p /opt/autodialer/{backend,logs,config,frontend/dist,scripts,tmp}
-mkdir -p /var/lib/asterisk/sounds/tts/{models,campaigns}
-mkdir -p /var/log/asterisk
-mkdir -p /var/spool/asterisk/{monitor,voicemail}
-mkdir -p /var/run/asterisk
-
-# Set permissions
-chown -R asterisk:asterisk /var/lib/asterisk
-chown -R asterisk:asterisk /var/log/asterisk
-chown -R asterisk:asterisk /var/spool/asterisk
-chown -R asterisk:asterisk /var/run/asterisk
-chown -R autodialer:autodialer /opt/autodialer
-
-# =============================================
-# Configure Timezone and Locale
-# =============================================
-print_step "Configuring timezone and locale..."
-
-# Set timezone (configurable via environment)
-TIMEZONE="${TIMEZONE:-UTC}"
-timedatectl set-timezone "$TIMEZONE" || true
-
-# Generate locales
-locale-gen en_US.UTF-8 ru_RU.UTF-8 || true
-update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 || true
-
-# =============================================
-# Enable and Start Services
-# =============================================
-print_step "Enabling and starting services..."
-
-systemctl enable postgresql || true
-systemctl enable redis-server || true
-systemctl enable nginx || true
-systemctl enable fail2ban || true
-systemctl enable prometheus || true
-systemctl enable prometheus-node-exporter || true
-
-systemctl start postgresql || true
-systemctl start redis-server || true
-
-# =============================================
-# Firewall Configuration (UFW)
-# =============================================
-print_step "Configuring firewall..."
-
-# Default policies
-ufw default deny incoming
-ufw default allow outgoing
-
-# Allow SSH
-ufw allow 22/tcp comment 'SSH'
-
-# Allow HTTP/HTTPS
-ufw allow 80/tcp comment 'HTTP'
-ufw allow 443/tcp comment 'HTTPS'
-
-# Allow SIP (will be restricted later)
-ufw allow 5060/udp comment 'SIP'
-ufw allow 5061/tcp comment 'SIP TLS'
-
-# Allow RTP
-ufw allow 10000:20000/udp comment 'RTP'
-
-# Allow PostgreSQL (localhost only - already restricted)
-# ufw allow from 127.0.0.1 to any port 5432
-
-# Allow Redis (localhost only)
-# ufw allow from 127.0.0.1 to any port 6379
-
-# Allow Prometheus/Grafana (internal network only)
-# ufw allow from 10.0.0.0/8 to any port 9090
-# ufw allow from 10.0.0.0/8 to any port 3000
-
-# Enable firewall
-ufw --force enable
-
-# =============================================
-# Systemd Overrides
-# =============================================
-print_step "Creating systemd override directories..."
-
-mkdir -p /etc/systemd/system/asterisk.service.d
-mkdir -p /etc/systemd/system/autodialer.service.d
-mkdir -p /etc/systemd/system/nginx.service.d
-mkdir -p /etc/systemd/system/postgresql.service.d
-mkdir -p /etc/systemd/system/redis-server.service.d
-
-# =============================================
-# Logrotate Base Configuration
-# =============================================
-print_step "Configuring logrotate..."
-
-cat > /etc/logrotate.d/autodialer-base << 'EOF'
-/opt/autodialer/logs/*.log {
-    daily
-    rotate 14
-    compress
-    delaycompress
-    missingok
-    notifempty
-    create 0640 autodialer autodialer
+    # Применение параметров
+    sysctl -p /etc/sysctl.d/99-autodialer.conf 2>/dev/null || true
+    
+    log_success "Системные лимиты настроены"
 }
-EOF
 
 # =============================================
-# MOTD
+# Создание рабочих директорий
 # =============================================
-print_step "Creating MOTD..."
-
-cat > /etc/motd << 'EOF'
-=============================================
-     AutoDialer Ultimate Server
-=============================================
-Welcome to AutoDialer Ultimate!
-
-Important paths:
-  /opt/autodialer    - Application files
-  /etc/asterisk      - Asterisk configuration
-  /var/log/asterisk  - Asterisk logs
-
-Useful commands:
-  systemctl status autodialer
-  systemctl status asterisk
-  asterisk -rvvv
-
-Documentation:
-  /opt/autodialer/docs/
-=============================================
-EOF
-
-# =============================================
-# Cleanup
-# =============================================
-print_step "Cleaning up..."
-apt autoremove -y
-apt clean
+create_directories() {
+    log_step "Создание рабочих директорий..."
+    
+    # Основные директории
+    mkdir -p /opt/autodialer
+    mkdir -p /opt/autodialer/{logs,backups,uploads,recordings,scripts}
+    mkdir -p /opt/autodialer/logs/{nginx,backend,asterisk,celery}
+    mkdir -p /opt/autodialer/backups/{db,recordings,config}
+    mkdir -p /var/log/autodialer
+    
+    # Директории для Asterisk (будут созданы при установке)
+    mkdir -p /var/spool/asterisk/monitor
+    mkdir -p /var/lib/asterisk/sounds/tts
+    
+    # Установка прав
+    chown -R autodialer:autodialer /opt/autodialer
+    chown -R autodialer:autodialer /var/log/autodialer
+    chmod 755 /opt/autodialer
+    chmod 755 /opt/autodialer/{logs,backups,uploads,recordings}
+    
+    log_success "Рабочие директории созданы"
+}
 
 # =============================================
-# Summary
+# Настройка swap (если мало RAM)
 # =============================================
-print_success "System setup completed!"
-echo ""
-print_info "System Information:"
-echo "  Hostname: $(hostname)"
-echo "  IP Address: $(hostname -I | awk '{print $1}')"
-echo "  OS: $(lsb_release -ds)"
-echo "  Kernel: $(uname -r)"
-echo "  CPU: $(nproc) cores"
-echo "  Memory: $(free -h | awk '/^Mem:/ {print $2}')"
-echo ""
-print_info "Installed Services:"
-echo "  PostgreSQL: $(postgres --version 2>/dev/null || echo 'not installed')"
-echo "  Redis: $(redis-server --version | head -1)"
-echo "  Nginx: $(nginx -v 2>&1 | cut -d'/' -f2)"
-echo "  Python: $(python3 --version)"
-echo ""
-print_info "Next steps:"
-echo "  1. Run 02_asterisk_install.sh"
-echo "  2. Run 03_asterisk_config.sh"
-echo ""
+setup_swap() {
+    TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
+    
+    if [ "$TOTAL_RAM" -ge 4096 ]; then
+        log_info "Достаточно RAM (${TOTAL_RAM}MB), swap не требуется"
+        return 0
+    fi
+    
+    log_step "Настройка swap файла..."
+    
+    if [ -f /swapfile ]; then
+        log_info "Swap файл уже существует"
+        return 0
+    fi
+    
+    log_warn "Мало RAM (${TOTAL_RAM}MB), создаю swap файл 2GB..."
+    
+    # Создание swap файла
+    fallocate -l 2G /swapfile
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+    
+    # Добавление в fstab
+    if ! grep -q "/swapfile" /etc/fstab; then
+        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    fi
+    
+    # Настройка swappiness
+    echo 10 > /proc/sys/vm/swappiness
+    
+    log_success "Swap файл создан и активирован"
+}
+
+# =============================================
+# Настройка timezone
+# =============================================
+setup_timezone() {
+    log_step "Настройка временной зоны..."
+    
+    if [ -n "${TIMEZONE:-}" ]; then
+        if [ -f "/usr/share/zoneinfo/$TIMEZONE" ]; then
+            ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime
+            echo "$TIMEZONE" > /etc/timezone
+            log_success "Временная зона установлена: $TIMEZONE"
+        else
+            log_warn "Временная зона $TIMEZONE не найдена, используется UTC"
+            ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+            echo "UTC" > /etc/timezone
+        fi
+    else
+        log_info "Временная зона не указана, используется UTC"
+        ln -sf /usr/share/zoneinfo/UTC /etc/localtime 2>/dev/null || true
+        echo "UTC" > /etc/timezone 2>/dev/null || true
+    fi
+    
+    # Синхронизация времени
+    if command -v timedatectl &>/dev/null; then
+        timedatectl set-ntp true 2>/dev/null || true
+    fi
+}
+
+# =============================================
+# Установка дополнительных инструментов
+# =============================================
+install_extra_tools() {
+    log_step "Установка дополнительных инструментов..."
+    
+    apt-get install -y -qq \
+        tmux screen \
+        tree \
+        ncdu \
+        ripgrep \
+        fd-find \
+        silversearcher-ag \
+        2>/dev/null || true
+    
+    log_success "Дополнительные инструменты установлены"
+}
+
+# =============================================
+# Проверка установки
+# =============================================
+verify_installation() {
+    log_step "Проверка установки..."
+    
+    local all_ok=true
+    
+    # Проверка Python
+    if python3 --version &>/dev/null; then
+        log_success "Python: $(python3 --version)"
+    else
+        log_error "Python не установлен"
+        all_ok=false
+    fi
+    
+    # Проверка pip
+    if python3 -m pip --version &>/dev/null; then
+        log_success "pip: $(python3 -m pip --version)"
+    else
+        log_error "pip не установлен"
+        all_ok=false
+    fi
+    
+    # Проверка ffmpeg
+    if command -v ffmpeg &>/dev/null; then
+        log_success "ffmpeg установлен"
+    else
+        log_warn "ffmpeg не установлен (TTS может не работать)"
+    fi
+    
+    # Проверка Nginx
+    if command -v nginx &>/dev/null; then
+        log_success "Nginx: $(nginx -v 2>&1)"
+    else
+        log_warn "Nginx не установлен"
+    fi
+    
+    # Проверка Redis клиента
+    if command -v redis-cli &>/dev/null; then
+        log_success "Redis клиент установлен"
+    else
+        log_warn "Redis клиент не установлен"
+    fi
+    
+    # Проверка PostgreSQL клиента
+    if command -v psql &>/dev/null; then
+        log_success "PostgreSQL клиент: $(psql --version | head -1)"
+    else
+        log_warn "PostgreSQL клиент не установлен"
+    fi
+    
+    if [ "$all_ok" = false ]; then
+        log_error "Некоторые проверки не пройдены"
+        return 1
+    fi
+    
+    log_success "Все проверки пройдены"
+    return 0
+}
+
+# =============================================
+# Создание маркера установки
+# =============================================
+mark_installed() {
+    mkdir -p /opt/autodialer
+    echo "System setup completed at $(date)" > "$INSTALLED_MARKER"
+    echo "Debian version: $(lsb_release -ds 2>/dev/null || echo 'Unknown')" >> "$INSTALLED_MARKER"
+    echo "Kernel: $(uname -r)" >> "$INSTALLED_MARKER"
+    echo "Architecture: $(uname -m)" >> "$INSTALLED_MARKER"
+    
+    chown autodialer:autodialer "$INSTALLED_MARKER" 2>/dev/null || true
+    
+    log_success "Маркер установки создан: $INSTALLED_MARKER"
+}
+
+# =============================================
+# Вывод сводки
+# =============================================
+print_summary() {
+    echo ""
+    echo "=============================================="
+    echo -e "${GREEN}${BOLD}✅ Системная настройка завершена!${NC}"
+    echo "=============================================="
+    echo ""
+    echo "Установленные компоненты:"
+    echo "  • Python 3:       $(python3 --version 2>/dev/null || echo 'не установлен')"
+    echo "  • pip:            $(python3 -m pip --version 2>/dev/null | cut -d' ' -f1-2 || echo 'не установлен')"
+    echo "  • ffmpeg:         $(ffmpeg -version 2>/dev/null | head -1 || echo 'не установлен')"
+    echo "  • Nginx:          $(nginx -v 2>&1 | cut -d'/' -f2 || echo 'не установлен')"
+    echo "  • Redis client:   $(redis-cli --version 2>/dev/null | cut -d' ' -f2 || echo 'не установлен')"
+    echo "  • PostgreSQL:     $(psql --version 2>/dev/null | head -1 || echo 'не установлен')"
+    echo ""
+    echo "Системные настройки:"
+    echo "  • Лимиты файлов:  65536"
+    echo "  • Swap:           $(swapon --show 2>/dev/null | grep -v NAME | wc -l) файл(ов)"
+    echo "  • Timezone:       $(cat /etc/timezone 2>/dev/null || echo 'UTC')"
+    echo ""
+    echo "Рабочие директории:"
+    echo "  • /opt/autodialer/"
+    echo "  • /opt/autodialer/logs/"
+    echo "  • /opt/autodialer/backups/"
+    echo "  • /var/log/autodialer/"
+    echo ""
+    echo -e "${YELLOW}Следующий шаг: установка Asterisk${NC}"
+    echo "=============================================="
+}
+
+# =============================================
+# Основная функция
+# =============================================
+main() {
+    echo ""
+    echo "=============================================="
+    echo -e "${BOLD}${BLUE}AutoDialer Ultimate - System Setup${NC}"
+    echo -e "${BOLD}${BLUE}Version: 3.0.0${NC}"
+    echo "=============================================="
+    echo ""
+    
+    # Проверки
+    check_root
+    check_already_installed
+    check_os
+    check_resources
+    
+    # Установка
+    update_system
+    install_base_utils
+    install_build_tools
+    install_python_deps
+    install_audio_deps
+    install_db_clients
+    install_nginx
+    install_certbot
+    install_extra_tools
+    
+    # Настройка
+    create_user
+    setup_limits
+    create_directories
+    setup_swap
+    setup_timezone
+    
+    # Проверка
+    verify_installation
+    
+    # Завершение
+    mark_installed
+    print_summary
+}
+
+# =============================================
+# Запуск
+# =============================================
+main "$@"
