@@ -93,6 +93,24 @@ cp .env.example .env
 
 # Редактирование .env (обязательно укажите AMI_HOST и AMI_PASSWORD)
 nano .env
+
+Настройки `AMI_HOST` для Docker
+Пример для `.env.example`:
+```bash
+# =============================================
+# Asterisk AMI Configuration
+# =============================================
+# Для локальной установки (install.sh):
+AMI_HOST=127.0.0.1
+
+# Для Docker-установки (если Asterisk на хосте):
+# AMI_HOST=172.17.0.1
+# AMI_HOST=host.docker.internal  # macOS/Windows
+
+AMI_PORT=5038
+AMI_USER=autodialer
+AMI_PASSWORD=
+
 ```
 Минимальные настройки в .env для Docker:
 ```bash
@@ -132,6 +150,22 @@ sudo ./install.sh --skip-postgres --skip-redis --skip-nginx --skip-tts
 # 2. Запустить контейнеры с БД, Redis, бэкендом и Nginx
 docker-compose up -d
 ```
+
+📊 Сравнение способов установки
+```bash
+Критерий              install.sh                  Docker Compose
+Установка Asterisk    ✅ Да (из исходников)      ❌ Нет (требуется отдельно)
+Установка PostgreSQL  ✅ Да                      ✅ Да (в контейнере)
+Установка Redis       ✅ Да                      ✅ Да (в контейнере)
+Установка Nginx       ✅ Да                      ✅ Да (в контейнере)
+Изоляция              Нет (всё в системе)         Полная (контейнеры)
+Производительность    Максимальная                Чуть ниже
+Сложность установки   5-10 минут                  1-2 минуты
+Подходит для          Production                  Разработка / Тестирование
+Требует прав root     ✅ Да                      ❌ Нет
+```
+
+
 После установки:
 ```bash
 Веб-интерфейс: http://<IP-сервера>/
@@ -282,11 +316,11 @@ Security Headers           X-Frame-Options, X-Content-Type, HSTS
 ```
 📊 Мониторинг
 ```bash
-Endpoint	            Назначение	                  Доступ
-/metrics	         Prometheus метрики              LAN only
-/api/health	         Health check	                 Публичный
-/docs	                 Swagger UI	                 Публичный
-/redoc	                 ReDoc                         Публичный
+Endpoint          Назначение              Доступ
+/metrics          Prometheus метрики      LAN only
+/api/health       Health check            Публичный
+/docs             Swagger UI              Публичный
+/redoc            ReDoc                   Публичный
 ```
 
 
@@ -313,20 +347,20 @@ ReDoc: http://<IP-сервера>/redoc
 ```
 Основные эндпоинты:
 ```bash
-Метод	Путь	Назначение
-POST	/api/auth/login	Вход в систему
-POST	/api/auth/refresh	Обновление токена
-GET	/api/campaigns	Список кампаний
-POST	/api/campaigns	Создание кампании
-POST	/api/campaigns/{id}/start	Запуск кампании
-POST	/api/campaigns/{id}/stop	Остановка кампании
-GET	/api/contacts	Список контактов
-POST	/api/contacts/import	Импорт контактов
-GET	/api/stats	Статистика
-GET	/api/history	История звонков
-POST	/api/audio/generate	Генерация TTS
-GET	/api/system/status	Статус системы
-POST	/api/system/disable	Аварийная остановка
+Метод    Путь	                        Назначение
+POST     /api/auth/login              Вход в систему
+POST     /api/auth/refresh            Обновление токена
+GET      /api/campaigns               Список кампаний
+POST     /api/campaigns               Создание кампании
+POST     /api/campaigns/{id}/start    Запуск кампании
+POST     /api/campaigns/{id}/stop     Остановка кампании
+GET      /api/contacts                Список контактов
+POST     /api/contacts/import         Импорт контактов
+GET      /api/stats                   Статистика
+GET      /api/history                 История звонков
+POST     /api/audio/generate          Генерация TTS
+GET      /api/system/status           Статус системы
+POST     /api/system/disable          Аварийная остановка
 ```
 📁 Структура проекта
 ```bash
