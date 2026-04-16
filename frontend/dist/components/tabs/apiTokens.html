@@ -1,0 +1,616 @@
+<!-- ============================================= -->
+<!-- API TOKENS TAB (Admin Only) -->
+<!-- ============================================= -->
+<div class="apitokens-container">
+    
+    <!-- Заголовок с действиями -->
+    <div class="page-header">
+        <h2>🔑 API токены</h2>
+        <div class="header-actions">
+            <button class="btn btn-outline" id="apiTokensRefreshBtn" title="Обновить">
+                🔄 Обновить
+            </button>
+            <button class="btn btn-primary" id="tokenCreateBtn">
+                ➕ Создать токен
+            </button>
+        </div>
+    </div>
+    
+    <!-- Описание -->
+    <p class="text-muted">
+        API токены используются для доступа к REST API системы.
+        Храните токены в безопасности и не передавайте третьим лицам.
+    </p>
+    
+    <!-- Информация о API -->
+    <div class="api-info-panel">
+        <div class="info-item">
+            <span class="info-label">📚 Документация API:</span>
+            <a href="/docs" target="_blank" class="info-link">Swagger UI</a>
+            <span class="info-separator">|</span>
+            <a href="/redoc" target="_blank" class="info-link">ReDoc</a>
+        </div>
+        <div class="info-item">
+            <span class="info-label">🔗 Базовый URL:</span>
+            <code id="apiBaseUrl"></code>
+            <button class="btn btn-sm btn-outline copy-btn" title="Копировать URL">📋</button>
+        </div>
+        <div class="info-item">
+            <span class="info-label">📖 Пример использования:</span>
+            <code id="apiExample">curl -H "Authorization: Bearer YOUR_TOKEN" /api/campaigns</code>
+        </div>
+    </div>
+    
+    <!-- Таблица -->
+    <div class="apitokens-table-container">
+        <table class="table" id="apiTokensTable">
+            <thead>
+                <tr>
+                    <th width="60">ID</th>
+                    <th width="200">Название</th>
+                    <th width="180">Токен</th>
+                    <th width="120">Создан</th>
+                    <th width="120">Истекает</th>
+                    <th width="150">Последнее использование</th>
+                    <th width="80">Исп.</th>
+                    <th width="100">Действия</th>
+                </tr>
+            </thead>
+            <tbody id="apiTokensTableBody">
+                <tr><td colspan="8" class="text-center"><div class="loading">Загрузка...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Пагинация -->
+    <div id="apiTokensPagination" class="pagination-container"></div>
+    
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО СОЗДАНИЯ ТОКЕНА -->
+<!-- ============================================= -->
+<div id="tokenCreateModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>🔑 Создать API токен</h3>
+            <button class="modal-close" onclick="App.apiTokens.closeCreateModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="tokenCreateForm" onsubmit="return false;">
+                <div class="form-group">
+                    <label>Название токена <span class="required">*</span></label>
+                    <input type="text" 
+                           id="tokenName" 
+                           class="form-control" 
+                           placeholder="Например: Интеграция с CRM"
+                           required>
+                    <small class="form-text">Описательное название, чтобы помнить для чего токен</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Описание (опционально)</label>
+                    <textarea id="tokenDescription" 
+                              class="form-control" 
+                              rows="2"
+                              placeholder="Дополнительная информация..."></textarea>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Срок действия</label>
+                        <select id="tokenExpires" class="form-control">
+                            <option value="">Никогда</option>
+                            <option value="30">30 дней</option>
+                            <option value="60">60 дней</option>
+                            <option value="90">90 дней</option>
+                            <option value="180">180 дней</option>
+                            <option value="365">365 дней</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Или до даты</label>
+                        <input type="date" 
+                               id="tokenExpiresAt" 
+                               class="form-control">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Разрешения (опционально)</label>
+                    <div class="permissions-grid">
+                        <label><input type="checkbox" name="permission" value="campaigns:read"> 📋 Чтение кампаний</label>
+                        <label><input type="checkbox" name="permission" value="campaigns:write"> ✏️ Управление кампаниями</label>
+                        <label><input type="checkbox" name="permission" value="contacts:read"> 📇 Чтение контактов</label>
+                        <label><input type="checkbox" name="permission" value="contacts:write"> ✏️ Управление контактами</label>
+                        <label><input type="checkbox" name="permission" value="history:read"> 📜 Чтение истории</label>
+                        <label><input type="checkbox" name="permission" value="audio:read"> 🎵 Чтение аудио</label>
+                        <label><input type="checkbox" name="permission" value="audio:write"> ✏️ Управление аудио</label>
+                        <label><input type="checkbox" name="permission" value="blacklist:read"> 🚫 Чтение ЧС</label>
+                        <label><input type="checkbox" name="permission" value="blacklist:write"> ✏️ Управление ЧС</label>
+                        <label><input type="checkbox" name="permission" value="incoming:read"> 📞 Входящие звонки</label>
+                    </div>
+                    <small class="form-text">Если ничего не выбрано — токен имеет те же права, что и создатель</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>IP ограничения (опционально)</label>
+                    <input type="text" 
+                           id="tokenAllowedIps" 
+                           class="form-control" 
+                           placeholder="192.168.1.0/24, 10.0.0.1">
+                    <small class="form-text">Список IP адресов или подсетей через запятую</small>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" 
+                            class="btn btn-outline" 
+                            onclick="App.apiTokens.closeCreateModal()">
+                        Отмена
+                    </button>
+                    <button type="submit" 
+                            class="btn btn-primary">
+                        Создать токен
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО С СОЗДАННЫМ ТОКЕНОМ -->
+<!-- ============================================= -->
+<div id="tokenCreatedModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>✅ Токен создан</h3>
+            <button class="modal-close" onclick="App.apiTokens.closeCreatedModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="token-created-info">
+                <div class="warning-box">
+                    <strong>⚠️ Внимание!</strong>
+                    <p>Токен показан только один раз. Сохраните его в безопасном месте!</p>
+                </div>
+                
+                <div class="form-group">
+                    <label>Ваш API токен:</label>
+                    <div class="token-display">
+                        <code id="newTokenValue" class="token-value"></code>
+                        <button class="btn btn-outline copy-token-btn" title="Копировать токен">📋</button>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Пример использования:</label>
+                    <pre id="tokenExample" class="code-example"></pre>
+                    <button class="btn btn-sm btn-outline copy-example-btn">📋 Копировать</button>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" 
+                            class="btn btn-primary" 
+                            onclick="App.apiTokens.closeCreatedModal()">
+                        Я сохранил токен
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ДЕТАЛЕЙ ТОКЕНА -->
+<!-- ============================================= -->
+<div id="tokenDetailModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>ℹ️ Информация о токене</h3>
+            <button class="modal-close" onclick="App.apiTokens.closeDetailModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="tokenDetailContent">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" 
+                    class="btn btn-outline" 
+                    onclick="App.apiTokens.closeDetailModal()">
+                Закрыть
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ПОДТВЕРЖДЕНИЯ ОТЗЫВА -->
+<!-- ============================================= -->
+<div id="tokenDeleteModal" class="modal" style="display: none;">
+    <div class="modal-content modal-sm">
+        <div class="modal-header">
+            <h3>⚠️ Подтверждение отзыва</h3>
+            <button class="modal-close" onclick="App.apiTokens.closeDeleteModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p id="tokenDeleteMessage">Вы уверены, что хотите отозвать токен?</p>
+            <p class="text-warning">⚠️ Приложения, использующие этот токен, потеряют доступ!</p>
+            
+            <div class="form-actions">
+                <button type="button" 
+                        class="btn btn-outline" 
+                        onclick="App.apiTokens.closeDeleteModal()">
+                    Отмена
+                </button>
+                <button type="button" 
+                        class="btn btn-danger" 
+                        id="confirmDeleteTokenBtn">
+                    Отозвать токен
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- ДОПОЛНИТЕЛЬНЫЕ СТИЛИ -->
+<!-- ============================================= -->
+<style>
+    /* API Tokens Container */
+    .apitokens-container {
+        padding: 0;
+    }
+    
+    /* API Info Panel */
+    .api-info-panel {
+        background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+        color: white;
+        padding: var(--spacing-lg);
+        border-radius: var(--radius-lg);
+        margin-bottom: var(--spacing-xl);
+    }
+    
+    .api-info-panel .info-item {
+        margin-bottom: var(--spacing-sm);
+    }
+    
+    .api-info-panel .info-item:last-child {
+        margin-bottom: 0;
+    }
+    
+    .api-info-panel .info-label {
+        font-weight: 500;
+        margin-right: var(--spacing-sm);
+    }
+    
+    .api-info-panel .info-link {
+        color: #ffd700;
+        text-decoration: none;
+        margin: 0 var(--spacing-xs);
+    }
+    
+    .api-info-panel .info-link:hover {
+        text-decoration: underline;
+    }
+    
+    .api-info-panel .info-separator {
+        margin: 0 var(--spacing-xs);
+        opacity: 0.5;
+    }
+    
+    .api-info-panel code {
+        background: rgba(255, 255, 255, 0.2);
+        padding: 4px 8px;
+        border-radius: var(--radius-sm);
+        color: white;
+        font-family: var(--font-mono);
+    }
+    
+    .api-info-panel .copy-btn {
+        margin-left: var(--spacing-sm);
+        background: rgba(255, 255, 255, 0.2);
+        border-color: rgba(255, 255, 255, 0.3);
+        color: white;
+    }
+    
+    .api-info-panel .copy-btn:hover {
+        background: rgba(255, 255, 255, 0.3);
+    }
+    
+    /* Table */
+    .apitokens-table-container {
+        overflow-x: auto;
+        margin-bottom: var(--spacing-lg);
+    }
+    
+    #apiTokensTable tbody tr {
+        cursor: pointer;
+        transition: background var(--transition-fast);
+    }
+    
+    #apiTokensTable tbody tr:hover {
+        background: var(--color-bg-tertiary);
+    }
+    
+    #apiTokensTable tbody tr.inactive {
+        opacity: 0.6;
+        background: var(--color-bg-card);
+    }
+    
+    .token-preview {
+        font-family: var(--font-mono);
+        font-size: 0.85rem;
+        background: var(--color-bg-tertiary);
+        padding: 2px 6px;
+        border-radius: var(--radius-sm);
+    }
+    
+    .never-expires {
+        color: var(--color-success);
+        font-weight: 500;
+    }
+    
+    .expired-badge {
+        background: var(--color-danger);
+        color: white;
+        padding: 2px 6px;
+        border-radius: var(--radius-full);
+        font-size: 0.7rem;
+        margin-left: var(--spacing-xs);
+    }
+    
+    /* Token Created Info */
+    .token-created-info {
+        max-width: 600px;
+    }
+    
+    .warning-box {
+        background: var(--color-warning-bg);
+        border: 1px solid var(--color-warning);
+        border-radius: var(--radius-md);
+        padding: var(--spacing-md);
+        margin-bottom: var(--spacing-lg);
+    }
+    
+    .warning-box strong {
+        color: var(--color-warning);
+    }
+    
+    .warning-box p {
+        margin: var(--spacing-xs) 0 0 0;
+        color: var(--color-warning);
+    }
+    
+    .token-display {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+        background: var(--color-bg-tertiary);
+        padding: var(--spacing-md);
+        border-radius: var(--radius-md);
+        border: 1px solid var(--color-border);
+    }
+    
+    .token-value {
+        flex: 1;
+        font-family: var(--font-mono);
+        font-size: 1rem;
+        word-break: break-all;
+        color: var(--color-success);
+    }
+    
+    .code-example {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: var(--spacing-md);
+        border-radius: var(--radius-md);
+        overflow-x: auto;
+        font-family: var(--font-mono);
+        font-size: 0.85rem;
+        margin: var(--spacing-sm) 0;
+    }
+    
+    /* Permissions Grid */
+    .permissions-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: var(--spacing-sm);
+        padding: var(--spacing-md);
+        background: var(--color-bg-tertiary);
+        border-radius: var(--radius-md);
+        border: 1px solid var(--color-border);
+        max-height: 250px;
+        overflow-y: auto;
+    }
+    
+    .permissions-grid label {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+        cursor: pointer;
+        font-weight: normal;
+    }
+    
+    /* Token Detail */
+    .token-detail {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    
+    .detail-section {
+        margin-bottom: var(--spacing-lg);
+        padding-bottom: var(--spacing-lg);
+        border-bottom: 1px solid var(--color-border);
+    }
+    
+    .detail-section:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+    
+    .detail-section h4 {
+        margin-top: 0;
+        margin-bottom: var(--spacing-md);
+        color: var(--color-text-secondary);
+    }
+    
+    .details-table {
+        width: 100%;
+    }
+    
+    .details-table td {
+        padding: var(--spacing-xs) 0;
+    }
+    
+    .details-table td:first-child {
+        font-weight: 500;
+        color: var(--color-text-muted);
+        width: 180px;
+    }
+    
+    /* Form Actions */
+    .form-actions {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-top: var(--spacing-lg);
+        justify-content: flex-end;
+    }
+    
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--spacing-md);
+    }
+    
+    .required {
+        color: var(--color-danger);
+    }
+    
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: var(--spacing-3xl) var(--spacing-xl);
+    }
+    
+    .empty-icon {
+        font-size: 4rem;
+        margin-bottom: var(--spacing-lg);
+        opacity: 0.5;
+    }
+    
+    .empty-state p {
+        margin-bottom: var(--spacing-lg);
+        color: var(--color-text-muted);
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .api-info-panel code {
+            display: block;
+            margin: var(--spacing-xs) 0;
+            word-break: break-all;
+        }
+        
+        .permissions-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .form-row {
+            grid-template-columns: 1fr;
+        }
+        
+        .form-actions {
+            flex-direction: column;
+        }
+        
+        .form-actions .btn {
+            width: 100%;
+        }
+        
+        .details-table td:first-child {
+            width: 130px;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .token-display {
+            flex-direction: column;
+            align-items: stretch;
+        }
+        
+        .token-value {
+            text-align: center;
+        }
+    }
+</style>
+
+<script>
+    (function() {
+        const apiTokensModule = App.apiTokens;
+        if (apiTokensModule) {
+            // Установка базового URL
+            const baseUrl = window.location.origin + '/api';
+            document.getElementById('apiBaseUrl').textContent = baseUrl;
+            document.getElementById('apiExample').textContent = `curl -H "Authorization: Bearer YOUR_TOKEN" ${baseUrl}/campaigns`;
+            
+            // Кнопка создания
+            document.getElementById('tokenCreateBtn')?.addEventListener('click', () => {
+                apiTokensModule.openCreateModal();
+            });
+            
+            // Кнопка обновления
+            document.getElementById('apiTokensRefreshBtn')?.addEventListener('click', () => {
+                apiTokensModule.loadTokens();
+            });
+            
+            // Форма создания
+            document.getElementById('tokenCreateForm')?.addEventListener('submit', () => {
+                apiTokensModule.createToken();
+            });
+            
+            // Кнопка подтверждения отзыва
+            document.getElementById('confirmDeleteTokenBtn')?.addEventListener('click', () => {
+                apiTokensModule.revokeToken();
+            });
+            
+            // Копирование URL
+            document.querySelector('.copy-btn')?.addEventListener('click', function() {
+                const text = document.getElementById('apiBaseUrl').textContent;
+                navigator.clipboard?.writeText(text).then(() => {
+                    App.showToast('URL скопирован', 'success');
+                });
+            });
+            
+            // Обработчик выбора срока действия
+            const expiresSelect = document.getElementById('tokenExpires');
+            const expiresAt = document.getElementById('tokenExpiresAt');
+            
+            expiresSelect?.addEventListener('change', () => {
+                if (expiresSelect.value) {
+                    expiresAt.value = '';
+                    expiresAt.disabled = true;
+                } else {
+                    expiresAt.disabled = false;
+                }
+            });
+            
+            expiresAt?.addEventListener('change', () => {
+                if (expiresAt.value) {
+                    expiresSelect.value = '';
+                }
+            });
+            
+            // Установка минимальной даты
+            if (expiresAt) {
+                const today = new Date();
+                const year = today.getFullYear();
+                const month = String(today.getMonth() + 1).padStart(2, '0');
+                const day = String(today.getDate()).padStart(2, '0');
+                expiresAt.min = `${year}-${month}-${day}`;
+            }
+        }
+    })();
+</script>
