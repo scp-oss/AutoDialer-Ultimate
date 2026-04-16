@@ -1,19 +1,61 @@
+# =============================================
+# AutoDialer Ultimate - Python Requirements
+# Версия: 3.0.0
+# =============================================
+
+# Core
 fastapi==0.115.11
 uvicorn[standard]==0.34.0
-panoramisk==0.2.0
-redis==5.2.1
-asyncpg==0.30.0
-sqlalchemy==2.0.36
 pydantic==2.10.6
 pydantic-settings==2.7.1
-python-multipart==0.0.20
-gunicorn==23.0.0
-httpx==0.28.1
+
+# Database
+asyncpg==0.30.0
+sqlalchemy==2.0.36
+alembic==1.14.1
+
+# Redis
+redis==5.2.1
+hiredis==2.3.2
+
+# AMI (Asterisk Manager Interface)
+panoramisk==0.2.0
+
+# Authentication
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.2.0
+python-multipart==0.0.20
+
+# HTTP & WebSocket
+httpx==0.28.1
+aiofiles==24.1.0
+gunicorn==23.0.0
+
+# Monitoring
+prometheus-client==0.21.0
+
+# Utilities
 cachetools==5.5.0
 tenacity==9.0.0
-prometheus-client==0.21.0
-aiofiles==24.1.0
 python-dateutil==2.9.0
+python-dotenv==1.0.1
+PyYAML==6.0.2
+
+# Fast JSON (optional, fallback to json)
+orjson==3.10.12
+
+# Development
+watchfiles==1.0.4
+
+# =============================================
+# Transcription (распознавание речи)
+# =============================================
+# Основной движок - Whisper (рекомендуется)
+openai-whisper
+
+# Альтернативный движок - Vosk (легче, быстрее на CPU)
+# vosk
+
+# Для Google Cloud Speech-to-Text (опционально)
+# google-cloud-speech
