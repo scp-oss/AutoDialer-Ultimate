@@ -1,0 +1,797 @@
+<!-- ============================================= -->
+<!-- AUDIO TAB -->
+<!-- ============================================= -->
+<div class="audio-container">
+    
+    <!-- Заголовок с действиями -->
+    <div class="page-header">
+        <h2>🎵 Управление аудио</h2>
+        <div class="header-actions">
+            <button class="btn btn-outline" id="audioRefreshBtn" title="Обновить">
+                🔄 Обновить
+            </button>
+            <button class="btn btn-primary" id="audioUploadBtn">
+                📤 Загрузить файл
+            </button>
+            <button class="btn btn-success" id="audioGenerateBtn">
+                🔊 Генерация речи (TTS)
+            </button>
+        </div>
+    </div>
+    
+    <!-- Вкладки -->
+    <div class="tabs-container">
+        <div class="tabs">
+            <button class="tab active" data-tab="library">
+                📚 Библиотека
+            </button>
+            <button class="tab" data-tab="tts">
+                🤖 Text-to-Speech
+            </button>
+            <button class="tab" data-tab="upload">
+                ⬆️ Загрузка
+            </button>
+        </div>
+    </div>
+    
+    <!-- Контент вкладок -->
+    <div id="audioTabContent" class="tab-content-container"></div>
+    
+</div>
+
+<!-- ============================================= -->
+<!-- ШАБЛОН ВКЛАДКИ БИБЛИОТЕКИ -->
+<!-- ============================================= -->
+<template id="audioLibraryTemplate">
+    <div class="library-container">
+        <!-- Панель поиска -->
+        <div class="library-toolbar">
+            <div class="search-box">
+                <input type="text" 
+                       id="audioSearch" 
+                       class="form-control" 
+                       placeholder="🔍 Поиск по названию..."
+                       autocomplete="off">
+            </div>
+            <div class="toolbar-actions">
+                <select id="audioSortSelect" class="form-control">
+                    <option value="newest">Сначала новые</option>
+                    <option value="oldest">Сначала старые</option>
+                    <option value="name_asc">Название (А-Я)</option>
+                    <option value="name_desc">Название (Я-А)</option>
+                    <option value="size_desc">Размер (по убыванию)</option>
+                </select>
+                <button class="btn btn-danger" id="audioDeleteSelectedBtn" style="display: none;">
+                    🗑️ Удалить выбранные
+                </button>
+            </div>
+        </div>
+        
+        <!-- Таблица аудиофайлов -->
+        <div class="audio-table-container">
+            <table class="table" id="audioTable">
+                <thead>
+                    <tr>
+                        <th width="40">
+                            <input type="checkbox" id="audioSelectAll">
+                        </th>
+                        <th>Название</th>
+                        <th width="100">Тип</th>
+                        <th width="100">Длительность</th>
+                        <th width="100">Размер</th>
+                        <th width="100">Источник</th>
+                        <th width="150">Создан</th>
+                        <th width="120">Действия</th>
+                    </tr>
+                </thead>
+                <tbody id="audioTableBody">
+                    <tr><td colspan="8" class="text-center"><div class="loading">Загрузка...</div></td></tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Пагинация -->
+        <div id="audioPagination" class="pagination-container"></div>
+    </div>
+</template>
+
+<!-- ============================================= -->
+<!-- ШАБЛОН ВКЛАДКИ TTS -->
+<!-- ============================================= -->
+<template id="audioTTSTemplate">
+    <div class="tts-container">
+        <div class="row">
+            <div class="col-md-7">
+                <div class="tts-form-panel">
+                    <h3>🎤 Генерация речи (Piper TTS)</h3>
+                    <p class="text-muted">Локальный синтезатор речи, работает офлайн</p>
+                    
+                    <form id="ttsForm">
+                        <div class="form-group">
+                            <label>Название файла <span class="required">*</span></label>
+                            <input type="text" 
+                                   id="ttsName" 
+                                   class="form-control" 
+                                   placeholder="Например: welcome_message"
+                                   required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Голос</label>
+                            <select id="ttsVoice" class="form-control" required>
+                                <option value="denis">Денис (мужской, русский)</option>
+                                <option value="irina">Ирина (женский, русский)</option>
+                                <option value="en_US-lessac">Lessac (женский, английский)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Текст для озвучки <span class="required">*</span></label>
+                            <textarea id="ttsText" 
+                                      class="form-control" 
+                                      rows="6" 
+                                      placeholder="Введите текст..."
+                                      maxlength="500"
+                                      required></textarea>
+                            <small class="form-text">
+                                <span id="ttsCharCount">0</span>/500 символов
+                            </small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Скорость речи</label>
+                            <div class="range-wrapper">
+                                <input type="range" 
+                                       id="ttsSpeed" 
+                                       min="0.5" 
+                                       max="2.0" 
+                                       step="0.1" 
+                                       value="1.0">
+                                <span id="ttsSpeedValue">1.0x</span>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Привязать к кампании (опционально)</label>
+                            <select id="ttsCampaign" class="form-control">
+                                <option value="">Нет</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Описание (опционально)</label>
+                            <textarea id="ttsDescription" 
+                                      class="form-control" 
+                                      rows="2"
+                                      placeholder="Добавьте описание..."></textarea>
+                        </div>
+                        
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-success btn-lg" id="ttsGenerateBtn">
+                                🔊 Сгенерировать речь
+                            </button>
+                            <button type="button" class="btn btn-outline" id="ttsPreviewBtn">
+                                👂 Предпросмотр
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
+            <div class="col-md-5">
+                <div class="tts-history-panel">
+                    <h3>📋 Последние генерации</h3>
+                    <div id="ttsHistoryList">
+                        <p class="text-muted">Загрузка...</p>
+                    </div>
+                </div>
+                
+                <div class="tts-info-panel">
+                    <h4>💡 Информация</h4>
+                    <ul>
+                        <li>Поддерживается русский и английский языки</li>
+                        <li>Максимальная длина текста — 500 символов</li>
+                        <li>Сгенерированные файлы сохраняются в формате WAV</li>
+                        <li>Файлы можно использовать в кампаниях как приветствие</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<!-- ============================================= -->
+<!-- ШАБЛОН ВКЛАДКИ ЗАГРУЗКИ -->
+<!-- ============================================= -->
+<template id="audioUploadTemplate">
+    <div class="upload-container">
+        <div class="upload-area" id="audioDropZone">
+            <div class="upload-icon">📁</div>
+            <h3>Перетащите файлы сюда</h3>
+            <p>или</p>
+            <button class="btn btn-primary" id="audioSelectFilesBtn">Выберите файлы</button>
+            <input type="file" 
+                   id="audioFileInput" 
+                   multiple 
+                   accept=".mp3,.wav,.ogg,.m4a,.aac,.flac"
+                   style="display: none;">
+            <p class="upload-hint">
+                Поддерживаемые форматы: MP3, WAV, OGG, M4A, AAC, FLAC<br>
+                Максимальный размер: 50 МБ
+            </p>
+        </div>
+        
+        <div class="upload-form" id="audioUploadForm" style="display: none;">
+            <h3>Загрузка файла</h3>
+            <div class="form-group">
+                <label>Название <span class="required">*</span></label>
+                <input type="text" id="audioUploadName" class="form-control" required>
+            </div>
+            <div class="form-group">
+                <label>Привязать к кампании (опционально)</label>
+                <select id="audioUploadCampaign" class="form-control">
+                    <option value="">Нет</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Описание (опционально)</label>
+                <textarea id="audioUploadDescription" class="form-control" rows="2"></textarea>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-primary" id="audioUploadSubmitBtn">Загрузить</button>
+                <button class="btn btn-outline" id="audioUploadCancelBtn">Отмена</button>
+            </div>
+        </div>
+        
+        <div id="audioUploadQueue" style="display: none;">
+            <h3>Очередь загрузки</h3>
+            <div id="audioQueueList" class="queue-list"></div>
+        </div>
+        
+        <div class="upload-tips">
+            <h4>💡 Советы</h4>
+            <ul>
+                <li>Для лучшего качества используйте WAV или FLAC</li>
+                <li>Для TTS рекомендуется моно, 16 кГц</li>
+                <li>Названия файлов должны быть информативными</li>
+                <li>Максимальная длительность: 10 минут</li>
+            </ul>
+        </div>
+    </div>
+</template>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО РЕЗУЛЬТАТА ГЕНЕРАЦИИ -->
+<!-- ============================================= -->
+<div id="audioGeneratedModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>✅ Речь сгенерирована</h3>
+            <button class="modal-close" onclick="App.hideModal('audioGeneratedModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="audioGeneratedContent">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" 
+                    class="btn btn-outline" 
+                    onclick="App.hideModal('audioGeneratedModal')">
+                Закрыть
+            </button>
+            <button type="button" 
+                    class="btn btn-primary" 
+                    id="audioUseInCampaignBtn">
+                Использовать в кампании
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- ДОПОЛНИТЕЛЬНЫЕ СТИЛИ -->
+<!-- ============================================= -->
+<style>
+    /* Audio Container */
+    .audio-container {
+        padding: 0;
+    }
+    
+    /* Tabs */
+    .tabs-container {
+        margin-bottom: var(--spacing-lg);
+        border-bottom: 2px solid var(--color-border);
+    }
+    
+    .tabs {
+        display: flex;
+        gap: var(--spacing-xs);
+    }
+    
+    .tab {
+        padding: var(--spacing-md) var(--spacing-lg);
+        background: none;
+        border: none;
+        border-bottom: 3px solid transparent;
+        cursor: pointer;
+        font-size: 1rem;
+        color: var(--color-text-secondary);
+        transition: all var(--transition-fast);
+    }
+    
+    .tab:hover {
+        color: var(--color-text-primary);
+        background: var(--color-bg-tertiary);
+    }
+    
+    .tab.active {
+        color: var(--color-primary);
+        border-bottom-color: var(--color-primary);
+    }
+    
+    .tab-content-container {
+        padding: var(--spacing-md) 0;
+    }
+    
+    /* Library */
+    .library-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: var(--spacing-lg);
+        flex-wrap: wrap;
+        gap: var(--spacing-md);
+    }
+    
+    .search-box {
+        flex: 1;
+        min-width: 250px;
+    }
+    
+    .toolbar-actions {
+        display: flex;
+        gap: var(--spacing-sm);
+    }
+    
+    .audio-table-container {
+        overflow-x: auto;
+    }
+    
+    #audioTable tbody tr {
+        cursor: pointer;
+        transition: background var(--transition-fast);
+    }
+    
+    #audioTable tbody tr:hover {
+        background: var(--color-bg-tertiary);
+    }
+    
+    #audioTable tbody tr.selected {
+        background: var(--color-primary-light);
+        background: rgba(102, 126, 234, 0.1);
+    }
+    
+    .file-info {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-md);
+    }
+    
+    .file-icon {
+        font-size: 1.5rem;
+    }
+    
+    .file-details {
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .file-details small {
+        color: var(--color-text-muted);
+        font-size: 0.8rem;
+    }
+    
+    .badge-tts {
+        background: var(--color-success);
+        color: white;
+        padding: 2px 6px;
+        border-radius: var(--radius-full);
+        font-size: 0.7rem;
+    }
+    
+    .badge-upload {
+        background: var(--color-info);
+        color: white;
+        padding: 2px 6px;
+        border-radius: var(--radius-full);
+        font-size: 0.7rem;
+    }
+    
+    /* TTS */
+    .row {
+        display: flex;
+        gap: var(--spacing-xl);
+        flex-wrap: wrap;
+    }
+    
+    .col-md-7 {
+        flex: 7;
+        min-width: 300px;
+    }
+    
+    .col-md-5 {
+        flex: 5;
+        min-width: 280px;
+    }
+    
+    .tts-form-panel,
+    .tts-history-panel,
+    .tts-info-panel {
+        background: var(--color-bg-card);
+        border-radius: var(--radius-lg);
+        padding: var(--spacing-lg);
+        border: 1px solid var(--color-border);
+    }
+    
+    .tts-history-panel {
+        margin-bottom: var(--spacing-lg);
+    }
+    
+    .tts-form-panel h3,
+    .tts-history-panel h3,
+    .tts-info-panel h4 {
+        margin-top: 0;
+        margin-bottom: var(--spacing-md);
+    }
+    
+    .range-wrapper {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-md);
+    }
+    
+    .range-wrapper input {
+        flex: 1;
+    }
+    
+    .range-wrapper span {
+        min-width: 50px;
+        text-align: right;
+    }
+    
+    .history-item {
+        padding: var(--spacing-md);
+        border-bottom: 1px solid var(--color-border);
+    }
+    
+    .history-item:last-child {
+        border-bottom: none;
+    }
+    
+    .history-info strong {
+        display: block;
+        margin-bottom: var(--spacing-xs);
+    }
+    
+    .history-info small {
+        color: var(--color-text-muted);
+    }
+    
+    .history-text {
+        margin: var(--spacing-xs) 0 0;
+        color: var(--color-text-secondary);
+        font-size: 0.85rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+    }
+    
+    .history-actions {
+        margin-top: var(--spacing-sm);
+    }
+    
+    .tts-info-panel ul {
+        margin: 0;
+        padding-left: var(--spacing-lg);
+        color: var(--color-text-secondary);
+    }
+    
+    .tts-info-panel li {
+        margin-bottom: var(--spacing-xs);
+    }
+    
+    /* Upload */
+    .upload-container {
+        max-width: 800px;
+        margin: 0 auto;
+    }
+    
+    .upload-area {
+        border: 3px dashed var(--color-border);
+        border-radius: var(--radius-lg);
+        padding: var(--spacing-3xl);
+        text-align: center;
+        background: var(--color-bg-tertiary);
+        transition: all var(--transition-fast);
+        cursor: pointer;
+    }
+    
+    .upload-area.drag-over {
+        border-color: var(--color-primary);
+        background: var(--color-primary-light);
+        background: rgba(102, 126, 234, 0.1);
+    }
+    
+    .upload-icon {
+        font-size: 4rem;
+        margin-bottom: var(--spacing-lg);
+    }
+    
+    .upload-hint {
+        margin-top: var(--spacing-lg);
+        color: var(--color-text-muted);
+        font-size: 0.85rem;
+    }
+    
+    .upload-form {
+        margin-top: var(--spacing-xl);
+        padding: var(--spacing-lg);
+        background: var(--color-bg-card);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--color-border);
+    }
+    
+    #audioUploadQueue {
+        margin-top: var(--spacing-xl);
+        padding: var(--spacing-lg);
+        background: var(--color-bg-card);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--color-border);
+    }
+    
+    .queue-item {
+        padding: var(--spacing-md);
+        border-bottom: 1px solid var(--color-border);
+    }
+    
+    .queue-item:last-child {
+        border-bottom: none;
+    }
+    
+    .queue-item-info {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: var(--spacing-sm);
+    }
+    
+    .queue-progress {
+        height: 8px;
+        background: var(--color-bg-tertiary);
+        border-radius: var(--radius-full);
+        overflow: hidden;
+        margin-bottom: var(--spacing-xs);
+    }
+    
+    .progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, var(--color-primary), var(--color-success));
+        transition: width 0.3s;
+        width: 0%;
+    }
+    
+    .queue-status {
+        font-size: 0.8rem;
+        color: var(--color-text-muted);
+    }
+    
+    .queue-item.uploaded .queue-status {
+        color: var(--color-success);
+    }
+    
+    .queue-item.error .queue-status {
+        color: var(--color-danger);
+    }
+    
+    .upload-tips {
+        margin-top: var(--spacing-xl);
+        padding: var(--spacing-lg);
+        background: var(--color-warning-bg);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--color-warning);
+    }
+    
+    .upload-tips h4 {
+        margin-top: 0;
+        color: var(--color-warning);
+    }
+    
+    .upload-tips ul {
+        margin: 0;
+        padding-left: var(--spacing-lg);
+    }
+    
+    /* Form Actions */
+    .form-actions {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-top: var(--spacing-lg);
+    }
+    
+    /* Generated Audio Modal */
+    .generated-audio-content {
+        text-align: center;
+    }
+    
+    .generated-audio-content audio {
+        width: 100%;
+        margin: var(--spacing-lg) 0;
+    }
+    
+    .generated-audio-info {
+        text-align: left;
+        margin: var(--spacing-lg) 0;
+        padding: var(--spacing-md);
+        background: var(--color-bg-tertiary);
+        border-radius: var(--radius-md);
+    }
+    
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: var(--spacing-2xl);
+    }
+    
+    .empty-icon {
+        font-size: 3rem;
+        margin-bottom: var(--spacing-md);
+        opacity: 0.5;
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .library-toolbar {
+            flex-direction: column;
+            align-items: stretch;
+        }
+        
+        .toolbar-actions {
+            flex-wrap: wrap;
+        }
+        
+        .toolbar-actions select,
+        .toolbar-actions button {
+            flex: 1;
+        }
+        
+        .file-info {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: var(--spacing-xs);
+        }
+        
+        .upload-area {
+            padding: var(--spacing-xl);
+        }
+        
+        .form-actions {
+            flex-direction: column;
+        }
+        
+        .form-actions .btn {
+            width: 100%;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .tabs {
+            flex-direction: column;
+            gap: 0;
+        }
+        
+        .tab {
+            text-align: left;
+            border-bottom: none;
+            border-left: 3px solid transparent;
+        }
+        
+        .tab.active {
+            border-left-color: var(--color-primary);
+        }
+        
+        .toolbar-actions {
+            flex-direction: column;
+        }
+    }
+</style>
+
+<script>
+    (function() {
+        // Рендер вкладок
+        const audioModule = App.audio;
+        if (audioModule) {
+            // Переопределяем метод рендера вкладок
+            audioModule.renderTab = function(tabName) {
+                const container = document.getElementById('audioTabContent');
+                let template;
+                
+                switch (tabName) {
+                    case 'library':
+                        template = document.getElementById('audioLibraryTemplate');
+                        break;
+                    case 'tts':
+                        template = document.getElementById('audioTTSTemplate');
+                        break;
+                    case 'upload':
+                        template = document.getElementById('audioUploadTemplate');
+                        break;
+                }
+                
+                if (template) {
+                    container.innerHTML = template.innerHTML;
+                }
+                
+                // Активируем вкладку
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelector(`.tab[data-tab="${tabName}"]`).classList.add('active');
+                
+                // Вызываем инициализацию вкладки
+                switch (tabName) {
+                    case 'library':
+                        this.loadAudioFiles();
+                        break;
+                    case 'tts':
+                        this.loadCampaignsForSelect();
+                        this.loadTTSHistory();
+                        break;
+                    case 'upload':
+                        this.loadCampaignsForSelect();
+                        break;
+                }
+            };
+            
+            // Счётчик символов TTS
+            const ttsText = document.getElementById('ttsText');
+            const charCount = document.getElementById('ttsCharCount');
+            if (ttsText && charCount) {
+                ttsText.addEventListener('input', () => {
+                    charCount.textContent = ttsText.value.length;
+                });
+            }
+            
+            // Слайдер скорости
+            const speedSlider = document.getElementById('ttsSpeed');
+            const speedValue = document.getElementById('ttsSpeedValue');
+            if (speedSlider && speedValue) {
+                speedSlider.addEventListener('input', () => {
+                    speedValue.textContent = speedSlider.value + 'x';
+                });
+            }
+            
+            // Drag & Drop
+            const dropZone = document.getElementById('audioDropZone');
+            if (dropZone) {
+                dropZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    dropZone.classList.add('drag-over');
+                });
+                
+                dropZone.addEventListener('dragleave', () => {
+                    dropZone.classList.remove('drag-over');
+                });
+                
+                dropZone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    dropZone.classList.remove('drag-over');
+                    
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0 && audioModule.handleDroppedFiles) {
+                        audioModule.handleDroppedFiles(files);
+                    }
+                });
+            }
+        }
+    })();
+</script>
