@@ -8,7 +8,9 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <!-- Login Screen -->
+    <!-- ============================================= -->
+    <!-- LOGIN SCREEN -->
+    <!-- ============================================= -->
     <div id="loginScreen">
         <div class="login-container">
             <div class="login-card">
@@ -20,11 +22,11 @@
                     <div id="loginError" class="error-message"></div>
                     <div class="form-group">
                         <label for="loginUsername">Логин</label>
-                        <input type="text" id="loginUsername" placeholder="Введите логин" value="admin" autocomplete="username" autofocus>
+                        <input type="text" id="loginUsername" name="username" placeholder="Введите логин" value="admin" autocomplete="username" autofocus>
                     </div>
                     <div class="form-group">
                         <label for="loginPassword">Пароль</label>
-                        <input type="password" id="loginPassword" placeholder="Введите пароль" value="admin" autocomplete="current-password">
+                        <input type="password" id="loginPassword" name="password" placeholder="Введите пароль" value="admin" autocomplete="current-password">
                     </div>
                     <button type="submit" class="btn btn-primary btn-block" onclick="App.auth.login()">Войти</button>
                 </form>
@@ -35,7 +37,9 @@
         </div>
     </div>
 
-    <!-- Main Application Screen -->
+    <!-- ============================================= -->
+    <!-- MAIN APPLICATION SCREEN -->
+    <!-- ============================================= -->
     <div id="appScreen" style="display: none;">
         <!-- System Bar -->
         <div class="system-bar">
@@ -46,6 +50,10 @@
             <div class="system-channels">
                 <span>📡 Каналы:</span>
                 <span id="sysChannels">0/50</span>
+            </div>
+            <div class="system-queue">
+                <span>⏳ Очередь:</span>
+                <span id="sysQueueSize">0</span>
             </div>
             <div class="system-user">
                 <span>👤</span>
@@ -63,31 +71,40 @@
                 <span class="version-badge">v3.0.0</span>
             </div>
             <div class="header-right">
-                <button class="btn btn-outline" onclick="App.users.showProfile()">👤</button>
-                <button class="btn btn-outline" onclick="App.auth.logout()">🚪 Выйти</button>
+                <button class="btn btn-outline" onclick="App.users.showProfile()" title="Профиль">👤</button>
+                <button class="btn btn-outline" onclick="App.auth.logout()" title="Выйти">🚪</button>
             </div>
         </header>
 
         <!-- Main Layout -->
         <div class="layout">
-            <!-- Sidebar (загружается динамически) -->
-            <aside class="sidebar" id="sidebarContainer"></aside>
+            <!-- Sidebar Container -->
+            <aside class="sidebar" id="sidebarContainer">
+                <div class="loading">Загрузка меню...</div>
+            </aside>
 
-            <!-- Content Area -->
+            <!-- Content Container -->
             <main class="content" id="contentContainer">
-                <!-- Вкладки загружаются динамически -->
+                <div class="loading">Загрузка...</div>
             </main>
         </div>
     </div>
 
-    <!-- Модальные окна (загружаются динамически) -->
+    <!-- ============================================= -->
+    <!-- MODALS CONTAINER -->
+    <!-- ============================================= -->
     <div id="modalsContainer"></div>
 
-    <!-- Toast Container -->
+    <!-- ============================================= -->
+    <!-- TOAST CONTAINER -->
+    <!-- ============================================= -->
     <div id="toastContainer" class="toast-container"></div>
 
-    <!-- Scripts -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- ============================================= -->
+    <!-- SCRIPTS -->
+    <!-- ============================================= -->
+    <!-- External libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     
     <!-- Core -->
     <script src="js/utils.js"></script>
@@ -95,8 +112,11 @@
     
     <!-- Modules -->
     <script src="js/auth.js"></script>
+    <script src="js/system.js"></script>
+    <script src="js/dashboard.js"></script>
     <script src="js/campaigns.js"></script>
     <script src="js/contacts.js"></script>
+    <script src="js/contactGroups.js"></script>
     <script src="js/history.js"></script>
     <script src="js/audio.js"></script>
     <script src="js/incoming.js"></script>
@@ -107,11 +127,40 @@
     <script src="js/apiTokens.js"></script>
     <script src="js/webhooks.js"></script>
     
-    <!-- Initialize -->
+    <!-- Initialize Application -->
     <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            App.init();
-        });
+        (function() {
+            // Проверяем автологин при загрузке
+            const savedToken = localStorage.getItem('refresh_token');
+            if (savedToken) {
+                App.state.refreshToken = savedToken;
+            }
+            
+            // Инициализируем приложение после загрузки DOM
+            document.addEventListener('DOMContentLoaded', async () => {
+                try {
+                    // Загружаем боковое меню
+                    const sidebarResponse = await fetch('components/sidebar.html');
+                    document.getElementById('sidebarContainer').innerHTML = await sidebarResponse.text();
+                    
+                    // Загружаем модальные окна
+                    const modalsResponse = await fetch('components/modals.html');
+                    document.getElementById('modalsContainer').innerHTML = await modalsResponse.text();
+                    
+                    // Если есть токен, пробуем автологин
+                    if (App.state.refreshToken) {
+                        await App.auth.tryAutoLogin();
+                    }
+                    
+                    // Запускаем периодическое обновление
+                    App.startPeriodicRefresh();
+                    
+                } catch (error) {
+                    console.error('Initialization error:', error);
+                    App.showToast('Ошибка инициализации приложения', 'error');
+                }
+            });
+        })();
     </script>
 </body>
 </html>
