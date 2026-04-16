@@ -1,0 +1,542 @@
+<!-- ============================================= -->
+<!-- SETTINGS TAB (Admin Only) -->
+<!-- ============================================= -->
+<div class="settings-container">
+    
+    <!-- Заголовок с действиями -->
+    <div class="page-header">
+        <h2>⚙️ Настройки системы</h2>
+        <div class="header-actions">
+            <button class="btn btn-outline" id="settingsRefreshBtn" title="Обновить">
+                🔄 Обновить
+            </button>
+            <button class="btn btn-outline" id="settingsResetBtn" title="Сбросить настройки">
+                🔄 Сбросить
+            </button>
+            <button class="btn btn-primary" id="settingsSaveAllBtn">
+                💾 Сохранить все
+            </button>
+        </div>
+    </div>
+    
+    <!-- Описание -->
+    <p class="text-muted">
+        Глобальные настройки системы. Изменения применяются сразу после сохранения.
+        Некоторые настройки могут потребовать перезапуска сервисов.
+    </p>
+    
+    <!-- Вкладки категорий -->
+    <div class="settings-tabs">
+        <button class="settings-tab active" data-category="general">
+            <span class="tab-icon">🌐</span>
+            <span class="tab-label">Общие</span>
+        </button>
+        <button class="settings-tab" data-category="asterisk">
+            <span class="tab-icon">📞</span>
+            <span class="tab-label">Asterisk</span>
+        </button>
+        <button class="settings-tab" data-category="dialer">
+            <span class="tab-icon">📱</span>
+            <span class="tab-label">Обзвон</span>
+        </button>
+        <button class="settings-tab" data-category="tts">
+            <span class="tab-icon">🔊</span>
+            <span class="tab-label">TTS</span>
+        </button>
+        <button class="settings-tab" data-category="security">
+            <span class="tab-icon">🔒</span>
+            <span class="tab-label">Безопасность</span>
+        </button>
+        <button class="settings-tab" data-category="notifications">
+            <span class="tab-icon">🔔</span>
+            <span class="tab-label">Уведомления</span>
+        </button>
+        <button class="settings-tab" data-category="incoming">
+            <span class="tab-icon">📞</span>
+            <span class="tab-label">Входящие</span>
+        </button>
+        <button class="settings-tab" data-category="advanced">
+            <span class="tab-icon">⚡</span>
+            <span class="tab-label">Расширенные</span>
+        </button>
+    </div>
+    
+    <!-- Контент категории -->
+    <div id="settingsContent" class="settings-content">
+        <div class="loading">Загрузка настроек...</div>
+    </div>
+    
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ПЕРЕЗАГРУЗКИ -->
+<!-- ============================================= -->
+<div id="settingsRestartModal" class="modal" style="display: none;">
+    <div class="modal-content modal-sm">
+        <div class="modal-header">
+            <h3>🔄 Требуется перезагрузка</h3>
+            <button class="modal-close" onclick="App.settings.closeRestartModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p>Некоторые настройки требуют перезагрузки сервисов для применения.</p>
+            <p>Перезагрузить сервисы сейчас?</p>
+            
+            <div class="form-actions">
+                <button type="button" 
+                        class="btn btn-outline" 
+                        onclick="App.settings.closeRestartModal()">
+                    Позже
+                </button>
+                <button type="button" 
+                        class="btn btn-primary" 
+                        id="restartServicesBtn">
+                    Перезагрузить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО РЕДАКТИРОВАНИЯ JSON -->
+<!-- ============================================= -->
+<div id="settingsJsonModal" class="modal" style="display: none;">
+    <div class="modal-content modal-large">
+        <div class="modal-header">
+            <h3>📝 Редактировать JSON</h3>
+            <button class="modal-close" onclick="App.settings.closeJsonModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <textarea id="settingsJsonEditor" class="json-editor" rows="20"></textarea>
+            <small class="form-text">
+                Внимание: неверный формат JSON может привести к ошибкам в работе системы.
+            </small>
+            
+            <div class="form-actions">
+                <button type="button" 
+                        class="btn btn-outline" 
+                        onclick="App.settings.closeJsonModal()">
+                    Отмена
+                </button>
+                <button type="button" 
+                        class="btn btn-primary" 
+                        id="saveJsonBtn">
+                    Сохранить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ПОДТВЕРЖДЕНИЯ СБРОСА -->
+<!-- ============================================= -->
+<div id="settingsResetModal" class="modal" style="display: none;">
+    <div class="modal-content modal-sm">
+        <div class="modal-header">
+            <h3>⚠️ Подтверждение сброса</h3>
+            <button class="modal-close" onclick="App.hideModal('settingsResetModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p>Вы уверены, что хотите сбросить ВСЕ настройки к значениям по умолчанию?</p>
+            <p class="text-danger">Это действие нельзя отменить!</p>
+            
+            <div class="form-actions">
+                <button type="button" 
+                        class="btn btn-outline" 
+                        onclick="App.hideModal('settingsResetModal')">
+                    Отмена
+                </button>
+                <button type="button" 
+                        class="btn btn-danger" 
+                        id="confirmResetBtn">
+                    Сбросить настройки
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- ДОПОЛНИТЕЛЬНЫЕ СТИЛИ -->
+<!-- ============================================= -->
+<style>
+    /* Settings Container */
+    .settings-container {
+        padding: 0;
+    }
+    
+    /* Settings Tabs */
+    .settings-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--spacing-xs);
+        margin-bottom: var(--spacing-xl);
+        border-bottom: 2px solid var(--color-border);
+        padding-bottom: var(--spacing-sm);
+    }
+    
+    .settings-tab {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+        padding: var(--spacing-md) var(--spacing-lg);
+        background: none;
+        border: none;
+        border-radius: var(--radius-md) var(--radius-md) 0 0;
+        cursor: pointer;
+        color: var(--color-text-secondary);
+        transition: all var(--transition-fast);
+    }
+    
+    .settings-tab:hover {
+        background: var(--color-bg-tertiary);
+        color: var(--color-text-primary);
+    }
+    
+    .settings-tab.active {
+        background: var(--color-primary);
+        color: white;
+    }
+    
+    .tab-icon {
+        font-size: 1.1rem;
+    }
+    
+    /* Settings Content */
+    .settings-content {
+        background: var(--color-bg-card);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--color-border);
+        padding: var(--spacing-xl);
+    }
+    
+    .settings-category h3 {
+        margin-top: 0;
+        margin-bottom: var(--spacing-lg);
+        padding-bottom: var(--spacing-md);
+        border-bottom: 1px solid var(--color-border);
+        color: var(--color-text-primary);
+    }
+    
+    .settings-list {
+        display: flex;
+        flex-direction: column;
+        gap: var(--spacing-md);
+    }
+    
+    /* Setting Item */
+    .setting-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        padding: var(--spacing-md);
+        background: var(--color-bg-tertiary);
+        border-radius: var(--radius-md);
+        border: 1px solid var(--color-border);
+    }
+    
+    .setting-info {
+        flex: 1;
+        padding-right: var(--spacing-lg);
+    }
+    
+    .setting-info label {
+        display: block;
+        font-weight: 500;
+        margin-bottom: var(--spacing-xs);
+        cursor: pointer;
+    }
+    
+    .setting-description {
+        display: block;
+        color: var(--color-text-muted);
+        font-size: 0.85rem;
+        margin-top: var(--spacing-xs);
+    }
+    
+    .setting-control {
+        min-width: 250px;
+    }
+    
+    .setting-value {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+    }
+    
+    .value-indicator {
+        padding: 4px 10px;
+        border-radius: var(--radius-full);
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+    
+    .value-indicator.enabled {
+        background: var(--color-success-bg);
+        color: var(--color-success);
+    }
+    
+    .value-indicator.disabled {
+        background: var(--color-bg-card);
+        color: var(--color-text-muted);
+    }
+    
+    /* Setting Boolean */
+    .setting-boolean {
+        cursor: pointer;
+        transition: background var(--transition-fast);
+    }
+    
+    .setting-boolean:hover {
+        background: var(--color-bg-card);
+    }
+    
+    .setting-boolean .setting-info {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-md);
+    }
+    
+    .setting-boolean input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+    }
+    
+    /* Setting Number/Text */
+    .setting-number .setting-control,
+    .setting-text .setting-control {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+    }
+    
+    .input-unit {
+        color: var(--color-text-muted);
+        font-size: 0.9rem;
+        min-width: 40px;
+    }
+    
+    /* Setting Select */
+    .setting-select .setting-control select {
+        width: 100%;
+    }
+    
+    /* Setting JSON */
+    .json-preview {
+        margin-top: var(--spacing-sm);
+    }
+    
+    .json-preview code {
+        background: var(--color-bg-card);
+        padding: 4px 8px;
+        border-radius: var(--radius-sm);
+        font-size: 0.8rem;
+        color: var(--color-text-secondary);
+    }
+    
+    /* Category Actions */
+    .category-actions {
+        margin-top: var(--spacing-xl);
+        padding-top: var(--spacing-lg);
+        border-top: 1px solid var(--color-border);
+        display: flex;
+        justify-content: flex-end;
+    }
+    
+    /* JSON Editor */
+    .json-editor {
+        width: 100%;
+        font-family: var(--font-mono);
+        font-size: 13px;
+        line-height: 1.5;
+        padding: var(--spacing-md);
+        background: var(--color-bg-tertiary);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md);
+        color: var(--color-text-primary);
+        resize: vertical;
+    }
+    
+    .json-editor:focus {
+        outline: none;
+        border-color: var(--color-primary);
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+    
+    /* Form Actions */
+    .form-actions {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-top: var(--spacing-lg);
+        justify-content: flex-end;
+    }
+    
+    /* Incoming Greeting Preview */
+    .greeting-preview {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+        margin-top: var(--spacing-sm);
+    }
+    
+    /* Loading */
+    .loading {
+        text-align: center;
+        padding: var(--spacing-2xl);
+        color: var(--color-text-muted);
+    }
+    
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: var(--spacing-2xl);
+    }
+    
+    .empty-icon {
+        font-size: 3rem;
+        margin-bottom: var(--spacing-md);
+        opacity: 0.5;
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .settings-tabs {
+            flex-direction: column;
+            gap: 0;
+            border-bottom: none;
+        }
+        
+        .settings-tab {
+            border-radius: 0;
+            border-left: 3px solid transparent;
+        }
+        
+        .settings-tab.active {
+            border-left-color: var(--color-primary);
+            background: var(--color-bg-tertiary);
+        }
+        
+        .setting-item {
+            flex-direction: column;
+            gap: var(--spacing-md);
+        }
+        
+        .setting-control {
+            min-width: 100%;
+        }
+        
+        .settings-content {
+            padding: var(--spacing-md);
+        }
+        
+        .form-actions {
+            flex-direction: column;
+        }
+        
+        .form-actions .btn {
+            width: 100%;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .setting-boolean .setting-info {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        
+        .setting-value {
+            margin-left: 28px;
+        }
+    }
+</style>
+
+<script>
+    (function() {
+        const settingsModule = App.settings;
+        if (settingsModule) {
+            // Переключение вкладок
+            document.querySelectorAll('.settings-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    const category = tab.dataset.category;
+                    
+                    // Обновляем активную вкладку
+                    document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    
+                    // Рендерим категорию
+                    settingsModule.renderCategory(category);
+                });
+            });
+            
+            // Кнопка обновления
+            document.getElementById('settingsRefreshBtn')?.addEventListener('click', () => {
+                settingsModule.loadSettings();
+            });
+            
+            // Кнопка сохранения всех
+            document.getElementById('settingsSaveAllBtn')?.addEventListener('click', () => {
+                settingsModule.saveAllSettings();
+            });
+            
+            // Кнопка сброса
+            document.getElementById('settingsResetBtn')?.addEventListener('click', () => {
+                App.showModal('settingsResetModal');
+            });
+            
+            document.getElementById('confirmResetBtn')?.addEventListener('click', () => {
+                settingsModule.resetToDefaults();
+                App.hideModal('settingsResetModal');
+            });
+            
+            // Кнопка перезагрузки сервисов
+            document.getElementById('restartServicesBtn')?.addEventListener('click', () => {
+                settingsModule.restartServices();
+            });
+            
+            // Кнопка сохранения JSON
+            document.getElementById('saveJsonBtn')?.addEventListener('click', () => {
+                settingsModule.saveJson();
+            });
+            
+            // Делегирование событий для настроек
+            document.addEventListener('change', (e) => {
+                // Чекбоксы
+                if (e.target.classList.contains('setting-checkbox')) {
+                    const key = e.target.dataset.key;
+                    const value = e.target.checked;
+                    settingsModule.saveSetting(key, value);
+                    
+                    // Обновляем индикатор
+                    const item = e.target.closest('.setting-item');
+                    const indicator = item?.querySelector('.value-indicator');
+                    if (indicator) {
+                        indicator.textContent = value ? 'Включено' : 'Выключено';
+                        indicator.className = `value-indicator ${value ? 'enabled' : 'disabled'}`;
+                    }
+                }
+            });
+            
+            // Делегирование для кнопок
+            document.addEventListener('click', (e) => {
+                // Сохранение категории
+                if (e.target.classList.contains('save-category')) {
+                    const category = e.target.dataset.category;
+                    settingsModule.saveCategory(category);
+                }
+                
+                // Редактирование JSON
+                if (e.target.classList.contains('edit-json')) {
+                    const key = e.target.dataset.key;
+                    settingsModule.openJsonEditor(key);
+                }
+                
+                // Предпрослушивание приветствия
+                if (e.target.classList.contains('preview-greeting')) {
+                    settingsModule.previewGreeting();
+                }
+            });
+        }
+    })();
+</script>
