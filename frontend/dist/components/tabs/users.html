@@ -1,0 +1,672 @@
+<!-- ============================================= -->
+<!-- USERS TAB (Admin Only) -->
+<!-- ============================================= -->
+<div class="users-container">
+    
+    <!-- Заголовок с действиями -->
+    <div class="page-header">
+        <h2>👥 Управление пользователями</h2>
+        <div class="header-actions">
+            <button class="btn btn-outline" id="usersRefreshBtn" title="Обновить">
+                🔄 Обновить
+            </button>
+            <button class="btn btn-primary" id="userAddBtn">
+                ➕ Добавить пользователя
+            </button>
+        </div>
+    </div>
+    
+    <!-- Описание -->
+    <p class="text-muted">
+        Управление пользователями системы. Администраторы имеют полный доступ,
+        операторы могут управлять кампаниями и контактами, наблюдатели — только просмотр.
+    </p>
+    
+    <!-- Панель поиска и фильтров -->
+    <div class="users-toolbar">
+        <div class="search-box">
+            <input type="text" 
+                   id="userSearch" 
+                   class="form-control" 
+                   placeholder="🔍 Поиск по логину, email или имени..."
+                   autocomplete="off">
+        </div>
+        <div class="filter-group">
+            <select id="userRoleFilter" class="form-control">
+                <option value="">Все роли</option>
+                <option value="admin">Администраторы</option>
+                <option value="operator">Операторы</option>
+                <option value="viewer">Наблюдатели</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <select id="userStatusFilter" class="form-control">
+                <option value="">Все статусы</option>
+                <option value="active">Активные</option>
+                <option value="inactive">Неактивные</option>
+                <option value="locked">Заблокированные</option>
+            </select>
+        </div>
+        <div class="filter-actions">
+            <button class="btn btn-outline btn-sm" id="usersClearFiltersBtn">
+                🔄 Сбросить
+            </button>
+        </div>
+    </div>
+    
+    <!-- Статистика -->
+    <div class="users-stats">
+        <div class="stat-item">
+            <span class="stat-label">Всего пользователей:</span>
+            <span class="stat-value" id="usersTotal">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Активных:</span>
+            <span class="stat-value text-success" id="usersActive">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Администраторов:</span>
+            <span class="stat-value" id="usersAdmins">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Операторов:</span>
+            <span class="stat-value" id="usersOperators">0</span>
+        </div>
+    </div>
+    
+    <!-- Таблица -->
+    <div class="users-table-container">
+        <table class="table" id="usersTable">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Логин</th>
+                    <th>Email</th>
+                    <th>Полное имя</th>
+                    <th>Роль</th>
+                    <th>Статус</th>
+                    <th>Последний вход</th>
+                    <th width="140">Действия</th>
+                </tr>
+            </thead>
+            <tbody id="usersTableBody">
+                <tr><td colspan="8" class="text-center"><div class="loading">Загрузка...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Пагинация -->
+    <div id="usersPagination" class="pagination-container"></div>
+    
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ДОБАВЛЕНИЯ/РЕДАКТИРОВАНИЯ -->
+<!-- ============================================= -->
+<div id="userModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="userModalTitle">Добавить пользователя</h3>
+            <button class="modal-close" onclick="App.users.closeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="userForm" onsubmit="return false;">
+                <input type="hidden" id="userId">
+                
+                <div class="form-group">
+                    <label>Логин <span class="required">*</span></label>
+                    <input type="text" 
+                           id="userUsername" 
+                           class="form-control" 
+                           placeholder="Логин"
+                           autocomplete="off"
+                           required>
+                    <small class="form-text">Минимум 3 символа, только латиница и цифры</small>
+                </div>
+                
+                <div class="form-group" id="userPasswordGroup">
+                    <label>Пароль <span class="required" id="passwordRequired">*</span></label>
+                    <div class="password-input-wrapper">
+                        <input type="password" 
+                               id="userPassword" 
+                               class="form-control" 
+                               placeholder="Пароль"
+                               autocomplete="new-password">
+                        <button type="button" class="password-toggle" data-target="userPassword" title="Показать/скрыть">👁️</button>
+                    </div>
+                    <small class="form-text">Минимум 8 символов, заглавные и строчные буквы, цифры</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" 
+                           id="userEmail" 
+                           class="form-control" 
+                           placeholder="email@example.com">
+                </div>
+                
+                <div class="form-group">
+                    <label>Полное имя</label>
+                    <input type="text" 
+                           id="userFullName" 
+                           class="form-control" 
+                           placeholder="Иванов Иван Иванович">
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Роль <span class="required">*</span></label>
+                        <select id="userRole" class="form-control" required>
+                            <option value="viewer">👁️ Наблюдатель (только просмотр)</option>
+                            <option value="operator">📋 Оператор (управление кампаниями)</option>
+                            <option value="admin">⚙️ Администратор (полный доступ)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Статус</label>
+                        <select id="userStatus" class="form-control">
+                            <option value="active">✅ Активен</option>
+                            <option value="inactive">⏸️ Неактивен</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="userForcePasswordChange">
+                        Потребовать смену пароля при следующем входе
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label>Заметки (опционально)</label>
+                    <textarea id="userNotes" 
+                              class="form-control" 
+                              rows="2"
+                              placeholder="Дополнительная информация..."></textarea>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" 
+                            class="btn btn-outline" 
+                            onclick="App.users.closeModal()">
+                        Отмена
+                    </button>
+                    <button type="submit" 
+                            class="btn btn-primary">
+                        Сохранить
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО СМЕНЫ ПАРОЛЯ -->
+<!-- ============================================= -->
+<div id="userPasswordModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>🔐 Сменить пароль пользователя</h3>
+            <button class="modal-close" onclick="App.users.closePasswordModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="userPasswordForm" onsubmit="return false;">
+                <input type="hidden" id="changePasswordUserId">
+                
+                <div class="form-group">
+                    <label>Пользователь</label>
+                    <input type="text" 
+                           id="changePasswordUsername" 
+                           class="form-control" 
+                           readonly
+                           style="background: var(--color-bg-tertiary);">
+                </div>
+                
+                <div class="form-group">
+                    <label>Новый пароль <span class="required">*</span></label>
+                    <div class="password-input-wrapper">
+                        <input type="password" 
+                               id="newUserPassword" 
+                               class="form-control" 
+                               placeholder="Новый пароль"
+                               required>
+                        <button type="button" class="password-toggle" data-target="newUserPassword" title="Показать/скрыть">👁️</button>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Подтверждение пароля <span class="required">*</span></label>
+                    <div class="password-input-wrapper">
+                        <input type="password" 
+                               id="newUserPasswordConfirm" 
+                               class="form-control" 
+                               placeholder="Подтвердите пароль"
+                               required>
+                        <button type="button" class="password-toggle" data-target="newUserPasswordConfirm" title="Показать/скрыть">👁️</button>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="forcePasswordChangeAfterReset">
+                        Потребовать смену пароля при следующем входе
+                    </label>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" 
+                            class="btn btn-outline" 
+                            onclick="App.users.closePasswordModal()">
+                        Отмена
+                    </button>
+                    <button type="submit" 
+                            class="btn btn-primary">
+                        Сменить пароль
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ДЕТАЛЕЙ ПОЛЬЗОВАТЕЛЯ -->
+<!-- ============================================= -->
+<div id="userDetailModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>👤 Информация о пользователе</h3>
+            <button class="modal-close" onclick="App.users.closeDetailModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="userDetailContent">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" 
+                    class="btn btn-outline" 
+                    onclick="App.users.closeDetailModal()">
+                Закрыть
+            </button>
+            <button type="button" 
+                    class="btn btn-primary" 
+                    id="userEditFromDetailBtn">
+                ✏️ Редактировать
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ПОДТВЕРЖДЕНИЯ УДАЛЕНИЯ -->
+<!-- ============================================= -->
+<div id="userDeleteModal" class="modal" style="display: none;">
+    <div class="modal-content modal-sm">
+        <div class="modal-header">
+            <h3>⚠️ Подтверждение удаления</h3>
+            <button class="modal-close" onclick="App.users.closeDeleteModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p id="userDeleteMessage">Вы уверены, что хотите удалить пользователя?</p>
+            <p class="text-danger">Это действие нельзя отменить!</p>
+            
+            <div class="form-actions">
+                <button type="button" 
+                        class="btn btn-outline" 
+                        onclick="App.users.closeDeleteModal()">
+                    Отмена
+                </button>
+                <button type="button" 
+                        class="btn btn-danger" 
+                        id="confirmDeleteUserBtn">
+                    Удалить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- ДОПОЛНИТЕЛЬНЫЕ СТИЛИ -->
+<!-- ============================================= -->
+<style>
+    /* Users Container */
+    .users-container {
+        padding: 0;
+    }
+    
+    /* Users Toolbar */
+    .users-toolbar {
+        display: flex;
+        align-items: flex-end;
+        gap: var(--spacing-md);
+        margin-bottom: var(--spacing-lg);
+        flex-wrap: wrap;
+    }
+    
+    .search-box {
+        flex: 2;
+        min-width: 250px;
+    }
+    
+    .filter-group {
+        flex: 1;
+        min-width: 150px;
+    }
+    
+    .filter-actions {
+        display: flex;
+        gap: var(--spacing-sm);
+    }
+    
+    /* Users Stats */
+    .users-stats {
+        display: flex;
+        gap: var(--spacing-xl);
+        padding: var(--spacing-lg);
+        background: var(--color-bg-card);
+        border-radius: var(--radius-lg);
+        margin-bottom: var(--spacing-xl);
+        border: 1px solid var(--color-border);
+    }
+    
+    .users-stats .stat-item {
+        display: flex;
+        align-items: baseline;
+        gap: var(--spacing-sm);
+    }
+    
+    .users-stats .stat-label {
+        color: var(--color-text-muted);
+        font-size: 0.9rem;
+    }
+    
+    .users-stats .stat-value {
+        font-size: 1.5rem;
+        font-weight: 600;
+    }
+    
+    /* Table */
+    .users-table-container {
+        overflow-x: auto;
+        margin-bottom: var(--spacing-lg);
+    }
+    
+    #usersTable tbody tr {
+        cursor: pointer;
+        transition: background var(--transition-fast);
+    }
+    
+    #usersTable tbody tr:hover {
+        background: var(--color-bg-tertiary);
+    }
+    
+    #usersTable tbody tr.inactive {
+        opacity: 0.6;
+    }
+    
+    .role-badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: var(--radius-full);
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+    
+    .role-badge.role-admin {
+        background: var(--color-danger-bg);
+        color: var(--color-danger);
+    }
+    
+    .role-badge.role-operator {
+        background: var(--color-success-bg);
+        color: var(--color-success);
+    }
+    
+    .role-badge.role-viewer {
+        background: var(--color-bg-tertiary);
+        color: var(--color-text-secondary);
+    }
+    
+    .badge-danger {
+        background: var(--color-danger);
+        color: white;
+        padding: 2px 6px;
+        border-radius: var(--radius-full);
+        font-size: 0.7rem;
+        margin-left: var(--spacing-xs);
+    }
+    
+    /* Password Input */
+    .password-input-wrapper {
+        display: flex;
+        gap: var(--spacing-xs);
+    }
+    
+    .password-input-wrapper .form-control {
+        flex: 1;
+    }
+    
+    .password-toggle {
+        width: 42px;
+        background: var(--color-bg-tertiary);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md);
+        color: var(--color-text-secondary);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+    }
+    
+    .password-toggle:hover {
+        background: var(--color-bg-card);
+        color: var(--color-text-primary);
+    }
+    
+    /* User Detail */
+    .user-detail {
+        max-height: 500px;
+        overflow-y: auto;
+    }
+    
+    .detail-section {
+        margin-bottom: var(--spacing-lg);
+        padding-bottom: var(--spacing-lg);
+        border-bottom: 1px solid var(--color-border);
+    }
+    
+    .detail-section:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+    
+    .detail-section h4 {
+        margin-top: 0;
+        margin-bottom: var(--spacing-md);
+        color: var(--color-text-secondary);
+    }
+    
+    .details-table {
+        width: 100%;
+    }
+    
+    .details-table td {
+        padding: var(--spacing-xs) 0;
+    }
+    
+    .details-table td:first-child {
+        font-weight: 500;
+        color: var(--color-text-muted);
+        width: 180px;
+    }
+    
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: var(--spacing-3xl) var(--spacing-xl);
+    }
+    
+    .empty-icon {
+        font-size: 4rem;
+        margin-bottom: var(--spacing-lg);
+        opacity: 0.5;
+    }
+    
+    /* Form Actions */
+    .form-actions {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-top: var(--spacing-lg);
+        justify-content: flex-end;
+    }
+    
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--spacing-md);
+    }
+    
+    .required {
+        color: var(--color-danger);
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .users-toolbar {
+            flex-direction: column;
+            align-items: stretch;
+        }
+        
+        .filter-actions {
+            justify-content: flex-end;
+        }
+        
+        .users-stats {
+            flex-wrap: wrap;
+            gap: var(--spacing-md);
+        }
+        
+        .form-row {
+            grid-template-columns: 1fr;
+        }
+        
+        .form-actions {
+            flex-direction: column;
+        }
+        
+        .form-actions .btn {
+            width: 100%;
+        }
+        
+        .details-table td:first-child {
+            width: 140px;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .users-stats {
+            flex-direction: column;
+            gap: var(--spacing-sm);
+        }
+        
+        .filter-actions {
+            flex-direction: column;
+        }
+        
+        .filter-actions .btn {
+            width: 100%;
+        }
+    }
+</style>
+
+<script>
+    (function() {
+        const usersModule = App.users;
+        if (usersModule) {
+            // Кнопка добавления
+            document.getElementById('userAddBtn')?.addEventListener('click', () => {
+                usersModule.openModal();
+            });
+            
+            // Кнопка обновления
+            document.getElementById('usersRefreshBtn')?.addEventListener('click', () => {
+                usersModule.loadUsers();
+            });
+            
+            // Поиск с дебаунсом
+            const searchInput = document.getElementById('userSearch');
+            if (searchInput) {
+                let searchTimeout;
+                searchInput.addEventListener('input', (e) => {
+                    clearTimeout(searchTimeout);
+                    searchTimeout = setTimeout(() => {
+                        usersModule.searchQuery = e.target.value;
+                        usersModule.loadUsers(1);
+                    }, 300);
+                });
+            }
+            
+            // Фильтры
+            document.getElementById('userRoleFilter')?.addEventListener('change', (e) => {
+                usersModule.filterRole = e.target.value;
+                usersModule.loadUsers(1);
+            });
+            
+            document.getElementById('userStatusFilter')?.addEventListener('change', (e) => {
+                usersModule.filterStatus = e.target.value;
+                usersModule.loadUsers(1);
+            });
+            
+            // Сброс фильтров
+            document.getElementById('usersClearFiltersBtn')?.addEventListener('click', () => {
+                document.getElementById('userSearch').value = '';
+                document.getElementById('userRoleFilter').value = '';
+                document.getElementById('userStatusFilter').value = '';
+                usersModule.searchQuery = '';
+                usersModule.filterRole = '';
+                usersModule.filterStatus = '';
+                usersModule.loadUsers(1);
+            });
+            
+            // Форма пользователя
+            document.getElementById('userForm')?.addEventListener('submit', () => {
+                usersModule.saveUser();
+            });
+            
+            // Форма смены пароля
+            document.getElementById('userPasswordForm')?.addEventListener('submit', () => {
+                usersModule.changeUserPassword();
+            });
+            
+            // Кнопка подтверждения удаления
+            document.getElementById('confirmDeleteUserBtn')?.addEventListener('click', () => {
+                usersModule.deleteUser();
+            });
+            
+            // Кнопка редактирования из деталей
+            document.getElementById('userEditFromDetailBtn')?.addEventListener('click', () => {
+                const id = usersModule.currentUserId;
+                if (id) {
+                    usersModule.closeDetailModal();
+                    usersModule.openModalById(id);
+                }
+            });
+            
+            // Переключение видимости пароля
+            document.querySelectorAll('.password-toggle').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const targetId = btn.dataset.target;
+                    const input = document.getElementById(targetId);
+                    if (input) {
+                        input.type = input.type === 'password' ? 'text' : 'password';
+                        btn.textContent = input.type === 'password' ? '👁️' : '🙈';
+                    }
+                });
+            });
+        }
+    })();
+</script>
