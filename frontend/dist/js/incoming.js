@@ -1,791 +1,752 @@
-// incoming.js - Модуль управления входящими звонками
+// incoming.js - Модуль входящих звонков с автотранскрибацией
+// Адаптировано под реальный проект AutoDialer Ultimate
 
-class IncomingCallManager {
-    constructor() {
-        this.incomingCall = null;
-        this.ringtone = null;
-        this.ringingTimeout = null;
-        this.maxRingTime = 60000; // 60 секунд максимальное время звонка
-        this.autoAnswerEnabled = false;
-        this.autoAnswerDelay = 3000; // 3 секунды задержка автоответа
-        this.autoAnswerTimer = null;
-        this.callbacks = [];
-        this.activeStream = null;
-        this.sipSession = null;
-        
-        this.initializeRingtone();
-        this.loadSettings();
-    }
-
-    // Инициализация рингтона
-    initializeRingtone() {
-        this.ringtone = new Audio('/assets/sounds/ringtone.mp3');
-        this.ringtone.loop = true;
-        this.ringtone.volume = 0.5;
-    }
-
-    // Загрузка настроек
-    loadSettings() {
-        const settings = JSON.parse(localStorage.getItem('incoming_settings') || '{}');
-        this.autoAnswerEnabled = settings.autoAnswerEnabled || false;
-        this.autoAnswerDelay = settings.autoAnswerDelay || 3000;
-        this.maxRingTime = settings.maxRingTime || 60000;
-        return settings;
-    }
-
-    // Сохранение настроек
-    saveSettings(settings) {
-        localStorage.setItem('incoming_settings', JSON.stringify(settings));
-        this.loadSettings();
-        this.notifySubscribers('settings_updated', settings);
-    }
-
-    // Обработка входящего звонка
-    handleIncomingCall(session) {
-        this.sipSession = session;
-        
-        const callerNumber = session.remote_identity.uri.user;
-        const callerName = session.remote_identity.display_name || callerNumber;
-        
-        // Проверка черного списка
-        if (window.blacklistManager && window.blacklistManager.isBlocked(callerNumber)) {
-            this.rejectCall('blocked');
-            this.logRejectedCall(callerNumber, 'blacklist');
-            return;
-        }
-
-        // Поиск контакта
-        const contact = window.contactsManager 
-            ? window.contactsManager.findByPhone(callerNumber) 
-            : null;
-
-        // Создание объекта входящего звонка
-        this.incomingCall = {
-            id: this.generateCallId(),
-            session: session,
-            callerNumber: callerNumber,
-            callerName: contact ? contact.name : callerName,
-            contactId: contact ? contact.id : null,
-            startTime: new Date().toISOString(),
-            status: 'ringing',
-            direction: 'incoming'
-        };
-
-        // Запуск рингтона
-        this.startRinging();
-        
-        // Добавление в историю
-        if (window.callHistory) {
-            window.callHistory.addCallRecord({
-                phoneNumber: callerNumber,
-                contactName: this.incomingCall.callerName,
-                startTime: this.incomingCall.startTime,
-                status: 'ringing',
-                direction: 'incoming',
-                callType: 'incoming'
-            });
-        }
-
-        // Показ уведомления
-        this.showIncomingCallNotification();
-        
-        // Отображение модального окна входящего звонка
-        this.showIncomingCallModal();
-        
-        // Установка таймаута на максимальное время звонка
-        this.ringingTimeout = setTimeout(() => {
-            if (this.incomingCall && this.incomingCall.status === 'ringing') {
-                this.rejectCall('timeout');
-            }
-        }, this.maxRingTime);
-
-        // Автоответ если включен
-        if (this.autoAnswerEnabled) {
-            this.autoAnswerTimer = setTimeout(() => {
-                if (this.incomingCall && this.incomingCall.status === 'ringing') {
-                    this.acceptCall();
-                }
-            }, this.autoAnswerDelay);
-        }
-
-        this.notifySubscribers('incoming_call', this.incomingCall);
-    }
-
-    // Запуск рингтона
-    startRinging() {
-        if (this.ringtone) {
-            this.ringtone.play().catch(e => {
-                console.warn('Не удалось воспроизвести рингтон:', e);
-            });
-        }
-        
-        // Вибрация если поддерживается
-        if (navigator.vibrate) {
-            navigator.vibrate([1000, 1000, 1000]);
-        }
-    }
-
-    // Остановка рингтона
-    stopRinging() {
-        if (this.ringtone) {
-            this.ringtone.pause();
-            this.ringtone.currentTime = 0;
-        }
-        
-        if (navigator.vibrate) {
-            navigator.vibrate(0);
-        }
-        
-        if (this.ringingTimeout) {
-            clearTimeout(this.ringingTimeout);
-            this.ringingTimeout = null;
-        }
-        
-        if (this.autoAnswerTimer) {
-            clearTimeout(this.autoAnswerTimer);
-            this.autoAnswerTimer = null;
-        }
-    }
-
-    // Принятие звонка
-    async acceptCall() {
-        if (!this.incomingCall || !this.sipSession) return;
-        
-        try {
-            this.stopRinging();
-            
-            // Принятие SIP сессии
-            this.sipSession.accept({
-                media: {
-                    audio: true,
-                    video: false
-                }
-            });
-
-            this.incomingCall.status = 'accepted';
-            this.incomingCall.acceptTime = new Date().toISOString();
-            
-            // Получение медиа потока
-            this.activeStream = await this.getUserMedia();
-            
-            // Обновление UI
-            this.showActiveCallInterface();
-            
-            // Обновление истории
-            if (window.callHistory) {
-                window.callHistory.updateCallStatus(
-                    this.incomingCall.id, 
-                    'accepted'
-                );
-            }
-
-            this.notifySubscribers('call_accepted', this.incomingCall);
-            
-        } catch (error) {
-            console.error('Ошибка при принятии звонка:', error);
-            this.rejectCall('error');
-        }
-    }
-
-    // Отклонение звонка
-    rejectCall(reason = 'declined') {
-        if (!this.incomingCall) return;
-        
-        this.stopRinging();
-        
-        if (this.sipSession) {
-            this.sipSession.reject();
-        }
-        
-        this.incomingCall.status = reason;
-        this.incomingCall.endTime = new Date().toISOString();
-        
-        // Логирование отклоненного звонка
-        this.logRejectedCall(this.incomingCall.callerNumber, reason);
-        
-        // Обновление истории
-        if (window.callHistory) {
-            window.callHistory.updateCallStatus(
-                this.incomingCall.id, 
-                reason === 'declined' ? 'declined' : 'missed'
-            );
-        }
-        
-        // Закрытие модального окна
-        this.hideIncomingCallModal();
-        
-        // Показ уведомления о пропущенном звонке
-        if (reason !== 'declined') {
-            this.showMissedCallNotification();
-        }
-        
-        this.notifySubscribers('call_rejected', {
-            call: this.incomingCall,
-            reason: reason
-        });
-        
-        // Очистка
-        this.cleanup();
-    }
-
-    // Завершение активного звонка
-    hangup() {
-        if (!this.incomingCall) return;
-        
-        if (this.sipSession) {
-            this.sipSession.terminate();
-        }
-        
-        this.incomingCall.status = 'completed';
-        this.incomingCall.endTime = new Date().toISOString();
-        this.incomingCall.duration = this.calculateDuration();
-        
-        // Обновление истории
-        if (window.callHistory) {
-            window.callHistory.updateCallStatus(
-                this.incomingCall.id, 
-                'completed',
-                this.incomingCall.duration
-            );
-        }
-        
-        // Остановка медиа
-        if (this.activeStream) {
-            this.activeStream.getTracks().forEach(track => track.stop());
-            this.activeStream = null;
-        }
-        
-        this.hideActiveCallInterface();
-        this.notifySubscribers('call_ended', this.incomingCall);
-        this.cleanup();
-    }
-
-    // Получение медиа потока
-    async getUserMedia() {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
-                },
-                video: false
-            });
-            
-            return stream;
-        } catch (error) {
-            console.error('Ошибка доступа к микрофону:', error);
-            throw error;
-        }
-    }
-
-    // Переключение микрофона
-    toggleMute() {
-        if (!this.activeStream) return false;
-        
-        const audioTrack = this.activeStream.getAudioTracks()[0];
-        if (audioTrack) {
-            audioTrack.enabled = !audioTrack.enabled;
-            this.notifySubscribers('mute_toggled', {
-                muted: !audioTrack.enabled
-            });
-            return !audioTrack.enabled;
-        }
-        return false;
-    }
-
-    // Переключение динамика
-    toggleSpeaker(enabled) {
-        if (!this.activeStream) return;
-        
-        const audioElement = document.querySelector('#remoteAudio');
-        if (audioElement) {
-            if (enabled) {
-                audioElement.setSinkId('speaker');
-            } else {
-                audioElement.setSinkId('default');
-            }
-        }
-    }
-
-    // Отправка DTMF
-    sendDTMF(digit) {
-        if (this.sipSession) {
-            this.sipSession.dtmf(digit);
-        }
-    }
-
-    // Переадресация звонка
-    async forwardCall(targetNumber) {
-        if (!this.incomingCall) return;
-        
-        try {
-            // Отправка SIP REFER
-            await this.sipSession.refer(targetNumber);
-            
-            this.incomingCall.status = 'forwarded';
-            this.incomingCall.forwardedTo = targetNumber;
-            
-            this.notifySubscribers('call_forwarded', {
-                call: this.incomingCall,
-                target: targetNumber
-            });
-            
-            this.cleanup();
-        } catch (error) {
-            console.error('Ошибка переадресации:', error);
-            throw error;
-        }
-    }
-
-    // Показ уведомления о входящем звонке
-    showIncomingCallNotification() {
-        if (!this.incomingCall) return;
-        
-        // Браузерное уведомление
-        if (Notification.permission === 'granted') {
-            new Notification('Входящий звонок', {
-                body: `${this.incomingCall.callerName}\n${this.incomingCall.callerNumber}`,
-                icon: '/assets/icons/phone-icon.png',
-                tag: 'incoming-call',
-                requireInteraction: true,
-                actions: [
-                    { action: 'accept', title: 'Ответить' },
-                    { action: 'decline', title: 'Отклонить' }
-                ]
-            }).onclick = (event) => {
-                if (event.action === 'accept') {
-                    this.acceptCall();
-                } else if (event.action === 'decline') {
-                    this.rejectCall('declined');
-                }
-            };
-        }
-        
-        // Звуковое уведомление через TTS
-        if (window.audioManager && this.incomingCall.callerName) {
-            window.audioManager.speak(
-                `Входящий звонок от ${this.incomingCall.callerName}`
-            );
-        }
-    }
-
-    // Показ модального окна входящего звонка
-    showIncomingCallModal() {
-        const modal = document.getElementById('incomingCallModal');
-        if (!modal) return;
-        
-        const callerNameEl = modal.querySelector('.caller-name');
-        const callerNumberEl = modal.querySelector('.caller-number');
-        const contactAvatar = modal.querySelector('.contact-avatar');
-        
-        if (callerNameEl) {
-            callerNameEl.textContent = this.incomingCall.callerName;
-        }
-        if (callerNumberEl) {
-            callerNumberEl.textContent = this.formatPhoneNumber(this.incomingCall.callerNumber);
-        }
-        
-        // Аватар контакта
-        if (contactAvatar) {
-            const initials = this.getInitials(this.incomingCall.callerName);
-            contactAvatar.textContent = initials;
-        }
-        
-        // Показ информации о контакте
-        if (this.incomingCall.contactId && window.contactsManager) {
-            const contact = window.contactsManager.getContact(this.incomingCall.contactId);
-            if (contact) {
-                const companyEl = modal.querySelector('.contact-company');
-                if (companyEl && contact.company) {
-                    companyEl.textContent = contact.company;
-                    companyEl.style.display = 'block';
-                }
-            }
-        }
-        
-        modal.style.display = 'flex';
-        
-        // Привязка кнопок
-        const acceptBtn = modal.querySelector('.accept-call');
-        const declineBtn = modal.querySelector('.decline-call');
-        
-        if (acceptBtn) {
-            acceptBtn.onclick = () => this.acceptCall();
-        }
-        if (declineBtn) {
-            declineBtn.onclick = () => this.rejectCall('declined');
-        }
-    }
-
-    // Скрытие модального окна
-    hideIncomingCallModal() {
-        const modal = document.getElementById('incomingCallModal');
-        if (modal) {
-            modal.style.display = 'none';
-        }
-    }
-
-    // Показ интерфейса активного звонка
-    showActiveCallInterface() {
-        const activeCallModal = document.getElementById('activeCallModal');
-        if (!activeCallModal) return;
-        
-        const callerNameEl = activeCallModal.querySelector('.caller-name');
-        const callerNumberEl = activeCallModal.querySelector('.caller-number');
-        const callDurationEl = activeCallModal.querySelector('.call-duration');
-        
-        if (callerNameEl) {
-            callerNameEl.textContent = this.incomingCall.callerName;
-        }
-        if (callerNumberEl) {
-            callerNumberEl.textContent = this.formatPhoneNumber(this.incomingCall.callerNumber);
-        }
-        
-        // Таймер длительности
-        this.startDurationTimer(callDurationEl);
-        
-        // Привязка кнопок управления
-        this.bindCallControls(activeCallModal);
-        
-        // Скрываем модальное окно входящего
-        this.hideIncomingCallModal();
-        
-        // Показываем активный звонок
-        activeCallModal.style.display = 'flex';
-    }
-
-    // Скрытие интерфейса активного звонка
-    hideActiveCallInterface() {
-        const modal = document.getElementById('activeCallModal');
-        if (modal) {
-            modal.style.display = 'none';
-        }
-        
-        if (this.durationTimer) {
-            clearInterval(this.durationTimer);
-            this.durationTimer = null;
-        }
-    }
-
-    // Таймер длительности звонка
-    startDurationTimer(element) {
-        if (!element) return;
-        
-        const startTime = new Date(this.incomingCall.acceptTime);
-        
-        this.durationTimer = setInterval(() => {
-            const now = new Date();
-            const diff = Math.floor((now - startTime) / 1000);
-            element.textContent = this.formatDuration(diff);
-        }, 1000);
-    }
-
-    // Привязка контролов звонка
-    bindCallControls(modal) {
-        const hangupBtn = modal.querySelector('.hangup-call');
-        const muteBtn = modal.querySelector('.mute-call');
-        const speakerBtn = modal.querySelector('.speaker-call');
-        const dtmfBtn = modal.querySelector('.dtmf-call');
-        const holdBtn = modal.querySelector('.hold-call');
-        const transferBtn = modal.querySelector('.transfer-call');
-        
-        if (hangupBtn) {
-            hangupBtn.onclick = () => this.hangup();
-        }
-        
-        if (muteBtn) {
-            let isMuted = false;
-            muteBtn.onclick = () => {
-                isMuted = this.toggleMute();
-                muteBtn.classList.toggle('active', isMuted);
-            };
-        }
-        
-        if (speakerBtn) {
-            let speakerEnabled = false;
-            speakerBtn.onclick = () => {
-                speakerEnabled = !speakerEnabled;
-                this.toggleSpeaker(speakerEnabled);
-                speakerBtn.classList.toggle('active', speakerEnabled);
-            };
-        }
-        
-        if (dtmfBtn) {
-            dtmfBtn.onclick = () => this.showDTMFPad();
-        }
-        
-        if (holdBtn) {
-            let isOnHold = false;
-            holdBtn.onclick = () => {
-                isOnHold = !isOnHold;
-                this.toggleHold(isOnHold);
-                holdBtn.classList.toggle('active', isOnHold);
-            };
-        }
-        
-        if (transferBtn) {
-            transferBtn.onclick = () => this.showTransferDialog();
-        }
-    }
-
-    // Показ DTMF клавиатуры
-    showDTMFPad() {
-        const dtmfPad = document.getElementById('dtmfPad');
-        if (!dtmfPad) return;
-        
-        dtmfPad.style.display = 'grid';
-        
-        // Привязка кнопок DTMF
-        dtmfPad.querySelectorAll('.dtmf-digit').forEach(btn => {
-            btn.onclick = () => {
-                this.sendDTMF(btn.dataset.digit);
-            };
-        });
-    }
-
-    // Перевод звонка на удержание
-    toggleHold(hold) {
-        if (!this.sipSession) return;
-        
-        if (hold) {
-            this.sipSession.hold();
-        } else {
-            this.sipSession.unhold();
-        }
-    }
-
-    // Показ диалога переадресации
-    showTransferDialog() {
-        const dialog = document.getElementById('transferDialog');
-        if (!dialog) return;
-        
-        dialog.style.display = 'block';
-        
-        const transferInput = dialog.querySelector('#transferNumber');
-        const transferBtn = dialog.querySelector('#transferBtn');
-        const cancelBtn = dialog.querySelector('#cancelTransfer');
-        
-        if (transferBtn) {
-            transferBtn.onclick = async () => {
-                const targetNumber = transferInput.value;
-                if (targetNumber) {
-                    try {
-                        await this.forwardCall(targetNumber);
-                        dialog.style.display = 'none';
-                    } catch (error) {
-                        alert('Ошибка переадресации');
-                    }
-                }
-            };
-        }
-        
-        if (cancelBtn) {
-            cancelBtn.onclick = () => {
-                dialog.style.display = 'none';
-            };
-        }
-    }
-
-    // Логирование отклоненного звонка
-    logRejectedCall(number, reason) {
-        const rejectedCalls = JSON.parse(
-            localStorage.getItem('rejected_calls') || '[]'
-        );
-        
-        rejectedCalls.push({
-            number: number,
-            reason: reason,
-            timestamp: new Date().toISOString()
-        });
-        
-        // Ограничение размера лога
-        if (rejectedCalls.length > 100) {
-            rejectedCalls.shift();
-        }
-        
-        localStorage.setItem('rejected_calls', JSON.stringify(rejectedCalls));
-    }
-
-    // Показ уведомления о пропущенном звонке
-    showMissedCallNotification() {
-        if (Notification.permission === 'granted') {
-            new Notification('Пропущенный звонок', {
-                body: `От: ${this.incomingCall.callerName}\n${this.incomingCall.callerNumber}`,
-                icon: '/assets/icons/missed-call.png',
-                tag: 'missed-call'
-            });
-        }
-        
-        // Обновление счетчика пропущенных звонков в UI
-        this.updateMissedCallsCounter();
-    }
-
-    // Обновление счетчика пропущенных звонков
-    updateMissedCallsCounter() {
-        const counter = document.querySelector('.missed-calls-count');
-        if (counter) {
-            const current = parseInt(counter.textContent) || 0;
-            counter.textContent = current + 1;
-            counter.style.display = 'inline-block';
-        }
-    }
-
-    // Расчет длительности звонка
-    calculateDuration() {
-        if (!this.incomingCall.acceptTime || !this.incomingCall.endTime) {
-            return 0;
-        }
-        
-        const start = new Date(this.incomingCall.acceptTime);
-        const end = new Date(this.incomingCall.endTime);
-        return Math.floor((end - start) / 1000);
-    }
-
-    // Форматирование номера телефона
-    formatPhoneNumber(number) {
-        const cleaned = number.replace(/\D/g, '');
-        
-        if (cleaned.length === 11) {
-            return cleaned.replace(/(\d{1})(\d{3})(\d{3})(\d{2})(\d{2})/, '+$1 ($2) $3-$4-$5');
-        }
-        
-        return number;
-    }
-
-    // Форматирование длительности
-    formatDuration(seconds) {
-        const hours = Math.floor(seconds / 3600);
-        const minutes = Math.floor((seconds % 3600) / 60);
-        const secs = seconds % 60;
-        
-        if (hours > 0) {
-            return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-        }
-        
-        return `${minutes}:${secs.toString().padStart(2, '0')}`;
-    }
-
-    // Получение инициалов
-    getInitials(name) {
-        return name
-            .split(' ')
-            .map(word => word[0])
-            .join('')
-            .toUpperCase()
-            .substring(0, 2);
-    }
-
-    // Генерация ID звонка
-    generateCallId() {
-        return 'call_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    }
-
-    // Очистка после звонка
-    cleanup() {
-        this.stopRinging();
-        this.incomingCall = null;
-        this.sipSession = null;
-        
-        if (this.activeStream) {
-            this.activeStream.getTracks().forEach(track => track.stop());
-            this.activeStream = null;
-        }
-        
-        if (this.durationTimer) {
-            clearInterval(this.durationTimer);
-            this.durationTimer = null;
-        }
-    }
-
-    // Подписка на события
-    subscribe(callback) {
-        this.callbacks.push(callback);
-    }
-
-    // Отписка
-    unsubscribe(callback) {
-        this.callbacks = this.callbacks.filter(cb => cb !== callback);
-    }
-
-    // Уведомление подписчиков
-    notifySubscribers(event, data) {
-        this.callbacks.forEach(callback => {
-            try {
-                callback(event, data);
-            } catch (error) {
-                console.error('Error in subscriber:', error);
-            }
-        });
-    }
-
-    // Запрос разрешения на уведомления
-    async requestNotificationPermission() {
-        if (Notification.permission === 'default') {
-            const permission = await Notification.requestPermission();
-            return permission === 'granted';
-        }
-        return Notification.permission === 'granted';
-    }
-
-    // Получение статистики входящих звонков
-    getStatistics(period = 'today') {
-        const history = window.callHistory 
-            ? window.callHistory.getHistory().filter(call => call.direction === 'incoming')
-            : [];
-            
-        const filtered = this.filterByPeriod(history, period);
-        
-        return {
-            total: filtered.length,
-            accepted: filtered.filter(c => c.status === 'completed').length,
-            missed: filtered.filter(c => c.status === 'missed').length,
-            declined: filtered.filter(c => c.status === 'declined').length,
-            blocked: filtered.filter(c => c.status === 'blocked').length,
-            averageDuration: this.calculateAverageDuration(filtered),
-            totalDuration: filtered.reduce((sum, c) => sum + (c.duration || 0), 0)
-        };
-    }
-
-    // Фильтрация по периоду
-    filterByPeriod(history, period) {
-        const now = new Date();
-        let startDate = new Date();
-        
-        switch (period) {
-            case 'today':
-                startDate.setHours(0, 0, 0, 0);
-                break;
-            case 'week':
-                startDate.setDate(now.getDate() - 7);
-                break;
-            case 'month':
-                startDate.setMonth(now.getMonth() - 1);
-                break;
-        }
-        
-        return history.filter(call => new Date(call.startTime) >= startDate);
-    }
-
-    // Расчет средней длительности
-    calculateAverageDuration(calls) {
-        const completed = calls.filter(c => c.duration > 0);
-        if (completed.length === 0) return 0;
-        
-        const total = completed.reduce((sum, c) => sum + c.duration, 0);
-        return Math.round(total / completed.length);
-    }
-}
-
-// Создание глобального экземпляра
-window.incomingManager = new IncomingCallManager();
-
-// Инициализация при загрузке
-document.addEventListener('DOMContentLoaded', () => {
-    // Запрос разрешения на уведомления
-    window.incomingManager.requestNotificationPermission();
+(function() {
+  const container = document.getElementById('page-content');
+  
+  // Состояние модуля
+  let incomingCalls = [];
+  let currentPage = 1;
+  let perPage = 20;
+  let totalPages = 1;
+  let totalRecords = 0;
+  let autoRefreshInterval = null;
+  let processingCalls = new Set();
+  
+  // Рендер страницы
+  const renderIncoming = async () => {
+    container.innerHTML = `
+      <div class="page-header">
+        <h2>📞 Входящие звонки</h2>
+        <div class="header-actions">
+          <button class="btn btn-outline" id="refresh-btn" title="Обновить">
+            🔄 Обновить
+          </button>
+        </div>
+      </div>
+      
+      <!-- Таблица -->
+      <div class="incoming-table-container">
+        <table class="table incoming-table" id="incoming-table">
+          <thead>
+            <tr>
+              <th>Дата/Время</th>
+              <th>Номер</th>
+              <th>Длит.</th>
+              <th>Текст</th>
+              <th>Запись</th>
+              <th>Действия</th>
+            </tr>
+          </thead>
+          <tbody id="incoming-tbody">
+            <tr><td colspan="6" class="text-center">Загрузка...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      
+      <!-- Мобильные карточки -->
+      <div class="incoming-cards" id="incoming-cards" style="display: none;"></div>
+      
+      <!-- Пагинация -->
+      <div class="pagination-container">
+        <div class="pagination-info">
+          Показано <span id="showing-start">0</span>-<span id="showing-end">0</span> 
+          из <span id="total-records">0</span>
+        </div>
+        <div class="pagination-controls">
+          <button class="btn btn-sm btn-outline" id="first-page" disabled>⏮️</button>
+          <button class="btn btn-sm btn-outline" id="prev-page" disabled>◀️</button>
+          <span class="page-indicator">
+            Стр. <span id="current-page">1</span> из <span id="total-pages">1</span>
+          </span>
+          <button class="btn btn-sm btn-outline" id="next-page" disabled>▶️</button>
+          <button class="btn btn-sm btn-outline" id="last-page" disabled>⏭️</button>
+        </div>
+      </div>
+      
+      <!-- Модальное окно для деталей -->
+      <div id="call-details-modal" class="modal" style="display: none;">
+        <div class="modal-content modal-lg">
+          <div class="modal-header">
+            <h3>Детали входящего звонка</h3>
+            <button class="close-modal">&times;</button>
+          </div>
+          <div class="modal-body" id="call-details-content"></div>
+        </div>
+      </div>
+    `;
     
-    // Загрузка настроек
-    const settings = window.incomingManager.loadSettings();
-    console.log('Incoming call manager initialized', settings);
-});
+    // Проверка мобильного устройства
+    checkMobileView();
+    window.addEventListener('resize', checkMobileView);
+    
+    // Загрузка данных
+    await loadIncomingCalls();
+    
+    // Привязка обработчиков
+    attachEventListeners();
+    
+    // Запуск автообновления для отслеживания статусов
+    startAutoRefresh();
+  };
+  
+  // Проверка мобильного вида
+  const checkMobileView = () => {
+    const isMobile = window.innerWidth < 768;
+    document.querySelector('.incoming-table-container').style.display = isMobile ? 'none' : 'block';
+    document.getElementById('incoming-cards').style.display = isMobile ? 'block' : 'none';
+    
+    if (isMobile) {
+      renderMobileCards();
+    }
+  };
+  
+  // Загрузка входящих звонков
+  const loadIncomingCalls = async () => {
+    const tbody = document.getElementById('incoming-tbody');
+    const cardsContainer = document.getElementById('incoming-cards');
+    
+    const loadingHtml = '<tr><td colspan="6" class="text-center">Загрузка...</td></tr>';
+    if (tbody) tbody.innerHTML = loadingHtml;
+    if (cardsContainer) cardsContainer.innerHTML = '<div class="text-center">Загрузка...</div>';
+    
+    try {
+      const params = new URLSearchParams({
+        skip: (currentPage - 1) * perPage,
+        limit: perPage
+      });
+      
+      const response = await App.apiGet(`/api/incoming-calls?${params.toString()}`);
+      
+      incomingCalls = response.items || response.calls || [];
+      totalRecords = response.total || incomingCalls.length;
+      totalPages = Math.ceil(totalRecords / perPage) || 1;
+      
+      // Обновление пагинации
+      updatePagination();
+      
+      if (incomingCalls.length === 0) {
+        const emptyHtml = `
+          <tr>
+            <td colspan="6" class="text-center">
+              <div class="empty-state">
+                <div class="empty-icon">📞</div>
+                <p>Нет входящих звонков</p>
+              </div>
+            </td>
+          </tr>
+        `;
+        if (tbody) tbody.innerHTML = emptyHtml;
+        if (cardsContainer) {
+          cardsContainer.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-icon">📞</div>
+              <p>Нет входящих звонков</p>
+            </div>
+          `;
+        }
+        return;
+      }
+      
+      // Рендер таблицы
+      if (tbody) {
+        tbody.innerHTML = incomingCalls.map(call => renderTableRow(call)).join('');
+      }
+      
+      // Рендер мобильных карточек
+      renderMobileCards();
+      
+      // Привязка обработчиков к строкам
+      attachRowEventListeners();
+      
+    } catch (err) {
+      console.error('Ошибка загрузки входящих звонков:', err);
+      const errorHtml = '<tr><td colspan="6" class="text-center text-error">Ошибка загрузки данных</td></tr>';
+      if (tbody) tbody.innerHTML = errorHtml;
+      if (cardsContainer) cardsContainer.innerHTML = '<div class="text-center text-error">Ошибка загрузки</div>';
+      App.showNotification('Не удалось загрузить входящие звонки', 'error');
+    }
+  };
+  
+  // Рендер строки таблицы
+  const renderTableRow = (call) => {
+    const status = call.transcription_status || 'pending';
+    const hasTranscription = status === 'completed' && call.transcription;
+    
+    return `
+      <tr data-call-id="${call.id}" class="incoming-row ${status}">
+        <td class="date-cell">${formatDateTime(call.call_date || call.created_at)}</td>
+        <td class="phone-cell">
+          <span class="phone-number">${formatPhoneNumber(call.caller_number)}</span>
+        </td>
+        <td class="duration-cell">${formatDuration(call.duration)}</td>
+        <td class="text-cell">
+          ${getTranscriptionDisplay(call)}
+        </td>
+        <td class="audio-cell">
+          ${renderAudioPlayer(call)}
+        </td>
+        <td class="actions-cell">
+          <div class="action-buttons">
+            ${getActionButtons(call)}
+          </div>
+        </td>
+      </tr>
+    `;
+  };
+  
+  // Отображение транскрибации
+  const getTranscriptionDisplay = (call) => {
+    const status = call.transcription_status || 'pending';
+    
+    switch (status) {
+      case 'pending':
+        return '<span class="transcription-status pending">⏳ pending</span>';
+      case 'processing':
+        processingCalls.add(call.id);
+        return '<span class="transcription-status processing">⏳ processing</span>';
+      case 'completed':
+        processingCalls.delete(call.id);
+        if (call.transcription) {
+          const text = call.transcription;
+          const truncated = text.length > 50 ? text.substring(0, 47) + '...' : text;
+          return `<span class="transcription-text" title="${escapeHtml(text)}">${escapeHtml(truncated)}</span>`;
+        }
+        return '<span class="transcription-status completed">✅ Готово</span>';
+      case 'failed':
+        processingCalls.delete(call.id);
+        return '<span class="transcription-status failed">❌ failed</span>';
+      default:
+        return '<span class="transcription-status">—</span>';
+    }
+  };
+  
+  // Рендер аудиоплеера
+  const renderAudioPlayer = (call) => {
+    if (!call.recording_path && !call.recording_url) {
+      return '<span class="no-recording">—</span>';
+    }
+    
+    const audioUrl = call.recording_url || `/api/incoming-calls/${call.id}/recording`;
+    const duration = formatDuration(call.duration);
+    
+    return `
+      <div class="mini-audio-player">
+        <button class="play-pause-btn" data-audio-url="${audioUrl}" title="Воспроизвести">▶️</button>
+        <span class="audio-duration">${duration}</span>
+      </div>
+    `;
+  };
+  
+  // Кнопки действий
+  const getActionButtons = (call) => {
+    const status = call.transcription_status || 'pending';
+    const buttons = [];
+    
+    // Кнопка скачивания (всегда)
+    buttons.push(`
+      <button class="btn btn-sm btn-outline download-call" 
+              data-id="${call.id}" 
+              title="Скачать запись">
+        ⬇
+      </button>
+    `);
+    
+    // Кнопка удаления (всегда)
+    buttons.push(`
+      <button class="btn btn-sm btn-outline-danger delete-call" 
+              data-id="${call.id}" 
+              title="Удалить">
+        🗑
+      </button>
+    `);
+    
+    return buttons.join('');
+  };
+  
+  // Рендер мобильных карточек
+  const renderMobileCards = () => {
+    const container = document.getElementById('incoming-cards');
+    if (!container) return;
+    
+    if (incomingCalls.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">📞</div>
+          <p>Нет входящих звонков</p>
+        </div>
+      `;
+      return;
+    }
+    
+    container.innerHTML = incomingCalls.map(call => {
+      const status = call.transcription_status || 'pending';
+      const hasTranscription = status === 'completed' && call.transcription;
+      
+      return `
+        <div class="incoming-card" data-call-id="${call.id}">
+          <div class="card-header">
+            <span class="card-date">${formatDateShort(call.call_date || call.created_at)}</span>
+            <span class="card-phone">📱 ${formatPhoneNumber(call.caller_number)}</span>
+          </div>
+          
+          <div class="card-body">
+            <div class="card-duration">⏱️ ${formatDuration(call.duration)}</div>
+            
+            <div class="card-transcription">
+              ${status === 'completed' && call.transcription ? `
+                <div class="transcription-preview">
+                  📄 "${escapeHtml(call.transcription)}"
+                </div>
+              ` : `
+                <div class="transcription-status-badge ${status}">
+                  📝 Статус: ${getStatusText(status)}
+                </div>
+              `}
+            </div>
+            
+            <div class="card-audio">
+              <button class="play-pause-btn mobile" data-audio-url="${call.recording_url || `/api/incoming-calls/${call.id}/recording`}">
+                ▶️ ${formatDuration(call.duration)}
+              </button>
+            </div>
+          </div>
+          
+          <div class="card-footer">
+            <div class="card-actions">
+              <button class="btn btn-sm btn-outline download-call" data-id="${call.id}">⬇</button>
+              <button class="btn btn-sm btn-outline-danger delete-call" data-id="${call.id}">🗑</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+    // Привязка обработчиков
+    attachCardEventListeners();
+  };
+  
+  // Обновление пагинации
+  const updatePagination = () => {
+    const startRecord = (currentPage - 1) * perPage + 1;
+    const endRecord = Math.min(currentPage * perPage, totalRecords);
+    
+    document.getElementById('showing-start').textContent = totalRecords > 0 ? startRecord : 0;
+    document.getElementById('showing-end').textContent = endRecord;
+    document.getElementById('total-records').textContent = totalRecords;
+    document.getElementById('current-page').textContent = currentPage;
+    document.getElementById('total-pages').textContent = totalPages;
+    
+    document.getElementById('first-page').disabled = currentPage === 1;
+    document.getElementById('prev-page').disabled = currentPage === 1;
+    document.getElementById('next-page').disabled = currentPage === totalPages;
+    document.getElementById('last-page').disabled = currentPage === totalPages;
+  };
+  
+  // Показать детали звонка
+  const showCallDetails = (call) => {
+    const modal = document.getElementById('call-details-modal');
+    const content = document.getElementById('call-details-content');
+    
+    const status = call.transcription_status || 'pending';
+    const audioUrl = call.recording_url || `/api/incoming-calls/${call.id}/recording`;
+    
+    content.innerHTML = `
+      <div class="call-details">
+        <div class="detail-grid">
+          <div class="detail-item">
+            <span class="detail-label">📱 Номер:</span>
+            <span class="detail-value">${formatPhoneNumber(call.caller_number)}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">📅 Дата:</span>
+            <span class="detail-value">${formatDateTime(call.call_date || call.created_at)}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">⏱️ Длительность:</span>
+            <span class="detail-value">${formatDuration(call.duration)}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">📁 Размер файла:</span>
+            <span class="detail-value">${formatFileSize(call.file_size)}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">📝 Статус:</span>
+            <span class="detail-value">
+              <span class="status-badge ${status}">${getStatusText(status)}</span>
+            </span>
+          </div>
+        </div>
+        
+        <div class="detail-section">
+          <h4>🎵 Запись</h4>
+          <audio controls src="${audioUrl}" style="width: 100%;"></audio>
+        </div>
+        
+        ${status === 'completed' && call.transcription ? `
+          <div class="detail-section">
+            <h4>📄 Транскрибация</h4>
+            <div class="transcription-box">${escapeHtml(call.transcription)}</div>
+          </div>
+        ` : ''}
+        
+        <div class="detail-section">
+          <h4>📋 Заметки</h4>
+          <textarea id="call-notes" class="form-control" rows="3" placeholder="Добавьте заметку...">${escapeHtml(call.notes || '')}</textarea>
+        </div>
+        
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="save-notes-btn" data-id="${call.id}">💾 Сохранить</button>
+          <button class="btn btn-outline" id="copy-transcription-btn" data-text="${escapeHtml(call.transcription || '')}">📋 Копировать текст</button>
+        </div>
+      </div>
+    `;
+    
+    modal.style.display = 'block';
+    
+    // Обработчики в модальном окне
+    document.getElementById('save-notes-btn')?.addEventListener('click', async (e) => {
+      const id = e.target.dataset.id;
+      const notes = document.getElementById('call-notes').value;
+      await saveNotes(id, notes);
+    });
+    
+    document.getElementById('copy-transcription-btn')?.addEventListener('click', (e) => {
+      const text = e.target.dataset.text;
+      navigator.clipboard?.writeText(text).then(() => {
+        App.showNotification('Текст скопирован', 'success');
+      });
+    });
+  };
+  
+  // Сохранение заметок
+  const saveNotes = async (id, notes) => {
+    try {
+      await App.apiPut(`/api/incoming-calls/${id}/notes`, { notes });
+      App.showNotification('Заметка сохранена', 'success');
+      
+      // Обновить локальные данные
+      const call = incomingCalls.find(c => c.id == id);
+      if (call) call.notes = notes;
+      
+    } catch (err) {
+      console.error('Ошибка сохранения заметки:', err);
+      App.showNotification('Ошибка сохранения заметки', 'error');
+    }
+  };
+  
+  // Скачивание записи
+  const downloadRecording = (id) => {
+    const url = `/api/incoming-calls/${id}/recording?download=true`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `incoming_${id}.wav`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    
+    App.showNotification('Скачивание началось', 'info');
+  };
+  
+  // Удаление записи
+  const deleteCall = async (id) => {
+    if (!confirm('Удалить запись о звонке? Файл также будет удален.')) return;
+    
+    try {
+      await App.apiDelete(`/api/incoming-calls/${id}`);
+      App.showNotification('Запись удалена', 'success');
+      
+      // Удалить из локального массива
+      incomingCalls = incomingCalls.filter(c => c.id != id);
+      totalRecords--;
+      totalPages = Math.ceil(totalRecords / perPage) || 1;
+      
+      if (incomingCalls.length === 0 && currentPage > 1) {
+        currentPage--;
+      }
+      
+      await loadIncomingCalls();
+      
+    } catch (err) {
+      console.error('Ошибка удаления:', err);
+      App.showNotification('Ошибка удаления записи', 'error');
+    }
+  };
+  
+  // Воспроизведение аудио
+  const playAudio = (url, button) => {
+    // Если уже играет - остановить
+    if (window.currentAudio && window.currentAudio.src === url) {
+      window.currentAudio.pause();
+      window.currentAudio = null;
+      button.textContent = '▶️';
+      return;
+    }
+    
+    // Остановить предыдущее
+    if (window.currentAudio) {
+      window.currentAudio.pause();
+      document.querySelectorAll('.play-pause-btn').forEach(btn => btn.textContent = '▶️');
+    }
+    
+    const audio = new Audio(url);
+    audio.play();
+    button.textContent = '⏸️';
+    
+    audio.onended = () => {
+      button.textContent = '▶️';
+      window.currentAudio = null;
+    };
+    
+    audio.onerror = () => {
+      App.showNotification('Ошибка воспроизведения', 'error');
+      button.textContent = '▶️';
+      window.currentAudio = null;
+    };
+    
+    window.currentAudio = audio;
+  };
+  
+  // Автообновление для отслеживания статусов транскрибации
+  const startAutoRefresh = () => {
+    if (autoRefreshInterval) {
+      clearInterval(autoRefreshInterval);
+    }
+    
+    autoRefreshInterval = setInterval(async () => {
+      // Проверяем, есть ли звонки в статусе processing
+      const processingIds = incomingCalls
+        .filter(c => c.transcription_status === 'processing')
+        .map(c => c.id);
+      
+      if (processingIds.length > 0) {
+        // Тихий рефреш
+        await loadIncomingCalls();
+      }
+    }, 5000); // Проверка каждые 5 секунд
+  };
+  
+  // Остановка автообновления при уходе со страницы
+  const stopAutoRefresh = () => {
+    if (autoRefreshInterval) {
+      clearInterval(autoRefreshInterval);
+      autoRefreshInterval = null;
+    }
+  };
+  
+  // ============ ОБРАБОТЧИКИ СОБЫТИЙ ============
+  
+  const attachEventListeners = () => {
+    // Обновление
+    document.getElementById('refresh-btn')?.addEventListener('click', loadIncomingCalls);
+    
+    // Пагинация
+    document.getElementById('first-page')?.addEventListener('click', () => {
+      currentPage = 1;
+      loadIncomingCalls();
+    });
+    
+    document.getElementById('prev-page')?.addEventListener('click', () => {
+      if (currentPage > 1) {
+        currentPage--;
+        loadIncomingCalls();
+      }
+    });
+    
+    document.getElementById('next-page')?.addEventListener('click', () => {
+      if (currentPage < totalPages) {
+        currentPage++;
+        loadIncomingCalls();
+      }
+    });
+    
+    document.getElementById('last-page')?.addEventListener('click', () => {
+      currentPage = totalPages;
+      loadIncomingCalls();
+    });
+    
+    // Закрытие модального окна
+    document.querySelector('.close-modal')?.addEventListener('click', () => {
+      document.getElementById('call-details-modal').style.display = 'none';
+    });
+    
+    // Клик вне модального окна
+    window.addEventListener('click', (e) => {
+      const modal = document.getElementById('call-details-modal');
+      if (e.target === modal) {
+        modal.style.display = 'none';
+      }
+    });
+  };
+  
+  const attachRowEventListeners = () => {
+    // Клик по строке - показать детали
+    document.querySelectorAll('.incoming-row').forEach(row => {
+      row.addEventListener('click', (e) => {
+        // Игнорируем клики по кнопкам
+        if (e.target.closest('button') || e.target.closest('.play-pause-btn')) {
+          return;
+        }
+        
+        const id = parseInt(row.dataset.callId);
+        const call = incomingCalls.find(c => c.id === id);
+        if (call) {
+          showCallDetails(call);
+        }
+      });
+    });
+    
+    // Кнопки воспроизведения
+    document.querySelectorAll('.play-pause-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const url = btn.dataset.audioUrl;
+        playAudio(url, btn);
+      });
+    });
+    
+    // Кнопки скачивания
+    document.querySelectorAll('.download-call').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = parseInt(btn.dataset.id);
+        downloadRecording(id);
+      });
+    });
+    
+    // Кнопки удаления
+    document.querySelectorAll('.delete-call').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = parseInt(btn.dataset.id);
+        deleteCall(id);
+      });
+    });
+  };
+  
+  const attachCardEventListeners = () => {
+    // Клик по карточке
+    document.querySelectorAll('.incoming-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return;
+        
+        const id = parseInt(card.dataset.callId);
+        const call = incomingCalls.find(c => c.id === id);
+        if (call) {
+          showCallDetails(call);
+        }
+      });
+    });
+    
+    // Кнопки в карточках
+    document.querySelectorAll('.incoming-card .play-pause-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const url = btn.dataset.audioUrl;
+        playAudio(url, btn);
+      });
+    });
+    
+    document.querySelectorAll('.incoming-card .download-call').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = parseInt(btn.dataset.id);
+        downloadRecording(id);
+      });
+    });
+    
+    document.querySelectorAll('.incoming-card .delete-call').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = parseInt(btn.dataset.id);
+        deleteCall(id);
+      });
+    });
+  };
+  
+  // ============ УТИЛИТЫ ============
+  
+  const formatDateTime = (dateStr) => {
+    if (!dateStr) return '—';
+    const date = new Date(dateStr);
+    return date.toLocaleString('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    }).replace(',', '');
+  };
+  
+  const formatDateShort = (dateStr) => {
+    if (!dateStr) return '—';
+    const date = new Date(dateStr);
+    return date.toLocaleString('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).replace(',', '');
+  };
+  
+  const formatPhoneNumber = (phone) => {
+    if (!phone) return '—';
+    const cleaned = phone.replace(/\D/g, '');
+    if (cleaned.length === 11) {
+      return `+${cleaned[0]} ${cleaned.slice(1, 4)} ${cleaned.slice(4, 7)}-${cleaned.slice(7, 9)}-${cleaned.slice(9, 11)}`;
+    }
+    return phone;
+  };
+  
+  const formatDuration = (seconds) => {
+    if (!seconds) return '0:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+  
+  const formatFileSize = (bytes) => {
+    if (!bytes) return '—';
+    const units = ['B', 'KB', 'MB'];
+    let size = bytes;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+    return `${size.toFixed(0)} ${units[unitIndex]}`;
+  };
+  
+  const getStatusText = (status) => {
+    const statusMap = {
+      'pending': 'ожидание',
+      'processing': 'обработка',
+      'completed': 'завершено',
+      'failed': 'ошибка'
+    };
+    return statusMap[status] || status;
+  };
+  
+  const escapeHtml = (text) => {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  };
+  
+  // Очистка при уходе со страницы
+  const cleanup = () => {
+    stopAutoRefresh();
+    if (window.currentAudio) {
+      window.currentAudio.pause();
+      window.currentAudio = null;
+    }
+  };
+  
+  // Экспорт
+  window.IncomingPage = { 
+    render: renderIncoming,
+    cleanup: cleanup
+  };
+})();
