@@ -28,9 +28,11 @@ const AppState = {
     },
     campaigns: [],
     contacts: [],
+    contactGroups: [],
     audioFiles: [],
     users: [],
-    settings: {}
+    settings: {},
+    chart: null
 };
 
 const API_BASE = '/api';
@@ -44,13 +46,10 @@ document.addEventListener('DOMContentLoaded', () => {
         AppState.refreshToken = savedRefreshToken;
         tryAutoLogin();
     }
-    
-    // Setup event listeners
     setupEventListeners();
 });
 
 function setupEventListeners() {
-    // Login form
     const loginForm = document.getElementById('loginForm');
     if (loginForm) {
         loginForm.addEventListener('submit', (e) => {
@@ -58,14 +57,6 @@ function setupEventListeners() {
             login();
         });
     }
-    
-    // Enter key on login inputs
-    const loginInputs = document.querySelectorAll('#loginUsername, #loginPassword');
-    loginInputs.forEach(input => {
-        input.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') login();
-        });
-    });
 }
 
 // =============================================
@@ -85,7 +76,6 @@ async function tryAutoLogin() {
             showApp();
         } else {
             localStorage.removeItem('refresh_token');
-            AppState.refreshToken = '';
         }
     } catch (error) {
         console.error('Auto login failed:', error);
@@ -137,7 +127,7 @@ async function logout() {
     try {
         await authFetch(`${API_BASE}/auth/logout`, { method: 'POST' });
     } catch (error) {
-        // Ignore logout errors
+        // Ignore
     }
     
     localStorage.removeItem('refresh_token');
@@ -148,8 +138,6 @@ async function logout() {
     
     document.getElementById('appScreen').style.display = 'none';
     document.getElementById('loginScreen').style.display = 'flex';
-    document.getElementById('loginUsername').value = '';
-    document.getElementById('loginPassword').value = '';
 }
 
 async function changePassword() {
@@ -171,16 +159,12 @@ async function changePassword() {
     try {
         const response = await authFetch(`${API_BASE}/auth/change-password`, {
             method: 'POST',
-            body: JSON.stringify({
-                old_password: oldPassword,
-                new_password: newPassword1
-            })
+            body: JSON.stringify({ old_password: oldPassword, new_password: newPassword1 })
         });
         
         if (response.ok) {
             closePasswordModal();
-            await loadCurrentUser();
-            showApp();
+            showToast('Пароль успешно изменён', 'success');
         } else {
             const data = await response.json();
             errorDiv.textContent = data.detail || 'Ошибка смены пароля';
@@ -188,6 +172,19 @@ async function changePassword() {
     } catch (error) {
         errorDiv.textContent = 'Ошибка сервера';
     }
+}
+
+function showPasswordModal() {
+    document.getElementById('passwordModal').style.display = 'flex';
+}
+
+function closePasswordModal() {
+    document.getElementById('passwordModal').style.display = 'none';
+}
+
+function openPasswordModal() {
+    closeProfileModal();
+    showPasswordModal();
 }
 
 // =============================================
@@ -264,17 +261,6 @@ function showApp() {
     startPeriodicRefresh();
 }
 
-function showPasswordModal() {
-    document.getElementById('passwordModal').style.display = 'flex';
-    document.getElementById('oldPassword').value = '';
-    document.getElementById('newPassword1').value = '';
-    document.getElementById('newPassword2').value = '';
-}
-
-function closePasswordModal() {
-    document.getElementById('passwordModal').style.display = 'none';
-}
-
 function updateUserDisplay() {
     const userDisplay = document.getElementById('userDisplay');
     if (userDisplay && AppState.user) {
@@ -319,18 +305,36 @@ async function loadTabContent(tabId) {
             break;
         case 'contacts':
             await loadContacts();
+            await loadContactGroupsForSelect();
+            break;
+        case 'contactGroups':
+            await loadContactGroups();
             break;
         case 'history':
             await loadHistory();
+            await loadCampaignsForFilter();
             break;
         case 'audio':
             await loadAudio();
+            await loadCampaignsForAudioSelect();
+            break;
+        case 'blacklist':
+            await loadBlacklist();
             break;
         case 'users':
             await loadUsers();
             break;
         case 'settings':
             await loadSettings();
+            break;
+        case 'audit':
+            await loadAuditLog();
+            break;
+        case 'apiTokens':
+            await loadApiTokens();
+            break;
+        case 'webhooks':
+            await loadWebhooks();
             break;
     }
 }
@@ -342,6 +346,38 @@ function startPeriodicRefresh() {
             await loadDashboardStats();
         }
     }, 3000);
+}
+
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toastContainer');
+    if (!container) return;
+    
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `
+        <span>${message}</span>
+        <button onclick="this.parentElement.remove()" style="background:none;border:none;color:white;cursor:pointer;margin-left:10px;">&times;</button>
+    `;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 5000);
+}
+
+// =============================================
+// Profile
+// =============================================
+function showUserProfile() {
+    if (AppState.user) {
+        document.getElementById('profileUsername').textContent = AppState.user.username;
+        document.getElementById('profileEmail').textContent = AppState.user.email || '-';
+        document.getElementById('profileFullName').textContent = AppState.user.full_name || '-';
+        document.getElementById('profileRole').textContent = AppState.user.role;
+        document.getElementById('profileLastLogin').textContent = AppState.user.last_login ? new Date(AppState.user.last_login).toLocaleString() : '-';
+        document.getElementById('profileModal').style.display = 'flex';
+    }
+}
+
+function closeProfileModal() {
+    document.getElementById('profileModal').style.display = 'none';
 }
 
 // =============================================
@@ -392,15 +428,14 @@ async function toggleSystem() {
     }
     
     try {
-        const response = await authFetch(`${API_BASE}/system/${action}`, {
-            method: 'POST'
-        });
+        const response = await authFetch(`${API_BASE}/system/${action}`, { method: 'POST' });
         
         if (response.ok) {
             await refreshSystemStatus();
+            showToast(`Система ${AppState.systemEnabled ? 'включена' : 'остановлена'}`, 'success');
         }
     } catch (error) {
-        alert('Ошибка сервера');
+        showToast('Ошибка сервера', 'error');
     }
 }
 
@@ -411,6 +446,7 @@ async function loadDashboard() {
     await loadDashboardStats();
     await loadActiveCampaigns();
     await loadRecentCalls();
+    await loadChart();
 }
 
 async function loadDashboardStats() {
@@ -439,7 +475,7 @@ async function loadActiveCampaigns() {
             const campaigns = await response.json();
             const container = document.getElementById('activeCampaignsList');
             
-            if (campaigns.length === 0) {
+            if (!campaigns || campaigns.length === 0) {
                 container.innerHTML = '<div class="loading">Нет активных кампаний</div>';
                 return;
             }
@@ -488,6 +524,58 @@ async function loadRecentCalls() {
     }
 }
 
+async function loadChart() {
+    try {
+        const response = await authFetch(`${API_BASE}/stats`);
+        if (response.ok) {
+            const data = await response.json();
+            
+            const ctx = document.getElementById('statsChart')?.getContext('2d');
+            if (!ctx) return;
+            
+            if (AppState.chart) {
+                AppState.chart.destroy();
+            }
+            
+            const daily = data.daily || [];
+            
+            AppState.chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: daily.map(d => d.date).reverse(),
+                    datasets: [{
+                        label: 'Всего звонков',
+                        data: daily.map(d => d.total).reverse(),
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        fill: true
+                    }, {
+                        label: 'Согласий',
+                        data: daily.map(d => d.agreed).reverse(),
+                        borderColor: '#10b981',
+                        backgroundColor: 'transparent'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#f1f5f9' }
+                        }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#94a3b8' } },
+                        y: { ticks: { color: '#94a3b8' } }
+                    }
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Chart load failed:', error);
+    }
+}
+
 // =============================================
 // Campaigns
 // =============================================
@@ -528,15 +616,20 @@ function renderCampaignsTable(campaigns) {
             <td><span class="status-badge status-${c.status}">${statusMap[c.status] || c.status}</span></td>
             <td>${c.max_calls}</td>
             <td>${c.cps}</td>
-            <td>${c.stats?.called_contacts || 0}/${c.stats?.total_contacts || 0}</td>
+            <td>
+                <div class="progress-bar" style="width:80px;">
+                    <div class="progress-fill" style="width:${c.stats?.progress_percent || 0}%"></div>
+                </div>
+                ${c.stats?.called_contacts || 0}/${c.stats?.total_contacts || 0}
+            </td>
             <td>${c.stats?.conversion_rate || 0}%</td>
             <td class="actions">
+                <button class="btn btn-outline btn-sm" onclick="viewCampaignDetail(${c.id})" title="Просмотр">👁</button>
                 ${c.status === 'draft' ? `<button class="btn btn-success btn-sm" onclick="startCampaign(${c.id})" title="Запустить">▶</button>` : ''}
                 ${c.status === 'running' ? `<button class="btn btn-warning btn-sm" onclick="pauseCampaign(${c.id})" title="Пауза">⏸</button>` : ''}
                 ${c.status === 'paused' ? `<button class="btn btn-success btn-sm" onclick="resumeCampaign(${c.id})" title="Продолжить">▶</button>` : ''}
                 ${c.status === 'running' && AppState.userRole === 'admin' ? `<button class="btn btn-danger btn-sm" onclick="stopCampaign(${c.id})" title="Остановить">⏹</button>` : ''}
-                <button class="btn btn-outline btn-sm" onclick="viewCampaign(${c.id})" title="Просмотр">👁</button>
-                ${AppState.userRole === 'admin' ? `<button class="btn btn-outline btn-sm" onclick="deleteCampaign(${c.id})" title="Удалить">🗑</button>` : ''}
+                ${AppState.userRole === 'admin' && c.status !== 'running' ? `<button class="btn btn-outline btn-sm" onclick="deleteCampaign(${c.id})" title="Удалить">🗑</button>` : ''}
             </td>
         </tr>
     `).join('');
@@ -544,18 +637,17 @@ function renderCampaignsTable(campaigns) {
 
 async function startCampaign(id) {
     try {
-        const response = await authFetch(`${API_BASE}/campaigns/${id}/start`, {
-            method: 'POST'
-        });
+        const response = await authFetch(`${API_BASE}/campaigns/${id}/start`, { method: 'POST' });
         
         if (response.ok) {
             loadCampaigns();
+            showToast('Кампания запущена', 'success');
         } else {
             const data = await response.json();
-            alert(data.detail || 'Ошибка запуска');
+            showToast(data.detail || 'Ошибка запуска', 'error');
         }
     } catch (error) {
-        alert('Ошибка сервера');
+        showToast('Ошибка сервера', 'error');
     }
 }
 
@@ -563,43 +655,40 @@ async function stopCampaign(id) {
     if (!confirm('Остановить кампанию?')) return;
     
     try {
-        const response = await authFetch(`${API_BASE}/campaigns/${id}/stop`, {
-            method: 'POST'
-        });
+        const response = await authFetch(`${API_BASE}/campaigns/${id}/stop`, { method: 'POST' });
         
         if (response.ok) {
             loadCampaigns();
+            showToast('Кампания остановлена', 'success');
         }
     } catch (error) {
-        alert('Ошибка сервера');
+        showToast('Ошибка сервера', 'error');
     }
 }
 
 async function pauseCampaign(id) {
     try {
-        const response = await authFetch(`${API_BASE}/campaigns/${id}/pause`, {
-            method: 'POST'
-        });
+        const response = await authFetch(`${API_BASE}/campaigns/${id}/pause`, { method: 'POST' });
         
         if (response.ok) {
             loadCampaigns();
+            showToast('Кампания приостановлена', 'success');
         }
     } catch (error) {
-        alert('Ошибка сервера');
+        showToast('Ошибка сервера', 'error');
     }
 }
 
 async function resumeCampaign(id) {
     try {
-        const response = await authFetch(`${API_BASE}/campaigns/${id}/resume`, {
-            method: 'POST'
-        });
+        const response = await authFetch(`${API_BASE}/campaigns/${id}/resume`, { method: 'POST' });
         
         if (response.ok) {
             loadCampaigns();
+            showToast('Кампания возобновлена', 'success');
         }
     } catch (error) {
-        alert('Ошибка сервера');
+        showToast('Ошибка сервера', 'error');
     }
 }
 
@@ -607,23 +696,51 @@ async function deleteCampaign(id) {
     if (!confirm('Удалить кампанию? Это действие нельзя отменить.')) return;
     
     try {
-        const response = await authFetch(`${API_BASE}/campaigns/${id}`, {
-            method: 'DELETE'
-        });
+        const response = await authFetch(`${API_BASE}/campaigns/${id}`, { method: 'DELETE' });
         
         if (response.ok) {
             loadCampaigns();
+            showToast('Кампания удалена', 'success');
         }
     } catch (error) {
-        alert('Ошибка сервера');
+        showToast('Ошибка сервера', 'error');
     }
 }
 
-function viewCampaign(id) {
-    const campaign = AppState.campaigns.find(c => c.id === id);
-    if (campaign) {
-        alert(`Кампания: ${campaign.name}\nСтатус: ${campaign.status}\nПрогресс: ${campaign.stats?.progress_percent || 0}%`);
+async function viewCampaignDetail(id) {
+    try {
+        const response = await authFetch(`${API_BASE}/campaigns/${id}`);
+        if (response.ok) {
+            const data = await response.json();
+            const campaign = data.campaign;
+            const stats = data.stats;
+            
+            document.getElementById('campaignDetailTitle').textContent = campaign.name;
+            
+            document.getElementById('campaignDetailStats').innerHTML = `
+                <div class="stats-grid">
+                    <div class="stat-card"><div class="stat-value">${stats.total_calls || 0}</div><div>Звонков</div></div>
+                    <div class="stat-card"><div class="stat-value">${stats.agreed || 0}</div><div>Согласий</div></div>
+                    <div class="stat-card"><div class="stat-value">${stats.busy || 0}</div><div>Занято</div></div>
+                    <div class="stat-card"><div class="stat-value">${stats.noanswer || 0}</div><div>Нет ответа</div></div>
+                    <div class="stat-card"><div class="stat-value">${stats.conversion_rate || 0}%</div><div>Конверсия</div></div>
+                    <div class="stat-card"><div class="stat-value">${stats.avg_duration || 0}с</div><div>Ср. длит.</div></div>
+                </div>
+            `;
+            
+            document.getElementById('campaignScheduleInfo').innerHTML = campaign.schedule 
+                ? `<p>Расписание: ${JSON.stringify(campaign.schedule)}</p>`
+                : '<p>Расписание не настроено</p>';
+            
+            document.getElementById('campaignDetailModal').style.display = 'flex';
+        }
+    } catch (error) {
+        console.error('Campaign detail failed:', error);
     }
+}
+
+function closeCampaignDetailModal() {
+    document.getElementById('campaignDetailModal').style.display = 'none';
 }
 
 function openCampaignModal() {
@@ -633,56 +750,115 @@ function openCampaignModal() {
 
 function closeCampaignModal() {
     document.getElementById('campaignModal').style.display = 'none';
-    document.getElementById('campaignName').value = '';
+    document.getElementById('campaignNameInput').value = '';
     document.getElementById('campaignDescription').value = '';
 }
 
 async function createCampaign() {
-    const name = document.getElementById('campaignName').value;
+    const name = document.getElementById('campaignNameInput').value;
     const description = document.getElementById('campaignDescription').value;
     const maxCalls = parseInt(document.getElementById('campaignMaxCalls').value);
     const cps = parseInt(document.getElementById('campaignCps').value);
-    const audioId = document.getElementById('campaignAudio').value;
+    const audioId = document.getElementById('campaignAudioSelect').value;
+    const callerId = document.getElementById('campaignCallerId').value;
     
     if (!name) {
-        alert('Введите название кампании');
+        showToast('Введите название кампании', 'warning');
         return;
     }
+    
+    const data = { name, description, max_calls: maxCalls, cps, audio_id: audioId || null, caller_id: callerId || null };
+    
+    // Schedule
+    if (document.getElementById('campaignScheduleEnabled').checked) {
+        data.schedule = {
+            enabled: true,
+            start_at: document.getElementById('scheduleStartAt').value || null,
+            end_at: document.getElementById('scheduleEndAt').value || null,
+            schedule_type: document.getElementById('scheduleType').value
+        };
+    }
+    
+    // Retry strategy
+    data.retry_strategy = {
+        busy: parseInt(document.getElementById('retryBusyMax').value),
+        busy_delay: parseInt(document.getElementById('retryBusyDelay').value),
+        noanswer: parseInt(document.getElementById('retryNoanswerMax').value),
+        noanswer_delay: parseInt(document.getElementById('retryNoanswerDelay').value),
+        failed: parseInt(document.getElementById('retryFailedMax').value),
+        failed_delay: parseInt(document.getElementById('retryFailedDelay').value)
+    };
     
     try {
         const response = await authFetch(`${API_BASE}/campaigns`, {
             method: 'POST',
-            body: JSON.stringify({
-                name,
-                description,
-                max_calls: maxCalls,
-                cps: cps,
-                audio_id: audioId || null
-            })
+            body: JSON.stringify(data)
         });
         
         if (response.ok) {
             closeCampaignModal();
             loadCampaigns();
+            showToast('Кампания создана', 'success');
         } else {
-            const data = await response.json();
-            alert(data.detail || 'Ошибка создания');
+            const err = await response.json();
+            showToast(err.detail || 'Ошибка создания', 'error');
         }
     } catch (error) {
-        alert('Ошибка сервера');
+        showToast('Ошибка сервера', 'error');
+    }
+}
+
+async function loadCampaignsForFilter() {
+    try {
+        const response = await authFetch(`${API_BASE}/campaigns`);
+        if (response.ok) {
+            const campaigns = await response.json();
+            const select = document.getElementById('historyFilterCampaign');
+            if (select) {
+                select.innerHTML = '<option value="">Все кампании</option>' +
+                    campaigns.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+            }
+        }
+    } catch (error) {
+        console.error('Load campaigns for filter failed:', error);
+    }
+}
+
+async function loadCampaignsForAudioSelect() {
+    try {
+        const response = await authFetch(`${API_BASE}/campaigns`);
+        if (response.ok) {
+            const campaigns = await response.json();
+            const selectAudio = document.getElementById('audioCampaign');
+            const selectUpload = document.getElementById('audioUploadCampaign');
+            const selectCampaign = document.getElementById('campaignAudioSelect');
+            
+            const options = '<option value="">Нет</option>' +
+                campaigns.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+            
+            if (selectAudio) selectAudio.innerHTML = options;
+            if (selectUpload) selectUpload.innerHTML = options;
+            if (selectCampaign) selectCampaign.innerHTML = '<option value="">Стандартное приветствие</option>' + 
+                campaigns.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+        }
+    } catch (error) {
+        console.error('Load campaigns for audio failed:', error);
     }
 }
 
 // =============================================
 // Contacts
 // =============================================
-async function loadContacts() {
+async function loadContacts(page = 1) {
+    const search = document.getElementById('contactSearch')?.value || '';
+    
     try {
-        const response = await authFetch(`${API_BASE}/contacts?limit=100`);
+        const response = await authFetch(`${API_BASE}/contacts?page=${page}&page_size=20&search=${encodeURIComponent(search)}`);
         if (response.ok) {
             const data = await response.json();
-            AppState.contacts = data.contacts || [];
+            AppState.contacts = data.items || [];
             renderContactsList();
+            renderPagination('contactsPagination', page, data.total_pages || 1, loadContacts);
         }
     } catch (error) {
         console.error('Contacts load failed:', error);
@@ -699,20 +875,122 @@ function renderContactsList() {
     
     container.innerHTML = AppState.contacts.map(c => `
         <div class="contact-item">
-            <div>
+            <div class="contact-info">
                 <strong>${c.phone}</strong>
                 ${c.name ? ` - ${c.name}` : ''}
                 ${c.email ? `<br><small>${c.email}</small>` : ''}
+                <div class="contact-tags">
+                    ${c.tags ? c.tags.map(t => `<span class="tag">${t}</span>`).join('') : ''}
+                </div>
             </div>
-            <div class="contact-tags">
-                ${c.tags ? c.tags.map(t => `<span class="tag">${t}</span>`).join('') : ''}
-            </div>
-            <div>
+            <div class="contact-actions">
                 ${c.blacklisted ? '<span class="status-badge status-declined">Заблокирован</span>' : ''}
-                <span class="status-badge status-${c.status}">${c.status}</span>
+                <button class="btn btn-outline btn-sm" onclick="editContact(${c.id})" title="Редактировать">✏</button>
+                <button class="btn btn-outline btn-sm" onclick="deleteContact(${c.id})" title="Удалить">🗑</button>
             </div>
         </div>
     `).join('');
+}
+
+function searchContacts() {
+    loadContacts(1);
+}
+
+function openContactModal(contactId = null) {
+    const modal = document.getElementById('contactModal');
+    const title = document.getElementById('contactModalTitle');
+    const deleteBtn = document.getElementById('contactDeleteBtn');
+    
+    if (contactId) {
+        title.textContent = 'Редактировать контакт';
+        deleteBtn.style.display = 'inline-block';
+        
+        const contact = AppState.contacts.find(c => c.id === contactId);
+        if (contact) {
+            document.getElementById('contactId').value = contact.id;
+            document.getElementById('contactPhone').value = contact.phone;
+            document.getElementById('contactName').value = contact.name || '';
+            document.getElementById('contactEmail').value = contact.email || '';
+            document.getElementById('contactGroup').value = contact.group_id || '';
+            document.getElementById('contactTags').value = contact.tags ? contact.tags.join(', ') : '';
+            document.getElementById('contactNotes').value = contact.notes || '';
+        }
+    } else {
+        title.textContent = 'Новый контакт';
+        deleteBtn.style.display = 'none';
+        document.getElementById('contactId').value = '';
+        document.getElementById('contactPhone').value = '';
+        document.getElementById('contactName').value = '';
+        document.getElementById('contactEmail').value = '';
+        document.getElementById('contactGroup').value = '';
+        document.getElementById('contactTags').value = '';
+        document.getElementById('contactNotes').value = '';
+    }
+    
+    loadContactGroupsForSelect();
+    modal.style.display = 'flex';
+}
+
+function closeContactModal() {
+    document.getElementById('contactModal').style.display = 'none';
+}
+
+function editContact(id) {
+    openContactModal(id);
+}
+
+async function saveContact() {
+    const id = document.getElementById('contactId').value;
+    const phone = document.getElementById('contactPhone').value;
+    const name = document.getElementById('contactName').value;
+    const email = document.getElementById('contactEmail').value;
+    const groupId = document.getElementById('contactGroup').value;
+    const tags = document.getElementById('contactTags').value.split(',').map(t => t.trim()).filter(t => t);
+    const notes = document.getElementById('contactNotes').value;
+    
+    if (!phone) {
+        showToast('Введите номер телефона', 'warning');
+        return;
+    }
+    
+    const data = { phone, name, email, group_id: groupId || null, tags, notes };
+    
+    try {
+        const url = id ? `${API_BASE}/contacts/${id}` : `${API_BASE}/contacts`;
+        const method = id ? 'PUT' : 'POST';
+        
+        const response = await authFetch(url, { method, body: JSON.stringify(data) });
+        
+        if (response.ok) {
+            closeContactModal();
+            loadContacts();
+            showToast(id ? 'Контакт обновлён' : 'Контакт создан', 'success');
+        } else {
+            const err = await response.json();
+            showToast(err.detail || 'Ошибка сохранения', 'error');
+        }
+    } catch (error) {
+        showToast('Ошибка сервера', 'error');
+    }
+}
+
+async function deleteContact(id) {
+    if (!id) {
+        id = document.getElementById('contactId').value;
+    }
+    if (!confirm('Удалить контакт?')) return;
+    
+    try {
+        const response = await authFetch(`${API_BASE}/contacts/${id}`, { method: 'DELETE' });
+        
+        if (response.ok) {
+            closeContactModal();
+            loadContacts();
+            showToast('Контакт удалён', 'success');
+        }
+    } catch (error) {
+        showToast('Ошибка сервера', 'error');
+    }
 }
 
 async function importContacts() {
@@ -725,27 +1003,169 @@ async function importContacts() {
         .map(phone => ({ phone }));
     
     if (phones.length === 0) {
-        alert('Введите номера телефонов');
+        showToast('Введите номера телефонов', 'warning');
         return;
     }
     
     try {
         const response = await authFetch(`${API_BASE}/contacts/import`, {
             method: 'POST',
-            body: JSON.stringify({
-                group_id: groupId || null,
-                contacts: phones
-            })
+            body: JSON.stringify({ group_id: groupId || null, contacts: phones })
         });
         
         if (response.ok) {
             const data = await response.json();
-            alert(`Импортировано: ${data.imported}\nПропущено: ${data.skipped}\nВ черном списке: ${data.blacklisted || 0}`);
             document.getElementById('contactsImport').value = '';
             loadContacts();
+            showToast(`Импортировано: ${data.imported}, пропущено: ${data.skipped}`, 'success');
         }
     } catch (error) {
-        alert('Ошибка импорта');
+        showToast('Ошибка импорта', 'error');
+    }
+}
+
+// =============================================
+// Contact Groups
+// =============================================
+async function loadContactGroups() {
+    try {
+        const response = await authFetch(`${API_BASE}/contact-groups`);
+        if (response.ok) {
+            const data = await response.json();
+            AppState.contactGroups = data.items || data;
+            renderContactGroupsList();
+        }
+    } catch (error) {
+        console.error('Contact groups load failed:', error);
+    }
+}
+
+function renderContactGroupsList() {
+    const container = document.getElementById('contactGroupsList');
+    
+    if (!AppState.contactGroups || AppState.contactGroups.length === 0) {
+        container.innerHTML = '<div class="loading">Нет групп</div>';
+        return;
+    }
+    
+    container.innerHTML = AppState.contactGroups.map(g => `
+        <div class="group-item">
+            <div class="group-color" style="background: ${g.color}; width: 20px; height: 20px; border-radius: 4px; margin-right: 10px;"></div>
+            <div class="group-info">
+                <strong>${g.name}</strong>
+                ${g.description ? `<br><small>${g.description}</small>` : ''}
+                <span class="group-count">(${g.contacts_count || 0})</span>
+            </div>
+            <div class="group-actions">
+                <button class="btn btn-outline btn-sm" onclick="editContactGroup(${g.id})">✏</button>
+                <button class="btn btn-outline btn-sm" onclick="deleteContactGroup(${g.id})">🗑</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function loadContactGroupsForSelect() {
+    try {
+        const response = await authFetch(`${API_BASE}/contact-groups`);
+        if (response.ok) {
+            const groups = await response.json();
+            const items = groups.items || groups;
+            
+            const selects = ['contactGroupSelect', 'contactGroup'];
+            selects.forEach(id => {
+                const select = document.getElementById(id);
+                if (select) {
+                    select.innerHTML = '<option value="">Без группы</option>' +
+                        items.map(g => `<option value="${g.id}">${g.name}</option>`).join('');
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Load groups for select failed:', error);
+    }
+}
+
+function openContactGroupModal(groupId = null) {
+    const modal = document.getElementById('contactGroupModal');
+    const title = document.getElementById('contactGroupModalTitle');
+    const deleteBtn = document.getElementById('contactGroupDeleteBtn');
+    
+    if (groupId) {
+        title.textContent = 'Редактировать группу';
+        deleteBtn.style.display = 'inline-block';
+        
+        const group = AppState.contactGroups.find(g => g.id === groupId);
+        if (group) {
+            document.getElementById('contactGroupId').value = group.id;
+            document.getElementById('contactGroupName').value = group.name;
+            document.getElementById('contactGroupDescription').value = group.description || '';
+            document.getElementById('contactGroupColor').value = group.color || '#667eea';
+        }
+    } else {
+        title.textContent = 'Новая группа';
+        deleteBtn.style.display = 'none';
+        document.getElementById('contactGroupId').value = '';
+        document.getElementById('contactGroupName').value = '';
+        document.getElementById('contactGroupDescription').value = '';
+        document.getElementById('contactGroupColor').value = '#667eea';
+    }
+    
+    modal.style.display = 'flex';
+}
+
+function closeContactGroupModal() {
+    document.getElementById('contactGroupModal').style.display = 'none';
+}
+
+function editContactGroup(id) {
+    openContactGroupModal(id);
+}
+
+async function saveContactGroup() {
+    const id = document.getElementById('contactGroupId').value;
+    const name = document.getElementById('contactGroupName').value;
+    const description = document.getElementById('contactGroupDescription').value;
+    const color = document.getElementById('contactGroupColor').value;
+    
+    if (!name) {
+        showToast('Введите название группы', 'warning');
+        return;
+    }
+    
+    const data = { name, description, color };
+    
+    try {
+        const url = id ? `${API_BASE}/contact-groups/${id}` : `${API_BASE}/contact-groups`;
+        const method = id ? 'PUT' : 'POST';
+        
+        const response = await authFetch(url, { method, body: JSON.stringify(data) });
+        
+        if (response.ok) {
+            closeContactGroupModal();
+            loadContactGroups();
+            showToast(id ? 'Группа обновлена' : 'Группа создана', 'success');
+        }
+    } catch (error) {
+        showToast('Ошибка сервера', 'error');
+    }
+}
+
+async function deleteContactGroup(id) {
+    if (!id) {
+        id = document.getElementById('contactGroupId').value;
+    }
+    if (!confirm('Удалить группу? Контакты не будут удалены.')) return;
+    
+    try {
+        const response = await authFetch(`${API_BASE}/contact-groups/${id}`, { method: 'DELETE' });
+        
+        if (response.ok) {
+            closeContactGroupModal();
+            loadContactGroups();
+            showToast('Группа удалена', 'success');
+        }
+    } catch (error) {
+        showToast('Ошибка сервера', 'error');
     }
 }
 
@@ -765,7 +1185,7 @@ async function loadHistory(page = 1) {
         if (response.ok) {
             const data = await response.json();
             renderHistoryTable(data.items || []);
-            renderPagination('historyPagination', page, data.total_pages, loadHistory);
+            renderPagination('historyPagination', page, data.total_pages || 1, loadHistory);
         }
     } catch (error) {
         console.error('History load failed:', error);
@@ -776,7 +1196,7 @@ function renderHistoryTable(history) {
     const tbody = document.getElementById('historyTable');
     
     if (!history || history.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Нет записей</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Нет записей</td></tr>';
         return;
     }
     
@@ -788,8 +1208,16 @@ function renderHistoryTable(history) {
             <td>${h.campaign_name || '-'}</td>
             <td><span class="status-badge status-${h.status}">${h.status}</span></td>
             <td>${h.dtmf_result || '-'}</td>
+            <td>
+                ${h.recording_url ? `<button class="btn btn-outline btn-sm" onclick="playRecording('${h.recording_url}')">▶</button>` : '-'}
+            </td>
         </tr>
     `).join('');
+}
+
+function playRecording(url) {
+    const audio = new Audio(url);
+    audio.play();
 }
 
 function renderPagination(containerId, currentPage, totalPages, callback) {
@@ -803,12 +1231,10 @@ function renderPagination(containerId, currentPage, totalPages, callback) {
     
     let html = '';
     
-    // Previous button
     if (currentPage > 1) {
         html += `<button onclick="${callback.name}(${currentPage - 1})">←</button>`;
     }
     
-    // Page numbers
     for (let i = 1; i <= totalPages; i++) {
         if (i === 1 || i === totalPages || Math.abs(i - currentPage) <= 2) {
             html += `<button class="${i === currentPage ? 'active' : ''}" onclick="${callback.name}(${i})">${i}</button>`;
@@ -817,7 +1243,6 @@ function renderPagination(containerId, currentPage, totalPages, callback) {
         }
     }
     
-    // Next button
     if (currentPage < totalPages) {
         html += `<button onclick="${callback.name}(${currentPage + 1})">→</button>`;
     }
@@ -833,7 +1258,7 @@ async function loadAudio() {
         const response = await authFetch(`${API_BASE}/audio`);
         if (response.ok) {
             const data = await response.json();
-            AppState.audioFiles = data.audio || data;
+            AppState.audioFiles = data.items || data;
             renderAudioList();
         }
     } catch (error) {
@@ -883,36 +1308,74 @@ async function generateAudio() {
     const campaignId = document.getElementById('audioCampaign')?.value;
     
     if (!name || !text) {
-        alert('Заполните название и текст');
+        showToast('Заполните название и текст', 'warning');
         return;
     }
     
     if (text.length > 500) {
-        alert('Текст не должен превышать 500 символов');
+        showToast('Текст не должен превышать 500 символов', 'warning');
         return;
     }
     
     try {
         const response = await authFetch(`${API_BASE}/audio/generate`, {
             method: 'POST',
-            body: JSON.stringify({
-                name,
-                text,
-                voice,
-                campaign_id: campaignId || null
-            })
+            body: JSON.stringify({ name, text, voice, campaign_id: campaignId || null })
         });
         
         if (response.ok) {
             document.getElementById('audioName').value = '';
             document.getElementById('audioText').value = '';
             loadAudio();
+            showToast('Аудио сгенерировано', 'success');
         } else {
             const data = await response.json();
-            alert(data.detail || 'Ошибка генерации');
+            showToast(data.detail || 'Ошибка генерации', 'error');
         }
     } catch (error) {
-        alert('Ошибка сервера');
+        showToast('Ошибка сервера', 'error');
+    }
+}
+
+async function uploadAudio() {
+    const name = document.getElementById('audioUploadName').value;
+    const fileInput = document.getElementById('audioUploadFile');
+    const campaignId = document.getElementById('audioUploadCampaign')?.value;
+    
+    if (!name || !fileInput.files[0]) {
+        showToast('Заполните название и выберите файл', 'warning');
+        return;
+    }
+    
+    const file = fileInput.files[0];
+    if (!file.name.match(/\.(wav|mp3)$/i)) {
+        showToast('Поддерживаются только WAV и MP3', 'warning');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('file', file);
+    if (campaignId) formData.append('campaign_id', campaignId);
+    
+    try {
+        const response = await authFetch(`${API_BASE}/audio/upload`, {
+            method: 'POST',
+            body: formData,
+            headers: {} // Let browser set Content-Type
+        });
+        
+        if (response.ok) {
+            document.getElementById('audioUploadName').value = '';
+            fileInput.value = '';
+            loadAudio();
+            showToast('Аудио загружено', 'success');
+        } else {
+            const data = await response.json();
+            showToast(data.detail || 'Ошибка загрузки', 'error');
+        }
+    } catch (error) {
+        showToast('Ошибка сервера', 'error');
     }
 }
 
@@ -920,15 +1383,14 @@ async function deleteAudio(id) {
     if (!confirm('Удалить аудиофайл?')) return;
     
     try {
-        const response = await authFetch(`${API_BASE}/audio/${id}`, {
-            method: 'DELETE'
-        });
+        const response = await authFetch(`${API_BASE}/audio/${id}`, { method: 'DELETE' });
         
         if (response.ok) {
             loadAudio();
+            showToast('Аудио удалено', 'success');
         }
     } catch (error) {
-        alert('Ошибка удаления');
+        showToast('Ошибка сервера', 'error');
     }
 }
 
@@ -937,16 +1399,105 @@ async function loadAudioForSelect() {
         const response = await authFetch(`${API_BASE}/audio`);
         if (response.ok) {
             const data = await response.json();
-            const files = data.audio || data;
+            const files = data.items || data;
             
-            const select = document.getElementById('campaignAudio');
+            const select = document.getElementById('campaignAudioSelect');
             if (select) {
-                select.innerHTML = '<option value="">По умолчанию</option>' +
+                select.innerHTML = '<option value="">Стандартное приветствие</option>' +
                     files.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
             }
         }
     } catch (error) {
         console.error('Audio for select failed:', error);
+    }
+}
+
+// =============================================
+// Blacklist
+// =============================================
+async function loadBlacklist() {
+    try {
+        const response = await authFetch(`${API_BASE}/blacklist`);
+        if (response.ok) {
+            const data = await response.json();
+            renderBlacklistTable(data.items || data);
+        }
+    } catch (error) {
+        console.error('Blacklist load failed:', error);
+    }
+}
+
+function renderBlacklistTable(items) {
+    const tbody = document.getElementById('blacklistTable');
+    
+    if (!items || items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Чёрный список пуст</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = items.map(b => `
+        <tr>
+            <td>${b.phone}</td>
+            <td>${b.reason || '-'}</td>
+            <td>${new Date(b.created_at).toLocaleString()}</td>
+            <td>${b.created_by_name || 'system'}</td>
+            <td>
+                <button class="btn btn-outline btn-sm" onclick="removeFromBlacklist('${b.phone}')">🗑</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function openBlacklistModal() {
+    document.getElementById('blacklistModal').style.display = 'flex';
+}
+
+function closeBlacklistModal() {
+    document.getElementById('blacklistModal').style.display = 'none';
+    document.getElementById('blacklistPhone').value = '';
+    document.getElementById('blacklistReason').value = '';
+}
+
+async function addToBlacklist() {
+    const phone = document.getElementById('blacklistPhone').value;
+    const reason = document.getElementById('blacklistReason').value;
+    
+    if (!phone) {
+        showToast('Введите номер телефона', 'warning');
+        return;
+    }
+    
+    try {
+        const response = await authFetch(`${API_BASE}/blacklist`, {
+            method: 'POST',
+            body: JSON.stringify({ phone, reason })
+        });
+        
+        if (response.ok) {
+            closeBlacklistModal();
+            loadBlacklist();
+            showToast('Номер добавлен в чёрный список', 'success');
+        } else {
+            const data = await response.json();
+            showToast(data.detail || 'Ошибка', 'error');
+        }
+    } catch (error) {
+        showToast('Ошибка сервера', 'error');
+    }
+}
+
+async function removeFromBlacklist(phone) {
+    if (!confirm(`Удалить ${phone} из чёрного списка?`)) return;
+    
+    try {
+        const response = await authFetch(`${API_BASE}/blacklist/${encodeURIComponent(phone)}`, { method: 'DELETE' });
+        
+        if (response.ok) {
+            loadBlacklist();
+            showToast('Номер удалён из чёрного списка', 'success');
+        }
+    } catch (error) {
+        showToast('Ошибка сервера', 'error');
     }
 }
 
@@ -960,7 +1511,7 @@ async function loadUsers() {
         const response = await authFetch(`${API_BASE}/users`);
         if (response.ok) {
             const data = await response.json();
-            AppState.users = data.users || [];
+            AppState.users = data.items || data;
             renderUsersTable();
         }
     } catch (error) {
@@ -972,7 +1523,7 @@ function renderUsersTable() {
     const tbody = document.getElementById('usersTable');
     
     if (!AppState.users || AppState.users.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Нет пользователей</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Нет пользователей</td></tr>';
         return;
     }
     
@@ -983,9 +1534,9 @@ function renderUsersTable() {
             <td>${u.email || '-'}</td>
             <td>${u.full_name || '-'}</td>
             <td><span class="badge badge-${u.role}">${u.role}</span></td>
-            <td class="actions">
-                <button class="btn btn-outline btn-sm" onclick="editUser(${u.id})" title="Редактировать">✏</button>
-                ${u.id !== 1 ? `<button class="btn btn-outline btn-sm" onclick="deleteUser(${u.id})" title="Удалить">🗑</button>` : ''}
+            <td>${u.is_active ? '✅' : '❌'}</td>
+            <td>
+                ${u.id !== 1 ? `<button class="btn btn-outline btn-sm" onclick="deleteUser(${u.id})">🗑</button>` : ''}
             </td>
         </tr>
     `).join('');
@@ -993,14 +1544,14 @@ function renderUsersTable() {
 
 function openUserModal() {
     document.getElementById('userModal').style.display = 'flex';
-    document.getElementById('newUsername').value = '';
-    document.getElementById('newUserPassword').value = '';
-    document.getElementById('newUserEmail').value = '';
-    document.getElementById('newUserFullName').value = '';
 }
 
 function closeUserModal() {
     document.getElementById('userModal').style.display = 'none';
+    document.getElementById('newUsername').value = '';
+    document.getElementById('newUserPassword').value = '';
+    document.getElementById('newUserEmail').value = '';
+    document.getElementById('newUserFullName').value = '';
 }
 
 async function createUser() {
@@ -1011,31 +1562,26 @@ async function createUser() {
     const role = document.getElementById('newUserRole').value;
     
     if (!username || !password) {
-        alert('Логин и пароль обязательны');
+        showToast('Логин и пароль обязательны', 'warning');
         return;
     }
     
     try {
         const response = await authFetch(`${API_BASE}/users`, {
             method: 'POST',
-            body: JSON.stringify({
-                username,
-                password,
-                email: email || null,
-                full_name: fullName || null,
-                role
-            })
+            body: JSON.stringify({ username, password, email: email || null, full_name: fullName || null, role })
         });
         
         if (response.ok) {
             closeUserModal();
             loadUsers();
+            showToast('Пользователь создан', 'success');
         } else {
             const data = await response.json();
-            alert(data.detail || 'Ошибка создания');
+            showToast(data.detail || 'Ошибка создания', 'error');
         }
     } catch (error) {
-        alert('Ошибка сервера');
+        showToast('Ошибка сервера', 'error');
     }
 }
 
@@ -1043,15 +1589,14 @@ async function deleteUser(id) {
     if (!confirm('Удалить пользователя?')) return;
     
     try {
-        const response = await authFetch(`${API_BASE}/users/${id}`, {
-            method: 'DELETE'
-        });
+        const response = await authFetch(`${API_BASE}/users/${id}`, { method: 'DELETE' });
         
         if (response.ok) {
             loadUsers();
+            showToast('Пользователь удалён', 'success');
         }
     } catch (error) {
-        alert('Ошибка удаления');
+        showToast('Ошибка сервера', 'error');
     }
 }
 
@@ -1114,10 +1659,271 @@ async function updateSetting(key) {
         });
         
         if (response.ok) {
-            alert('Настройка сохранена');
+            showToast('Настройка сохранена', 'success');
         }
     } catch (error) {
-        alert('Ошибка сохранения');
+        showToast('Ошибка сохранения', 'error');
+    }
+}
+
+// =============================================
+// Audit Log (Admin Only)
+// =============================================
+async function loadAuditLog(page = 1) {
+    const action = document.getElementById('auditFilterAction')?.value;
+    
+    let url = `${API_BASE}/audit?page=${page}&page_size=20`;
+    if (action) url += `&action=${action}`;
+    
+    try {
+        const response = await authFetch(url);
+        if (response.ok) {
+            const data = await response.json();
+            renderAuditTable(data.items || []);
+            renderPagination('auditPagination', page, data.total_pages || 1, loadAuditLog);
+        }
+    } catch (error) {
+        console.error('Audit load failed:', error);
+    }
+}
+
+function renderAuditTable(items) {
+    const tbody = document.getElementById('auditTable');
+    
+    if (!items || items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Нет записей</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = items.map(a => `
+        <tr>
+            <td>${new Date(a.created_at).toLocaleString()}</td>
+            <td>${a.username || 'system'}</td>
+            <td>${a.action}</td>
+            <td>${a.ip_address || '-'}</td>
+            <td>${JSON.stringify(a.details).substring(0, 50)}</td>
+        </tr>
+    `).join('');
+}
+
+// =============================================
+// API Tokens (Admin Only)
+// =============================================
+async function loadApiTokens() {
+    try {
+        const response = await authFetch(`${API_BASE}/tokens`);
+        if (response.ok) {
+            const data = await response.json();
+            renderApiTokensTable(data.items || data);
+        }
+    } catch (error) {
+        console.error('API tokens load failed:', error);
+    }
+}
+
+function renderApiTokensTable(tokens) {
+    const tbody = document.getElementById('apiTokensTable');
+    
+    if (!tokens || tokens.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Нет токенов</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = tokens.map(t => `
+        <tr>
+            <td>${t.name}</td>
+            <td><code>${t.token ? t.token.substring(0, 8) + '...' : '****'}</code></td>
+            <td>${new Date(t.created_at).toLocaleString()}</td>
+            <td>${t.expires_at ? new Date(t.expires_at).toLocaleString() : 'Никогда'}</td>
+            <td>${t.last_used_at ? new Date(t.last_used_at).toLocaleString() : '-'}</td>
+            <td>
+                <button class="btn btn-outline btn-sm" onclick="deleteApiToken(${t.id})">🗑</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function openApiTokenModal() {
+    document.getElementById('apiTokenModal').style.display = 'flex';
+    document.getElementById('newTokenDisplay').style.display = 'none';
+    document.getElementById('apiTokenCreateBtn').style.display = 'block';
+}
+
+function closeApiTokenModal() {
+    document.getElementById('apiTokenModal').style.display = 'none';
+    document.getElementById('apiTokenName').value = '';
+    document.getElementById('apiTokenExpires').value = '';
+}
+
+async function createApiToken() {
+    const name = document.getElementById('apiTokenName').value;
+    const expires = document.getElementById('apiTokenExpires').value;
+    
+    if (!name) {
+        showToast('Введите название', 'warning');
+        return;
+    }
+    
+    try {
+        const response = await authFetch(`${API_BASE}/tokens`, {
+            method: 'POST',
+            body: JSON.stringify({ name, expires_at: expires || null })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            document.getElementById('newTokenValue').textContent = data.token;
+            document.getElementById('newTokenDisplay').style.display = 'block';
+            document.getElementById('apiTokenCreateBtn').style.display = 'none';
+            loadApiTokens();
+            showToast('Токен создан', 'success');
+        }
+    } catch (error) {
+        showToast('Ошибка сервера', 'error');
+    }
+}
+
+function copyToken() {
+    const token = document.getElementById('newTokenValue').textContent;
+    navigator.clipboard?.writeText(token);
+    showToast('Токен скопирован', 'info');
+}
+
+async function deleteApiToken(id) {
+    if (!confirm('Удалить токен?')) return;
+    
+    try {
+        const response = await authFetch(`${API_BASE}/tokens/${id}`, { method: 'DELETE' });
+        
+        if (response.ok) {
+            loadApiTokens();
+            showToast('Токен удалён', 'success');
+        }
+    } catch (error) {
+        showToast('Ошибка сервера', 'error');
+    }
+}
+
+// =============================================
+// Webhooks (Admin Only)
+// =============================================
+async function loadWebhooks() {
+    try {
+        const response = await authFetch(`${API_BASE}/webhooks`);
+        if (response.ok) {
+            const data = await response.json();
+            renderWebhooksTable(data.items || data);
+        }
+    } catch (error) {
+        console.error('Webhooks load failed:', error);
+    }
+}
+
+function renderWebhooksTable(webhooks) {
+    const tbody = document.getElementById('webhooksTable');
+    
+    if (!webhooks || webhooks.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Нет подписок</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = webhooks.map(w => `
+        <tr>
+            <td>${w.name}</td>
+            <td>${w.url}</td>
+            <td>${w.events ? w.events.join(', ') : '*'}</td>
+            <td>${w.is_active ? '✅' : '❌'}</td>
+            <td>${w.success_count || 0}/${w.failure_count || 0}</td>
+            <td>
+                <button class="btn btn-outline btn-sm" onclick="editWebhook(${w.id})">✏</button>
+                <button class="btn btn-outline btn-sm" onclick="deleteWebhook(${w.id})">🗑</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function openWebhookModal(webhookId = null) {
+    const modal = document.getElementById('webhookModal');
+    const title = document.getElementById('webhookModalTitle');
+    const deleteBtn = document.getElementById('webhookDeleteBtn');
+    
+    if (webhookId) {
+        title.textContent = 'Редактировать Webhook';
+        deleteBtn.style.display = 'inline-block';
+        // Load webhook data
+    } else {
+        title.textContent = 'Добавить Webhook';
+        deleteBtn.style.display = 'none';
+        document.getElementById('webhookId').value = '';
+        document.getElementById('webhookName').value = '';
+        document.getElementById('webhookUrl').value = '';
+        document.getElementById('webhookSecret').value = '';
+        document.getElementById('webhookActive').checked = true;
+        document.querySelectorAll('#webhookEvents input[type=checkbox]').forEach(cb => cb.checked = false);
+    }
+    
+    modal.style.display = 'flex';
+}
+
+function closeWebhookModal() {
+    document.getElementById('webhookModal').style.display = 'none';
+}
+
+function editWebhook(id) {
+    openWebhookModal(id);
+}
+
+async function saveWebhook() {
+    const id = document.getElementById('webhookId').value;
+    const name = document.getElementById('webhookName').value;
+    const url = document.getElementById('webhookUrl').value;
+    const secret = document.getElementById('webhookSecret').value;
+    const isActive = document.getElementById('webhookActive').checked;
+    
+    const events = [];
+    document.querySelectorAll('#webhookEvents input[type=checkbox]:checked').forEach(cb => {
+        events.push(cb.value);
+    });
+    
+    if (!name || !url) {
+        showToast('Название и URL обязательны', 'warning');
+        return;
+    }
+    
+    const data = { name, url, events, secret: secret || null, is_active: isActive };
+    
+    try {
+        const urlPath = id ? `${API_BASE}/webhooks/${id}` : `${API_BASE}/webhooks`;
+        const method = id ? 'PUT' : 'POST';
+        
+        const response = await authFetch(urlPath, { method, body: JSON.stringify(data) });
+        
+        if (response.ok) {
+            closeWebhookModal();
+            loadWebhooks();
+            showToast(id ? 'Webhook обновлён' : 'Webhook создан', 'success');
+        }
+    } catch (error) {
+        showToast('Ошибка сервера', 'error');
+    }
+}
+
+async function deleteWebhook(id) {
+    if (!id) {
+        id = document.getElementById('webhookId').value;
+    }
+    if (!confirm('Удалить Webhook?')) return;
+    
+    try {
+        const response = await authFetch(`${API_BASE}/webhooks/${id}`, { method: 'DELETE' });
+        
+        if (response.ok) {
+            closeWebhookModal();
+            loadWebhooks();
+            showToast('Webhook удалён', 'success');
+        }
+    } catch (error) {
+        showToast('Ошибка сервера', 'error');
     }
 }
 
@@ -1131,88 +1937,8 @@ function formatDuration(seconds) {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-function formatDateTime(isoString) {
-    if (!isoString) return '-';
-    const date = new Date(isoString);
-    return date.toLocaleString();
-}
-
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
 }
-
-// =============================================
-// WebSocket Support (Optional)
-// =============================================
-let ws = null;
-let wsReconnectTimer = null;
-
-function connectWebSocket() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-    
-    ws = new WebSocket(wsUrl);
-    
-    ws.onopen = () => {
-        console.log('WebSocket connected');
-        if (wsReconnectTimer) {
-            clearTimeout(wsReconnectTimer);
-            wsReconnectTimer = null;
-        }
-    };
-    
-    ws.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            handleWebSocketMessage(data);
-        } catch (error) {
-            console.error('WebSocket message error:', error);
-        }
-    };
-    
-    ws.onclose = () => {
-        console.log('WebSocket disconnected');
-        wsReconnectTimer = setTimeout(connectWebSocket, 5000);
-    };
-    
-    ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-    };
-}
-
-function handleWebSocketMessage(data) {
-    switch (data.type) {
-        case 'live_call':
-            updateLiveCall(data.data);
-            break;
-        case 'campaign_progress':
-            updateCampaignProgress(data.data);
-            break;
-        case 'system_status':
-            updateSystemBar(data.data);
-            break;
-    }
-}
-
-function updateLiveCall(call) {
-    // Update live calls display if on dashboard
-    if (AppState.currentTab === 'dashboard') {
-        // Implementation for live call updates
-    }
-}
-
-function updateCampaignProgress(progress) {
-    // Update campaign progress if viewing that campaign
-    const campaign = AppState.campaigns.find(c => c.id === progress.campaign_id);
-    if (campaign) {
-        campaign.stats = progress;
-        if (AppState.currentTab === 'campaigns') {
-            renderCampaignsTable(AppState.campaigns);
-        }
-    }
-}
-
-// Initialize WebSocket if enabled
-// connectWebSocket();
