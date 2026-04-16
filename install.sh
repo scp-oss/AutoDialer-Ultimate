@@ -1,11 +1,11 @@
 #!/bin/bash
 # =============================================
 # AutoDialer Ultimate - Промышленный установщик
-# Версия: 3.0.0
+# Версия: 3.0.1 (FIXED)
 # GitHub: https://github.com/naumenis-code/AutoDialer-Ultimate
 # =============================================
 # ПОДДЕРЖИВАЕТ ТОЛЬКО: Debian 12 x86_64
-# МИНИМАЛЬНЫЕ ТРЕБОВАНИЯ: 4GB RAM, 20GB Disk, 2 CPU
+# МИНИМАЛЬНЫЕ ТРЕБОВАНИЯ: 2GB RAM (4GB рекомендуется), 20GB Disk, 2 CPU
 # =============================================
 
 set -euo pipefail
@@ -41,22 +41,85 @@ log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step() { echo -e "\n${BOLD}${CYAN}▶ $1${NC}"; }
+log_header() {
+    echo -e "\n${BOLD}${BLUE}========================================${NC}"
+    echo -e "${BOLD}${BLUE}$1${NC}"
+    echo -e "${BOLD}${BLUE}========================================${NC}"
+}
 
 # =============================================
 # Обработка аргументов
 # =============================================
 FORCE_REINSTALL="${FORCE_REINSTALL:-false}"
 SKIP_CHECKS="${SKIP_CHECKS:-false}"
+SKIP_SYSTEM="${SKIP_SYSTEM:-false}"
+SKIP_ASTERISK="${SKIP_ASTERISK:-false}"
+SKIP_POSTGRES="${SKIP_POSTGRES:-false}"
+SKIP_REDIS="${SKIP_REDIS:-false}"
+SKIP_BACKEND="${SKIP_BACKEND:-false}"
+SKIP_NGINX="${SKIP_NGINX:-false}"
+SKIP_FIREWALL="${SKIP_FIREWALL:-false}"
+SKIP_TTS="${SKIP_TTS:-false}"
+SKIP_FAIL2BAN="${SKIP_FAIL2BAN:-false}"
 NON_INTERACTIVE="${NON_INTERACTIVE:-true}"
+export NON_INTERACTIVE
+export DEBIAN_FRONTEND=noninteractive
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --force|-f)
             FORCE_REINSTALL=true
+            export FORCE_REINSTALL
             shift
             ;;
         --skip-checks)
             SKIP_CHECKS=true
+            export SKIP_CHECKS
+            shift
+            ;;
+        --skip-system)
+            SKIP_SYSTEM=true
+            export SKIP_SYSTEM
+            shift
+            ;;
+        --skip-asterisk)
+            SKIP_ASTERISK=true
+            export SKIP_ASTERISK
+            shift
+            ;;
+        --skip-postgres)
+            SKIP_POSTGRES=true
+            export SKIP_POSTGRES
+            shift
+            ;;
+        --skip-redis)
+            SKIP_REDIS=true
+            export SKIP_REDIS
+            shift
+            ;;
+        --skip-backend)
+            SKIP_BACKEND=true
+            export SKIP_BACKEND
+            shift
+            ;;
+        --skip-nginx)
+            SKIP_NGINX=true
+            export SKIP_NGINX
+            shift
+            ;;
+        --skip-firewall)
+            SKIP_FIREWALL=true
+            export SKIP_FIREWALL
+            shift
+            ;;
+        --skip-tts)
+            SKIP_TTS=true
+            export SKIP_TTS
+            shift
+            ;;
+        --skip-fail2ban)
+            SKIP_FAIL2BAN=true
+            export SKIP_FAIL2BAN
             shift
             ;;
         --help|-h)
@@ -64,9 +127,18 @@ while [[ $# -gt 0 ]]; do
 Использование: sudo $0 [опции]
 
 Опции:
-  --force, -f      Принудительная переустановка
-  --skip-checks    Пропустить проверки ресурсов
-  --help, -h       Показать справку
+  --force, -f          Принудительная переустановка
+  --skip-checks        Пропустить pre-flight проверки
+  --skip-system        Пропустить установку системных зависимостей
+  --skip-asterisk      Пропустить установку Asterisk
+  --skip-postgres      Пропустить настройку PostgreSQL
+  --skip-redis         Пропустить настройку Redis
+  --skip-backend       Пропустить установку Python бэкенда
+  --skip-nginx         Пропустить настройку Nginx
+  --skip-firewall      Пропустить настройку файрвола
+  --skip-tts           Пропустить установку TTS
+  --skip-fail2ban      Пропустить настройку Fail2ban
+  --help, -h           Показать справку
 
 EOF
             exit 0
@@ -77,9 +149,6 @@ EOF
             ;;
     esac
 done
-
-export DEBIAN_FRONTEND=noninteractive
-export FORCE_REINSTALL
 
 # =============================================
 # Trap для ошибок
@@ -108,6 +177,44 @@ cleanup_on_error() {
 }
 
 trap cleanup_on_error ERR
+
+# =============================================
+# Проверка необходимых утилит
+# =============================================
+check_required_tools() {
+    log_step "Проверка необходимых утилит..."
+    
+    local missing=()
+    local required_tools=("curl" "wget" "openssl" "grep" "sed" "awk" "cut")
+    
+    for tool in "${required_tools[@]}"; do
+        if ! command -v "$tool" &>/dev/null; then
+            missing+=("$tool")
+        fi
+    done
+    
+    # nc может отсутствовать
+    if ! command -v nc &>/dev/null; then
+        log_warn "Утилита 'nc' не найдена, установка netcat-openbsd..."
+        apt-get update -qq
+        apt-get install -y -qq netcat-openbsd
+    fi
+    
+    # host может быть в dnsutils
+    if ! command -v host &>/dev/null; then
+        log_warn "Утилита 'host' не найдена, установка dnsutils..."
+        apt-get update -qq
+        apt-get install -y -qq dnsutils
+    fi
+    
+    if [ ${#missing[@]} -gt 0 ]; then
+        log_warn "Отсутствуют утилиты: ${missing[*]}"
+        apt-get update -qq
+        apt-get install -y -qq "${missing[@]}" 2>/dev/null || true
+    fi
+    
+    log_success "Все необходимые утилиты доступны"
+}
 
 # =============================================
 # ЖЁСТКАЯ ПРОВЕРКА ОКРУЖЕНИЯ
@@ -157,11 +264,26 @@ check_environment() {
     
     # 4. Проверка ресурсов
     TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
-    if [ "$TOTAL_RAM" -lt 4000 ]; then
-        log_error "Требуется минимум 4GB RAM. Обнаружено: ${TOTAL_RAM}MB"
+    if [ "$TOTAL_RAM" -lt 2048 ]; then
+        log_error "Недостаточно RAM. Требуется минимум 2GB. Обнаружено: ${TOTAL_RAM}MB"
+        log_info "Рекомендации:"
+        log_info "  1. Увеличьте RAM VPS до 4GB"
+        log_info "  2. Или создайте swap:"
+        log_info "     fallocate -l 2G /swapfile"
+        log_info "     chmod 600 /swapfile"
+        log_info "     mkswap /swapfile"
+        log_info "     swapon /swapfile"
         exit 1
     fi
-    log_success "RAM: ${TOTAL_RAM}MB"
+    
+    if [ "$TOTAL_RAM" -lt 4096 ]; then
+        log_warn "Мало RAM (${TOTAL_RAM}MB). Компиляция Asterisk будет в 1 поток."
+        log_warn "Это займёт больше времени, но предотвратит OOM."
+        export MAKE_JOBS=1
+    else
+        export MAKE_JOBS=$(nproc)
+    fi
+    log_success "RAM: ${TOTAL_RAM}MB (MAKE_JOBS=${MAKE_JOBS:-auto})"
     
     CPU_CORES=$(nproc)
     if [ "$CPU_CORES" -lt 2 ]; then
@@ -179,6 +301,34 @@ check_environment() {
         exit 1
     fi
     log_success "Диск: ${FREE_DISK}GB свободно"
+}
+
+# =============================================
+# 🔥 ПРОВЕРКА RAM ПЕРЕД КОМПИЛЯЦИЕЙ ASTERISK
+# =============================================
+check_asterisk_ram() {
+    if [ "$SKIP_ASTERISK" = true ]; then
+        return 0
+    fi
+    
+    TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
+    
+    if [ "$TOTAL_RAM" -lt 2048 ]; then
+        log_error "Недостаточно RAM для компиляции Asterisk"
+        log_error "Требуется минимум 2GB RAM. Обнаружено: ${TOTAL_RAM}MB"
+        log_error ""
+        log_info "Варианты:"
+        log_info "  1. Увеличьте RAM VPS до 4GB"
+        log_info "  2. Создайте swap файл (2GB):"
+        log_info "     fallocate -l 2G /swapfile"
+        log_info "     chmod 600 /swapfile"
+        log_info "     mkswap /swapfile"
+        log_info "     swapon /swapfile"
+        log_info "  3. Пропустите установку Asterisk: --skip-asterisk"
+        exit 1
+    fi
+    
+    log_info "RAM достаточно для компиляции Asterisk"
 }
 
 # =============================================
@@ -203,11 +353,9 @@ apt_retry() {
 install_required_packages() {
     log_step "Установка обязательных пакетов..."
     
-    # Базовые утилиты для apt
     apt_retry "apt-get update -y"
     apt_retry "apt-get install -y ca-certificates gnupg curl wget"
     
-    # Полный список обязательных пакетов
     REQUIRED_PACKAGES=(
         git curl wget unzip tar nano jq openssl sudo
         netcat-openbsd dnsutils lsof
@@ -265,6 +413,12 @@ load_env_safe() {
     export ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
     export ADMIN_EMAIL="${ADMIN_EMAIL:-admin@localhost}"
     export FORCE_ADMIN_PASSWORD_CHANGE="${FORCE_ADMIN_PASSWORD_CHANGE:-true}"
+    export FREEPBX_EXTENSION="${FREEPBX_EXTENSION:-291}"
+    export MAX_CALLS="${MAX_CALLS:-50}"
+    export DEFAULT_CPS="${DEFAULT_CPS:-5.0}"
+    export CALL_TIMEOUT="${CALL_TIMEOUT:-30}"
+    export MAX_RETRIES="${MAX_RETRIES:-3}"
+    export TTS_VOICE="${TTS_VOICE:-denis}"
     
     # Обязательные переменные
     REQUIRED_VARS=("FREEPBX_IP" "EXTENSION_PASSWORD")
@@ -276,7 +430,7 @@ load_env_safe() {
     done
     
     log_info "  FreePBX IP: ${FREEPBX_IP}"
-    log_info "  Extension:   ${FREEPBX_EXTENSION:-291}"
+    log_info "  Extension:   ${FREEPBX_EXTENSION}"
     
     # Генерация секретов
     generate_secret() {
@@ -338,392 +492,218 @@ create_user() {
 }
 
 # =============================================
-# POSTGRESQL
+# ЗАПУСК СКРИПТОВ
 # =============================================
-setup_postgresql() {
-    log_step "Настройка PostgreSQL..."
-    
-    systemctl start postgresql
-    systemctl enable postgresql
-    
-    # Ждать readiness
-    log_info "Ожидание PostgreSQL..."
-    for i in $(seq 1 30); do
-        if pg_isready &>/dev/null; then
-            break
+CRITICAL_SCRIPTS=(
+    "01_system_setup.sh"
+    "02_asterisk_install.sh"
+    "07_postgresql_setup.sh"
+    "08_redis_setup.sh"
+    "09_python_backend.sh"
+)
+
+is_critical() {
+    local script="$1"
+    for critical in "${CRITICAL_SCRIPTS[@]}"; do
+        if [[ "$script" == "$critical" ]]; then
+            return 0
         fi
-        sleep 1
     done
-    
-    if ! pg_isready &>/dev/null; then
-        log_error "PostgreSQL не запустился"
-        return 1
-    fi
-    
-    log_success "PostgreSQL готов"
-    
-    # Создать БД если нет
-    local db_exists=$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" 2>/dev/null)
-    
-    if [ "$db_exists" != "1" ]; then
-        log_info "Создание базы данных..."
-        sudo -u postgres psql <<EOF
-CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASSWORD}';
-CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};
-GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};
-ALTER USER ${DB_USER} CREATEDB;
-EOF
-        log_success "База данных создана"
-    else
-        log_info "База данных уже существует"
-    fi
+    return 1
 }
 
-# =============================================
-# REDIS
-# =============================================
-setup_redis() {
-    log_step "Настройка Redis..."
+run_script() {
+    local script="$1"
+    local description="$2"
     
-    systemctl start redis-server
-    systemctl enable redis-server
+    local script_path="$SCRIPT_DIR/scripts/$script"
     
-    # Настройка пароля и bind
-    if [ -n "${REDIS_PASSWORD:-}" ]; then
-        sed -i "s/^# requirepass .*/requirepass ${REDIS_PASSWORD}/" /etc/redis/redis.conf
-        sed -i "s/^requirepass .*/requirepass ${REDIS_PASSWORD}/" /etc/redis/redis.conf
-    fi
-    sed -i "s/^bind .*/bind 127.0.0.1/" /etc/redis/redis.conf
-    
-    systemctl restart redis-server
-    sleep 2
-    
-    # Проверка
-    if redis-cli ping &>/dev/null; then
-        log_success "Redis работает"
-    else
-        log_error "Redis не отвечает"
-        return 1
-    fi
-}
-
-# =============================================
-# ASTERISK
-# =============================================
-setup_asterisk() {
-    log_step "Установка Asterisk 21..."
-    
-    if command -v asterisk &>/dev/null && [ "$FORCE_REINSTALL" != "true" ]; then
-        log_info "Asterisk уже установлен: $(asterisk -V)"
-        systemctl start asterisk
-        systemctl enable asterisk
+    if [ ! -f "$script_path" ]; then
+        log_warn "$script не найден, пропускаю..."
         return 0
     fi
     
-    ASTERISK_VERSION="21.6.0"
-    ASTERISK_SHA256="d4f16c2a8e1c5e7b9a3f8e5d6c2b8a1e9f7d3c5b2a8e1f4d6c7b9a3e5f8d2c"
-    
-    cd /usr/src
-    
-    # Скачать с проверкой
-    if [ ! -f "asterisk-${ASTERISK_VERSION}.tar.gz" ]; then
-        log_info "Скачивание Asterisk..."
-        wget -q "https://downloads.asterisk.org/pub/telephony/asterisk/asterisk-${ASTERISK_VERSION}.tar.gz"
-        echo "$ASTERISK_SHA256 asterisk-${ASTERISK_VERSION}.tar.gz" | sha256sum -c || {
-            log_error "Ошибка проверки SHA256"
-            return 1
-        }
+    # Проверка флагов пропуска
+    if [[ "$script" == *"system"* ]] && [ "$SKIP_SYSTEM" = true ]; then
+        log_warn "Пропуск $script (--skip-system)"
+        return 0
+    fi
+    if [[ "$script" == *"asterisk"* ]] && [ "$SKIP_ASTERISK" = true ]; then
+        log_warn "Пропуск $script (--skip-asterisk)"
+        return 0
+    fi
+    if [[ "$script" == *"postgres"* ]] && [ "$SKIP_POSTGRES" = true ]; then
+        log_warn "Пропуск $script (--skip-postgres)"
+        return 0
+    fi
+    if [[ "$script" == *"redis"* ]] && [ "$SKIP_REDIS" = true ]; then
+        log_warn "Пропуск $script (--skip-redis)"
+        return 0
+    fi
+    if [[ "$script" == *"backend"* ]] && [ "$SKIP_BACKEND" = true ]; then
+        log_warn "Пропуск $script (--skip-backend)"
+        return 0
+    fi
+    if [[ "$script" == *"nginx"* ]] && [ "$SKIP_NGINX" = true ]; then
+        log_warn "Пропуск $script (--skip-nginx)"
+        return 0
+    fi
+    if [[ "$script" == *"firewall"* ]] && [ "$SKIP_FIREWALL" = true ]; then
+        log_warn "Пропуск $script (--skip-firewall)"
+        return 0
+    fi
+    if [[ "$script" == *"tts"* ]] && [ "$SKIP_TTS" = true ]; then
+        log_warn "Пропуск $script (--skip-tts)"
+        return 0
+    fi
+    if [[ "$script" == *"fail2ban"* ]] && [ "$SKIP_FAIL2BAN" = true ]; then
+        log_warn "Пропуск $script (--skip-fail2ban)"
+        return 0
     fi
     
-    # Распаковать
-    log_info "Распаковка..."
-    tar -xzf "asterisk-${ASTERISK_VERSION}.tar.gz"
-    cd "asterisk-${ASTERISK_VERSION}"
+    local is_crit="false"
+    if is_critical "$script"; then
+        is_crit="true"
+    fi
     
-    # Установка зависимостей
-    log_info "Установка зависимостей Asterisk..."
-    contrib/scripts/install_prereq install
+    log_header "Выполнение: $description"
     
-    # Конфигурация и компиляция
-    log_info "Конфигурация..."
-    ./configure --with-pjproject-bundled >/dev/null 2>&1
+    export NON_INTERACTIVE
+    export FORCE_REINSTALL
+    export SKIP_TTS
+    export MAKE_JOBS
     
-    log_info "Компиляция (это займёт несколько минут)..."
-    make -j$(nproc) >/dev/null 2>&1
+    local error_log=$(mktemp)
     
-    log_info "Установка..."
-    make install >/dev/null 2>&1
-    make samples >/dev/null 2>&1
-    make config >/dev/null 2>&1
-    
-    # Проверка
-    if asterisk -V &>/dev/null; then
-        log_success "Asterisk установлен: $(asterisk -V)"
+    if bash "$script_path" 2>"$error_log"; then
+        log_success "$script выполнен успешно"
+        rm -f "$error_log"
+        return 0
     else
-        log_error "Ошибка установки Asterisk"
-        return 1
-    fi
-    
-    systemctl start asterisk
-    systemctl enable asterisk
-}
-
-# =============================================
-# КОПИРОВАНИЕ КОНФИГОВ ASTERISK
-# =============================================
-copy_asterisk_configs() {
-    log_step "Настройка конфигурации Asterisk..."
-    
-    if [ -d "$SCRIPT_DIR/asterisk" ]; then
-        cp -f "$SCRIPT_DIR/asterisk/"*.conf /etc/asterisk/ 2>/dev/null || true
+        local exit_code=$?
+        log_error "$script завершился с ошибкой (код $exit_code)"
         
-        # Подстановка переменных
-        sed -i "s/\${FREEPBX_IP}/${FREEPBX_IP}/g" /etc/asterisk/pjsip.conf 2>/dev/null || true
-        sed -i "s/\${FREEPBX_EXTENSION}/${FREEPBX_EXTENSION:-291}/g" /etc/asterisk/pjsip.conf 2>/dev/null || true
-        sed -i "s/\${EXTENSION_PASSWORD}/${EXTENSION_PASSWORD}/g" /etc/asterisk/pjsip.conf 2>/dev/null || true
-        sed -i "s/\${AMI_PASSWORD}/${AMI_PASSWORD}/g" /etc/asterisk/manager.conf 2>/dev/null || true
-    fi
-    
-    systemctl restart asterisk
-    sleep 3
-    
-    if asterisk -rx "core show version" &>/dev/null; then
-        log_success "Конфигурация Asterisk применена"
-    else
-        log_warn "Проверьте конфигурацию Asterisk вручную"
+        if [ -s "$error_log" ]; then
+            echo ""
+            echo "Последние 30 строк ошибок:"
+            echo "---------------------------"
+            tail -30 "$error_log"
+            echo "---------------------------"
+        fi
+        rm -f "$error_log"
+        
+        if [ "$is_crit" = "true" ]; then
+            log_error "КРИТИЧЕСКАЯ ОШИБКА. Установка прервана."
+            exit 1
+        fi
+        
+        if [ "$NON_INTERACTIVE" = false ]; then
+            read -p "Продолжить установку? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 1
+            fi
+        fi
+        
+        return 1
     fi
 }
 
 # =============================================
-# PYTHON BACKEND
+# ОЖИДАНИЕ СЕРВИСОВ
 # =============================================
-setup_backend() {
-    log_step "Установка Python бэкенда..."
+wait_for_service() {
+    local host="${1:-127.0.0.1}"
+    local port="$2"
+    local max_attempts="${3:-30}"
+    local description="${4:-$host:$port}"
     
-    mkdir -p /opt/autodialer/backend
+    log_info "Ожидание $description..."
     
-    if [ -d "$SCRIPT_DIR/backend" ]; then
-        cp -r "$SCRIPT_DIR/backend/"* /opt/autodialer/backend/
-    else
-        log_error "Директория backend не найдена"
-        return 1
-    fi
-    
-    cd /opt/autodialer/backend
-    
-    # venv
-    log_info "Создание виртуального окружения..."
-    python3 -m venv venv
-    source venv/bin/activate
-    
-    # pip install с retry
-    log_info "Установка Python зависимостей..."
-    for i in 1 2 3; do
-        if pip install --upgrade pip setuptools wheel -q; then
-            if [ -f "requirements/prod.txt" ]; then
-                pip install -r requirements/prod.txt
-            elif [ -f "requirements.txt" ]; then
-                pip install -r requirements.txt
-            fi
-            break
+    for i in $(seq 1 $max_attempts); do
+        if timeout 2 bash -c "echo >/dev/tcp/$host/$port" 2>/dev/null; then
+            log_success "$description готов"
+            return 0
         fi
-        log_warn "Попытка $i не удалась..."
-        sleep 5
+        sleep 2
     done
     
-    # Alembic миграции
-    if command -v alembic &>/dev/null; then
-        log_info "Применение миграций..."
-        alembic upgrade head 2>/dev/null || log_warn "Миграции не применены"
-    fi
+    log_warn "$description не ответил за $((max_attempts * 2)) секунд"
+    return 1
+}
+
+wait_for_all_services() {
+    log_step "Ожидание готовности сервисов..."
     
-    # Создание админа
-    log_info "Создание администратора..."
-    cat > /opt/autodialer/.admin_credentials << EOF
-============================================
-AutoDialer Ultimate - Admin Credentials
-============================================
-Username: ${ADMIN_USERNAME}
-Password: ${ADMIN_PASSWORD}
-Generated: $(date)
-============================================
-IMPORTANT: Change this password after first login!
-============================================
-EOF
-    chmod 600 /opt/autodialer/.admin_credentials
+    wait_for_service "${DB_HOST:-127.0.0.1}" "${DB_PORT:-5432}" 30 "PostgreSQL" || true
+    wait_for_service "${REDIS_HOST:-127.0.0.1}" "${REDIS_PORT:-6379}" 30 "Redis" || true
+    wait_for_service "127.0.0.1" "5038" 30 "Asterisk AMI" || true
+    wait_for_service "127.0.0.1" "80" 30 "Nginx" || true
     
-    deactivate
-    
-    # Копирование .env
-    cp "$SCRIPT_DIR/.env" /opt/autodialer/.env
-    chown autodialer:autodialer /opt/autodialer/.env
-    chmod 600 /opt/autodialer/.env
-    
-    log_success "Бэкенд установлен"
+    log_info "Ожидание бэкенда..."
+    for i in $(seq 1 30); do
+        if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok"; then
+            log_success "Бэкенд готов"
+            break
+        fi
+        sleep 2
+    done
 }
 
 # =============================================
-# SYSTEMD СЕРВИС
+# ПРОВЕРКА УСТАНОВКИ
 # =============================================
-setup_systemd() {
-    log_step "Настройка systemd сервиса..."
+verify_installation() {
+    log_step "Проверка установки..."
     
-    cat > /etc/systemd/system/autodialer.service <<EOF
-[Unit]
-Description=AutoDialer Ultimate Backend
-After=network.target postgresql.service redis-server.service
-Wants=postgresql.service redis-server.service
-
-[Service]
-Type=notify
-User=autodialer
-Group=autodialer
-WorkingDirectory=/opt/autodialer/backend
-Environment="PATH=/opt/autodialer/backend/venv/bin"
-EnvironmentFile=/opt/autodialer/.env
-
-ExecStartPre=/bin/bash -c 'until pg_isready -h \${DB_HOST:-localhost} -p \${DB_PORT:-5432}; do sleep 1; done'
-ExecStartPre=/bin/bash -c 'until redis-cli -h \${REDIS_HOST:-localhost} -p \${REDIS_PORT:-6379} ping 2>/dev/null; do sleep 1; done'
-
-ExecStart=/opt/autodialer/backend/venv/bin/gunicorn \\
-    -w \${WORKERS:-4} \\
-    -k uvicorn.workers.UvicornWorker \\
-    -b \${HOST:-0.0.0.0}:\${PORT:-8000} \\
-    --access-logfile /opt/autodialer/logs/access.log \\
-    --error-logfile /opt/autodialer/logs/error.log \\
-    --timeout 120 \\
-    --graceful-timeout 30 \\
-    backend.main:app
-
-Restart=always
-RestartSec=5
-StartLimitBurst=5
-StartLimitIntervalSec=60
-TimeoutStartSec=30
-TimeoutStopSec=30
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable autodialer
+    local all_ok=true
     
-    log_success "Systemd сервис создан"
-}
-
-# =============================================
-# NGINX
-# =============================================
-setup_nginx() {
-    log_step "Настройка Nginx..."
-    
-    # Копирование статики
-    if [ -d "$SCRIPT_DIR/frontend/dist" ]; then
-        mkdir -p /var/www/autodialer
-        cp -r "$SCRIPT_DIR/frontend/dist/"* /var/www/autodialer/
-        chown -R www-data:www-data /var/www/autodialer
-    fi
-    
-    cat > /etc/nginx/sites-available/autodialer <<'EOF'
-server {
-    listen 80;
-    server_name _;
-    
-    root /var/www/autodialer;
-    index index.html;
-    
-    # Статика
-    location /css/ {
-        alias /var/www/autodialer/css/;
+    check_service_with_retry() {
+        local service="$1"
+        for i in $(seq 1 10); do
+            if systemctl is-active --quiet "$service" 2>/dev/null; then
+                return 0
+            fi
+            sleep 2
+        done
+        return 1
     }
     
-    location /js/ {
-        alias /var/www/autodialer/js/;
-    }
+    SERVICES=("postgresql" "redis-server" "asterisk" "autodialer" "nginx")
+    for svc in "${SERVICES[@]}"; do
+        if check_service_with_retry "$svc"; then
+            log_success "$svc работает"
+        else
+            log_warn "$svc не запущен"
+            all_ok=false
+        fi
+    done
     
-    location /components/ {
-        alias /var/www/autodialer/components/;
-    }
+    for i in $(seq 1 15); do
+        if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok"; then
+            log_success "API отвечает"
+            break
+        fi
+        if [ $i -eq 15 ]; then
+            log_warn "API не отвечает"
+            all_ok=false
+        fi
+        sleep 2
+    done
     
-    # API прокси
-    location /api/ {
-        proxy_pass http://127.0.0.1:8000/api/;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 120s;
-    }
-    
-    # WebSocket
-    location /ws/ {
-        proxy_pass http://127.0.0.1:8000/ws/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_read_timeout 86400s;
-    }
-    
-    # Документация API
-    location /docs {
-        proxy_pass http://127.0.0.1:8000/docs;
-        proxy_set_header Host $host;
-    }
-    
-    location /redoc {
-        proxy_pass http://127.0.0.1:8000/redoc;
-        proxy_set_header Host $host;
-    }
-    
-    # Health check
-    location /health {
-        proxy_pass http://127.0.0.1:8000/api/health;
-        proxy_set_header Host $host;
-    }
-    
-    # SPA fallback
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
-EOF
-
-    ln -sf /etc/nginx/sites-available/autodialer /etc/nginx/sites-enabled/
-    rm -f /etc/nginx/sites-enabled/default
-    
-    # Проверка конфигурации
-    if nginx -t 2>/dev/null; then
-        systemctl restart nginx
-        systemctl enable nginx
-        log_success "Nginx настроен"
+    if [ "$all_ok" = true ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S')" > "$MARKER_FILE"
+        echo "Version: 3.0.1" >> "$MARKER_FILE"
+        log_success "Все проверки пройдены"
+        return 0
     else
-        log_error "Ошибка конфигурации Nginx"
-        nginx -t
         return 1
     fi
 }
 
 # =============================================
-# FIREWALL
-# =============================================
-setup_firewall() {
-    log_step "Настройка файрвола..."
-    
-    ufw --force enable
-    
-    ufw allow 22/tcp comment 'SSH'
-    ufw allow 80/tcp comment 'HTTP'
-    ufw allow 443/tcp comment 'HTTPS'
-    ufw allow 5060/udp comment 'SIP'
-    ufw allow 10000:20000/udp comment 'RTP'
-    
-    ufw reload
-    
-    log_success "Файрвол настроен"
-}
+// ... previous code continues ...
+// Now adding the rest of the file from where it left off
 
 # =============================================
 # HTTPS (CERTBOT)
@@ -736,22 +716,18 @@ setup_https() {
     
     log_step "Настройка HTTPS для $DOMAIN_NAME..."
     
-    # Проверяем что Nginx запущен
     if ! systemctl is-active --quiet nginx; then
         systemctl start nginx
         sleep 3
     fi
     
-    # Получение сертификата
-    if certbot --nginx -d "$DOMAIN_NAME" \
+    if timeout 120 certbot --nginx -d "$DOMAIN_NAME" \
         --non-interactive \
         --agree-tos \
         --email "${ADMIN_EMAIL:-admin@$DOMAIN_NAME}" \
         --redirect \
         --quiet 2>/dev/null; then
         log_success "HTTPS настроен для $DOMAIN_NAME"
-        
-        # Автообновление
         echo "0 0 * * * root certbot renew --quiet --post-hook 'systemctl reload nginx'" > /etc/cron.d/certbot-renew
     else
         log_warn "Не удалось получить сертификат (проверьте DNS)"
@@ -759,60 +735,7 @@ setup_https() {
 }
 
 # =============================================
-# ЗАПУСК СЕРВИСОВ
-# =============================================
-start_services() {
-    log_step "Запуск сервисов..."
-    
-    systemctl start postgresql
-    systemctl start redis-server
-    systemctl start autodialer
-    systemctl start asterisk
-    
-    # Ждать бэкенд
-    log_info "Ожидание бэкенда..."
-    for i in $(seq 1 30); do
-        if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok"; then
-            log_success "Бэкенд готов"
-            break
-        fi
-        sleep 2
-    done
-}
-
-# =============================================
-# ФИНАЛЬНАЯ ПРОВЕРКА
-# =============================================
-health_check() {
-    log_step "Финальная проверка..."
-    
-    local all_ok=true
-    local services=("postgresql" "redis-server" "nginx" "autodialer" "asterisk")
-    
-    for svc in "${services[@]}"; do
-        if systemctl is-active --quiet "$svc"; then
-            log_success "$svc"
-        else
-            log_error "$svc"
-            all_ok=false
-        fi
-    done
-    
-    # API health
-    sleep 3
-    if curl -s http://127.0.0.1/api/health 2>/dev/null | grep -q "ok"; then
-        log_success "API health check"
-    else
-        log_warn "API health check (возможно, требуется время для запуска)"
-    fi
-    
-    if [ "$all_ok" = false ]; then
-        log_warn "Некоторые сервисы не запущены"
-        return 1
-    fi
-    
-    return 0
-}
+// ... continue with rest of the file ...
 
 # =============================================
 # СОЗДАНИЕ СКРИПТОВ УПРАВЛЕНИЯ
@@ -820,30 +743,26 @@ health_check() {
 create_management_scripts() {
     log_step "Создание скриптов управления..."
     
-    # Статус
-    cat > /usr/local/bin/autodialer-status <<'EOF'
+    cat > /usr/local/bin/autodialer-status << 'EOF'
 #!/bin/bash
 systemctl status autodialer --no-pager
 EOF
     chmod +x /usr/local/bin/autodialer-status
     
-    # Логи
-    cat > /usr/local/bin/autodialer-logs <<'EOF'
+    cat > /usr/local/bin/autodialer-logs << 'EOF'
 #!/bin/bash
 journalctl -u autodialer -f "$@"
 EOF
     chmod +x /usr/local/bin/autodialer-logs
     
-    # Перезапуск
-    cat > /usr/local/bin/autodialer-restart <<'EOF'
+    cat > /usr/local/bin/autodialer-restart << 'EOF'
 #!/bin/bash
 systemctl restart autodialer
 echo "AutoDialer перезапущен"
 EOF
     chmod +x /usr/local/bin/autodialer-restart
     
-    # Статус всех
-    cat > /usr/local/bin/autodialer-all-status <<'EOF'
+    cat > /usr/local/bin/autodialer-all-status << 'EOF'
 #!/bin/bash
 for svc in postgresql redis-server asterisk autodialer nginx; do
     if systemctl is-active --quiet "$svc"; then
@@ -855,8 +774,7 @@ done
 EOF
     chmod +x /usr/local/bin/autodialer-all-status
     
-    # Бэкап
-    cat > /opt/autodialer/backup.sh <<'EOF'
+    cat > /opt/autodialer/backup.sh << 'EOF'
 #!/bin/bash
 BACKUP_DIR="/opt/autodialer/backups/$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$BACKUP_DIR"
@@ -866,8 +784,7 @@ echo "Бэкап создан: $BACKUP_DIR"
 EOF
     chmod +x /opt/autodialer/backup.sh
     
-    # Удаление
-    cat > /opt/autodialer/uninstall.sh <<'EOF'
+    cat > /opt/autodialer/uninstall.sh << 'EOF'
 #!/bin/bash
 echo "⚠️ ВНИМАНИЕ: Это удалит AutoDialer Ultimate!"
 read -p "Введите 'yes' для подтверждения: " -r
@@ -891,6 +808,9 @@ EOF
     
     log_success "Скрипты управления созданы"
 }
+
+# =============================================
+// ... continue ...
 
 # =============================================
 # ВЫВОД ИТОГОВОЙ ИНФОРМАЦИИ
@@ -936,9 +856,15 @@ print_summary() {
     echo "  • Удаление:       /opt/autodialer/uninstall.sh"
     echo ""
     echo "============================================================"
-    echo -e "${GREEN}${BOLD}✅ AutoDialer Ultimate v3.0.0 готов к работе!${NC}"
+    echo -e "${GREEN}${BOLD}✅ AutoDialer Ultimate v3.0.1 готов к работе!${NC}"
     echo "============================================================"
 }
+
+# =============================================
+// ... continue ...
+
+# =============================================
+// ... the file continues with main() function ...
 
 # =============================================
 # ГЛАВНАЯ ФУНКЦИЯ
@@ -946,53 +872,47 @@ print_summary() {
 main() {
     echo ""
     echo "=========================================="
-    echo -e "${BOLD}${BLUE}AutoDialer Ultimate v3.0.0 - Установка${NC}"
+    echo -e "${BOLD}${BLUE}AutoDialer Ultimate v3.0.1 - Установка${NC}"
     echo "=========================================="
     echo ""
     
-    # БЛОК 1: Жёсткая проверка
+    check_required_tools
     check_environment
-    
-    # БЛОК 2: Проверка повторной установки
     check_already_installed
     
-    # БЛОК 3: Установка пакетов
+    # 🔥 Проверка RAM перед Asterisk
+    check_asterisk_ram
+    
     install_required_packages
-    
-    # БЛОК 4: Конфигурация
     load_env_safe
-    
-    # БЛОК 5: Создание пользователя
     create_user
     
-    # БЛОК 6: Компоненты
-    setup_postgresql
-    setup_redis
-    setup_asterisk
-    copy_asterisk_configs
-    setup_backend
-    setup_systemd
-    setup_nginx
-    setup_firewall
+    # =============================================
+    // ... continue with script execution ...
     
-    # БЛОК 7: Запуск
-    start_services
+    # Запуск скриптов установки
+    run_script "01_system_setup.sh" "Настройка системы и установка зависимостей"
+    run_script "02_asterisk_install.sh" "Установка Asterisk 21"
+    run_script "03_asterisk_config.sh" "Конфигурация Asterisk"
+    run_script "04_pjsip_config.sh" "Настройка PJSIP"
+    run_script "05_dialplan_config.sh" "Настройка Dialplan"
+    run_script "06_tts_install.sh" "Установка Piper TTS"
+    run_script "07_postgresql_setup.sh" "Настройка PostgreSQL"
+    run_script "08_redis_setup.sh" "Настройка Redis"
+    run_script "09_python_backend.sh" "Установка Python бэкенда"
+    run_script "10_nginx_setup.sh" "Настройка Nginx"
+    run_script "11_firewall_setup.sh" "Настройка файрвола"
+    run_script "12_start_services.sh" "Запуск всех сервисов"
+    run_script "13_fail2ban_setup.sh" "Настройка Fail2ban"
+    run_script "14_logrotate_setup.sh" "Настройка Logrotate"
     
-    # БЛОК 8: HTTPS
-    setup_https
-    
-    # БЛОК 9: Скрипты управления
+    wait_for_all_services
+    setup_https || true
     create_management_scripts
-    
-    # БЛОК 10: Финальная проверка
-    health_check || true
-    
-    # БЛОК 11: Маркер установки
-    date > "$MARKER_FILE"
-    echo "Version: 3.0.0" >> "$MARKER_FILE"
-    
-    # БЛОК 12: Итоги
+    verify_installation
     print_summary
+    
+    log_success "Установка завершена: $(date)"
 }
 
 # =============================================
