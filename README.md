@@ -69,10 +69,78 @@ sudo ./install.sh --yes
 # Пропустить определённые компоненты
 sudo ./install.sh --skip-firewall --skip-tts
 ```
+Быстрая установка:
+```bash
+## 🐳 Альтернативная установка через Docker
+
+Если вы хотите быстро развернуть систему для тестирования или разработки, используйте Docker Compose.
+
+### Что входит в Docker-установку:
+- ✅ PostgreSQL 15
+- ✅ Redis 7
+- ✅ Бэкенд (FastAPI)
+- ✅ Nginx (прокси и статика)
+- ❌ Asterisk (должен быть установлен отдельно на хосте или другом сервере)
+```
+### Быстрый старт с Docker
+```bash
+# Клонирование репозитория
+git clone https://github.com/naumenis-code/AutoDialer-Ultimate.git
+cd AutoDialer-Ultimate
+
+# Создание .env файла из примера
+cp .env.example .env
+
+# Редактирование .env (обязательно укажите AMI_HOST и AMI_PASSWORD)
+nano .env
+```
+Минимальные настройки в .env для Docker:
+```bash
+# Asterisk AMI (должен быть доступен по сети)
+AMI_HOST=192.168.1.100      # IP сервера с Asterisk
+AMI_PORT=5038
+AMI_USER=autodialer
+AMI_PASSWORD=your_ami_password
+
+# FreePBX (если используется)
+FREEPBX_EXTENSION=291
+
+# Секреты (будут сгенерированы автоматически, если пустые)
+DB_PASSWORD=
+JWT_SECRET=
+
+# Запуск всех контейнеров
+docker-compose up -d
+
+# Проверка статуса
+docker-compose ps
+
+# Просмотр логов
+docker-compose logs -f backend
+
+# Остановка
+docker-compose down
+
+# Остановка с удалением всех данных (осторожно!)
+docker-compose down -v
+```
+Полная установка (Asterisk на хосте + контейнеры):
+```bash
+# 1. Установить ТОЛЬКО Asterisk через install.sh
+sudo ./install.sh --skip-postgres --skip-redis --skip-nginx --skip-tts
+
+# 2. Запустить контейнеры с БД, Redis, бэкендом и Nginx
+docker-compose up -d
+```
 После установки:
 ```bash
 Веб-интерфейс: http://<IP-сервера>/
 Логин: admin / Пароль: admin (смените при первом входе!)
+
+Доступ после запуска:
+API документация: http://<IP-сервера>/docs
+Health check: http://<IP-сервера>/api/health
+
 ```
 🏗️ Архитектура
 ```bash
