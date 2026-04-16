@@ -1,0 +1,693 @@
+<!-- ============================================= -->
+<!-- CONTACTS TAB -->
+<!-- ============================================= -->
+<div class="contacts-container">
+    
+    <!-- Заголовок с действиями -->
+    <div class="page-header">
+        <h2>📇 Контакты</h2>
+        <div class="header-actions">
+            <button class="btn btn-outline" onclick="App.contacts.exportContacts()" title="Экспорт">
+                📥 Экспорт
+            </button>
+            <button class="btn btn-outline" onclick="App.contacts.findDuplicates()" title="Найти дубликаты">
+                🔍 Дубликаты
+            </button>
+            <button class="btn btn-primary" onclick="App.contacts.openContactModal()">
+                ➕ Новый контакт
+            </button>
+        </div>
+    </div>
+    
+    <!-- Панель фильтров и поиска -->
+    <div class="filters-panel">
+        <div class="search-box">
+            <input type="text" 
+                   id="contactSearch" 
+                   class="form-control" 
+                   placeholder="🔍 Поиск по номеру, имени или email..."
+                   autocomplete="off">
+        </div>
+        <div class="filter-group">
+            <select id="contactGroupFilter" class="form-control" onchange="App.contacts.filterByGroup(this.value)">
+                <option value="">Все группы</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <select id="contactStatusFilter" class="form-control" onchange="App.contacts.filterByStatus(this.value)">
+                <option value="">Все статусы</option>
+                <option value="active">Активные</option>
+                <option value="inactive">Неактивные</option>
+                <option value="blocked">Заблокированные</option>
+            </select>
+        </div>
+        <div class="filter-actions">
+            <button class="btn btn-outline btn-sm" onclick="App.contacts.clearFilters()">
+                🔄 Сбросить
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="App.contacts.loadContacts(1)">
+                🔍 Применить
+            </button>
+        </div>
+    </div>
+    
+    <!-- Массовые действия -->
+    <div class="batch-actions" id="batchActions" style="display: none;">
+        <span class="selected-count">Выбрано: <span id="selectedContactsCount">0</span></span>
+        <select id="batchGroupSelect" class="form-control form-control-sm">
+            <option value="">Назначить группу...</option>
+        </select>
+        <button class="btn btn-outline btn-sm" onclick="App.contacts.batchAssignGroup()">
+            Применить
+        </button>
+        <button class="btn btn-outline-danger btn-sm admin-only" onclick="App.contacts.batchDelete()">
+            🗑️ Удалить
+        </button>
+        <button class="btn btn-outline btn-sm" onclick="App.contacts.clearSelection()">
+            Отмена
+        </button>
+    </div>
+    
+    <!-- Быстрый импорт -->
+    <div class="import-panel">
+        <div class="import-header" onclick="this.parentElement.classList.toggle('expanded')">
+            <span>📤 Быстрый импорт</span>
+            <span class="toggle-icon">▼</span>
+        </div>
+        <div class="import-content">
+            <div class="form-group">
+                <label>Вставьте номера (по одному на строку или в формате "номер,имя")</label>
+                <textarea id="contactsImport" 
+                          class="form-control" 
+                          rows="5"
+                          placeholder="+79161234567, Иван Иванов&#10;+79261234568, Петр Петров&#10;+79361234569"></textarea>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Группа</label>
+                    <select id="contactGroupSelect" class="form-control">
+                        <option value="">Без группы</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Статус</label>
+                    <select id="contactImportStatus" class="form-control">
+                        <option value="active">Активен</option>
+                        <option value="inactive">Неактивен</option>
+                    </select>
+                </div>
+            </div>
+            <div class="import-actions">
+                <button class="btn btn-primary" onclick="App.contacts.importContacts()">
+                    📥 Импортировать
+                </button>
+                <button class="btn btn-outline" onclick="document.getElementById('contactsImport').value = ''">
+                    Очистить
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Список контактов -->
+    <div class="contacts-list-container">
+        <div id="contactsList" class="contacts-list">
+            <div class="loading">Загрузка контактов...</div>
+        </div>
+    </div>
+    
+    <!-- Пагинация -->
+    <div id="contactsPagination" class="pagination-container"></div>
+    
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО СОЗДАНИЯ/РЕДАКТИРОВАНИЯ КОНТАКТА -->
+<!-- ============================================= -->
+<div id="contactModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="contactModalTitle">Новый контакт</h3>
+            <button class="modal-close" onclick="App.contacts.closeContactModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="contactForm" onsubmit="return false;">
+                <input type="hidden" id="contactId">
+                
+                <div class="form-group">
+                    <label>Номер телефона <span class="required">*</span></label>
+                    <input type="tel" 
+                           id="contactPhone" 
+                           class="form-control" 
+                           placeholder="+7XXXXXXXXXX"
+                           required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Имя</label>
+                    <input type="text" 
+                           id="contactName" 
+                           class="form-control" 
+                           placeholder="Иван Иванов">
+                </div>
+                
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" 
+                           id="contactEmail" 
+                           class="form-control" 
+                           placeholder="email@example.com">
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Группа</label>
+                        <select id="contactGroup" class="form-control">
+                            <option value="">Без группы</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Статус</label>
+                        <select id="contactStatus" class="form-control">
+                            <option value="active">Активен</option>
+                            <option value="inactive">Неактивен</option>
+                            <option value="blocked">Заблокирован</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Теги (через запятую)</label>
+                    <input type="text" 
+                           id="contactTags" 
+                           class="form-control" 
+                           placeholder="VIP, клиент, партнер">
+                </div>
+                
+                <div class="form-group">
+                    <label>Заметки</label>
+                    <textarea id="contactNotes" 
+                              class="form-control" 
+                              rows="3"
+                              placeholder="Дополнительная информация..."></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label>Причина блокировки (если статус "Заблокирован")</label>
+                    <input type="text" 
+                           id="contactBlockReason" 
+                           class="form-control" 
+                           placeholder="Например: отказ от обзвона">
+                </div>
+                
+                <div class="modal-footer">
+                    <button type="button" 
+                            class="btn btn-outline" 
+                            onclick="App.contacts.closeContactModal()">
+                        Отмена
+                    </button>
+                    <button type="button" 
+                            id="contactDeleteBtn" 
+                            class="btn btn-danger" 
+                            style="display: none;"
+                            onclick="App.contacts.deleteContact()">
+                        🗑️ Удалить
+                    </button>
+                    <button type="submit" 
+                            class="btn btn-primary" 
+                            onclick="App.contacts.saveContact()">
+                        💾 Сохранить
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ИСТОРИИ КОНТАКТА -->
+<!-- ============================================= -->
+<div id="contactHistoryModal" class="modal" style="display: none;">
+    <div class="modal-content modal-large">
+        <div class="modal-header">
+            <h3>📜 История звонков</h3>
+            <button class="modal-close" onclick="App.contacts.closeContactHistoryModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="contactHistoryContent">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" 
+                    class="btn btn-outline" 
+                    onclick="App.contacts.closeContactHistoryModal()">
+                Закрыть
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ДУБЛИКАТОВ -->
+<!-- ============================================= -->
+<div id="duplicatesModal" class="modal" style="display: none;">
+    <div class="modal-content modal-large">
+        <div class="modal-header">
+            <h3>🔍 Найденные дубликаты</h3>
+            <button class="modal-close" onclick="App.hideModal('duplicatesModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="duplicatesContent">
+                <div class="loading">Поиск дубликатов...</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" 
+                    class="btn btn-outline" 
+                    onclick="App.hideModal('duplicatesModal')">
+                Закрыть
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- ДОПОЛНИТЕЛЬНЫЕ СТИЛИ -->
+<!-- ============================================= -->
+<style>
+    /* Contacts Container */
+    .contacts-container {
+        padding: 0;
+    }
+    
+    /* Batch Actions */
+    .batch-actions {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-md);
+        padding: var(--spacing-md);
+        background: var(--color-bg-tertiary);
+        border-radius: var(--radius-md);
+        margin-bottom: var(--spacing-lg);
+    }
+    
+    .selected-count {
+        font-weight: 500;
+        margin-right: var(--spacing-md);
+    }
+    
+    /* Import Panel */
+    .import-panel {
+        background: var(--color-bg-tertiary);
+        border-radius: var(--radius-md);
+        margin-bottom: var(--spacing-lg);
+        border: 1px solid var(--color-border);
+    }
+    
+    .import-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: var(--spacing-md) var(--spacing-lg);
+        cursor: pointer;
+        user-select: none;
+        font-weight: 500;
+    }
+    
+    .import-header:hover {
+        background: var(--color-bg-card);
+    }
+    
+    .toggle-icon {
+        transition: transform var(--transition-fast);
+    }
+    
+    .import-panel.expanded .toggle-icon {
+        transform: rotate(180deg);
+    }
+    
+    .import-content {
+        display: none;
+        padding: 0 var(--spacing-lg) var(--spacing-lg) var(--spacing-lg);
+    }
+    
+    .import-panel.expanded .import-content {
+        display: block;
+    }
+    
+    .import-actions {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-top: var(--spacing-md);
+    }
+    
+    /* Contacts List */
+    .contacts-list-container {
+        background: var(--color-bg-card);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--color-border);
+        overflow: hidden;
+    }
+    
+    .contacts-list {
+        max-height: 500px;
+        overflow-y: auto;
+    }
+    
+    .contact-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        padding: var(--spacing-md) var(--spacing-lg);
+        border-bottom: 1px solid var(--color-border);
+        transition: background var(--transition-fast);
+        cursor: pointer;
+    }
+    
+    .contact-item:last-child {
+        border-bottom: none;
+    }
+    
+    .contact-item:hover {
+        background: var(--color-bg-tertiary);
+    }
+    
+    .contact-item.selected {
+        background: var(--color-primary-light);
+        background: rgba(102, 126, 234, 0.1);
+        border-left: 3px solid var(--color-primary);
+    }
+    
+    .contact-checkbox {
+        margin-right: var(--spacing-md);
+    }
+    
+    .contact-info {
+        flex: 1;
+    }
+    
+    .contact-info strong {
+        font-size: 1rem;
+    }
+    
+    .contact-stats {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-right: var(--spacing-lg);
+    }
+    
+    .stat-badge {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-xs);
+        font-size: 0.8rem;
+        color: var(--color-text-secondary);
+    }
+    
+    .contact-actions {
+        display: flex;
+        gap: var(--spacing-xs);
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+    
+    /* Contact Tags */
+    .contact-tags {
+        display: flex;
+        gap: var(--spacing-xs);
+        flex-wrap: wrap;
+        margin-top: var(--spacing-xs);
+    }
+    
+    .tag {
+        background: var(--color-bg-tertiary);
+        padding: 2px 8px;
+        border-radius: var(--radius-full);
+        font-size: 0.7rem;
+        color: var(--color-text-secondary);
+        border: 1px solid var(--color-border);
+    }
+    
+    /* Filters Panel */
+    .filters-panel {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-bottom: var(--spacing-lg);
+        flex-wrap: wrap;
+        align-items: flex-end;
+    }
+    
+    .search-box {
+        flex: 2;
+        min-width: 250px;
+    }
+    
+    .filter-group {
+        flex: 1;
+        min-width: 150px;
+    }
+    
+    .filter-actions {
+        display: flex;
+        gap: var(--spacing-sm);
+    }
+    
+    /* Duplicates List */
+    .duplicates-list {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    
+    .duplicate-group {
+        background: var(--color-bg-tertiary);
+        border-radius: var(--radius-md);
+        padding: var(--spacing-md);
+        margin-bottom: var(--spacing-md);
+    }
+    
+    .duplicate-group strong {
+        display: block;
+        margin-bottom: var(--spacing-sm);
+        color: var(--color-warning);
+    }
+    
+    .duplicate-group ul {
+        margin: var(--spacing-sm) 0;
+        padding-left: var(--spacing-lg);
+    }
+    
+    .duplicate-group li {
+        color: var(--color-text-secondary);
+    }
+    
+    /* Contact History */
+    .contact-history {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    
+    .contact-history h4 {
+        margin-top: 0;
+        margin-bottom: var(--spacing-md);
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .filters-panel {
+            flex-direction: column;
+            align-items: stretch;
+        }
+        
+        .search-box,
+        .filter-group {
+            width: 100%;
+        }
+        
+        .contact-item {
+            flex-direction: column;
+            gap: var(--spacing-md);
+        }
+        
+        .contact-stats {
+            margin-right: 0;
+        }
+        
+        .contact-actions {
+            justify-content: flex-start;
+            width: 100%;
+        }
+        
+        .batch-actions {
+            flex-wrap: wrap;
+        }
+        
+        .import-actions {
+            flex-direction: column;
+        }
+        
+        .import-actions .btn {
+            width: 100%;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .contact-stats {
+            flex-wrap: wrap;
+            gap: var(--spacing-sm);
+        }
+        
+        .filter-actions {
+            width: 100%;
+        }
+        
+        .filter-actions .btn {
+            flex: 1;
+        }
+    }
+</style>
+
+<script>
+    (function() {
+        // Загружаем группы для фильтра при инициализации
+        const originalInit = App.contacts?.init;
+        if (App.contacts) {
+            App.contacts.init = async function() {
+                if (originalInit) await originalInit.call(this);
+                await this.loadGroupsForFilter();
+            };
+            
+            // Добавляем метод загрузки групп для фильтра
+            App.contacts.loadGroupsForFilter = async function() {
+                try {
+                    const data = await App.apiGet('/contact-groups');
+                    const groups = data.items || data;
+                    
+                    const filterSelect = document.getElementById('contactGroupFilter');
+                    const batchSelect = document.getElementById('batchGroupSelect');
+                    const contactSelect = document.getElementById('contactGroup');
+                    
+                    const options = '<option value="">Без группы</option>' +
+                        groups.map(g => `<option value="${g.id}">${this.escapeHtml(g.name)} (${g.contacts_count || 0})</option>`).join('');
+                    
+                    if (filterSelect) filterSelect.innerHTML = '<option value="">Все группы</option>' + options;
+                    if (batchSelect) batchSelect.innerHTML = '<option value="">Назначить группу...</option>' + options;
+                    if (contactSelect) {
+                        const current = contactSelect.value;
+                        contactSelect.innerHTML = options;
+                        if (current) contactSelect.value = current;
+                    }
+                    
+                    // Сохраняем для массовых операций
+                    this.state.groups = groups;
+                    
+                } catch (error) {
+                    console.error('Failed to load groups for filter:', error);
+                }
+            };
+            
+            // Массовые операции
+            App.contacts.selectedContacts = new Set();
+            
+            App.contacts.toggleSelectContact = function(contactId, checked) {
+                if (checked) {
+                    this.selectedContacts.add(contactId);
+                } else {
+                    this.selectedContacts.delete(contactId);
+                }
+                this.updateBatchActions();
+            };
+            
+            App.contacts.updateBatchActions = function() {
+                const batchActions = document.getElementById('batchActions');
+                const countSpan = document.getElementById('selectedContactsCount');
+                
+                if (batchActions) {
+                    const count = this.selectedContacts.size;
+                    batchActions.style.display = count > 0 ? 'flex' : 'none';
+                    if (countSpan) countSpan.textContent = count;
+                }
+            };
+            
+            App.contacts.clearSelection = function() {
+                this.selectedContacts.clear();
+                document.querySelectorAll('.contact-checkbox').forEach(cb => cb.checked = false);
+                this.updateBatchActions();
+            };
+            
+            App.contacts.batchAssignGroup = async function() {
+                const groupId = document.getElementById('batchGroupSelect')?.value;
+                const contactIds = Array.from(this.selectedContacts);
+                
+                if (!groupId) {
+                    App.showToast('Выберите группу', 'warning');
+                    return;
+                }
+                
+                if (contactIds.length === 0) {
+                    App.showToast('Выберите контакты', 'warning');
+                    return;
+                }
+                
+                try {
+                    await App.apiPost('/contacts/batch-assign-group', {
+                        contact_ids: contactIds,
+                        group_id: groupId
+                    });
+                    
+                    App.showToast(`Группа назначена для ${contactIds.length} контактов`, 'success');
+                    this.clearSelection();
+                    await this.loadContacts(this.state.currentPage);
+                    
+                } catch (error) {
+                    App.showToast(error.message || 'Ошибка', 'error');
+                }
+            };
+            
+            App.contacts.batchDelete = async function() {
+                const contactIds = Array.from(this.selectedContacts);
+                
+                if (contactIds.length === 0) {
+                    App.showToast('Выберите контакты', 'warning');
+                    return;
+                }
+                
+                if (!App.confirm(`Удалить ${contactIds.length} контактов?`)) return;
+                
+                try {
+                    await App.apiPost('/contacts/batch-delete', {
+                        contact_ids: contactIds
+                    });
+                    
+                    App.showToast(`Удалено ${contactIds.length} контактов`, 'success');
+                    this.clearSelection();
+                    await this.loadContacts(this.state.currentPage);
+                    
+                } catch (error) {
+                    App.showToast(error.message || 'Ошибка', 'error');
+                }
+            };
+            
+            // Фильтр по статусу
+            App.contacts.filterByStatus = function(status) {
+                this.state.filterStatus = status;
+                this.loadContacts(1);
+            };
+            
+            App.contacts.clearFilters = function() {
+                this.state.searchQuery = '';
+                this.state.filterGroupId = '';
+                this.state.filterStatus = '';
+                
+                const searchInput = document.getElementById('contactSearch');
+                const groupFilter = document.getElementById('contactGroupFilter');
+                const statusFilter = document.getElementById('contactStatusFilter');
+                
+                if (searchInput) searchInput.value = '';
+                if (groupFilter) groupFilter.value = '';
+                if (statusFilter) statusFilter.value = '';
+                
+                this.loadContacts(1);
+            };
+        }
+    })();
+</script>
