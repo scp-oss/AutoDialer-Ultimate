@@ -1913,7 +1913,7 @@ async def update_setting(
 
 
 # =============================================
-; Audit Log Endpoints (Admin only)
+# Audit Log Endpoints (Admin only)
 # =============================================
 @app.get("/api/audit")
 async def get_audit_log(
