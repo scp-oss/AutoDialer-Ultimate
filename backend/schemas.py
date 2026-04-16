@@ -696,3 +696,53 @@ class HealthCheckResponse(BaseModel):
     components: Dict[str, Dict[str, Any]]
     active_calls: int = 0
     max_calls: int = 50
+
+
+# =============================================
+# Incoming Call Schemas (НОВОЕ)
+# =============================================
+class IncomingCallResponse(BaseModel):
+    """Incoming call response"""
+    id: int
+    caller_number: str
+    recording_path: str
+    transcription: Optional[str] = None
+    transcription_status: str
+    duration: Optional[int] = None
+    file_size: Optional[int] = None
+    call_date: datetime
+    listened: bool
+    notes: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class IncomingCallDetailResponse(IncomingCallResponse):
+    """Incoming call detail response"""
+    recording_url: Optional[str] = None
+
+
+class IncomingCallUpdateRequest(BaseModel):
+    """Update incoming call request"""
+    notes: Optional[str] = None
+    listened: Optional[bool] = None
+
+
+class IncomingCallStatsResponse(BaseModel):
+    """Incoming calls statistics"""
+    total: int = 0
+    pending: int = 0
+    processing: int = 0
+    completed: int = 0
+    failed: int = 0
+    avg_duration: float = 0.0
+    total_duration: int = 0
+
+
+class IncomingCallWebhookRequest(BaseModel):
+    """Webhook request from Asterisk for incoming call"""
+    caller_number: str
+    recording_path: str
+    duration: Optional[int] = None
+    file_size: Optional[int] = None
