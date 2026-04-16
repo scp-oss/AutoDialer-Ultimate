@@ -1,0 +1,660 @@
+<!-- ============================================= -->
+<!-- HISTORY TAB -->
+<!-- ============================================= -->
+<div class="history-container">
+    
+    <!-- Заголовок с действиями -->
+    <div class="page-header">
+        <h2>📜 История звонков</h2>
+        <div class="header-actions">
+            <button class="btn btn-outline" id="historyRefreshBtn" title="Обновить">
+                🔄 Обновить
+            </button>
+            <button class="btn btn-outline" onclick="App.history.exportToCSV()" title="Экспорт">
+                📥 Экспорт CSV
+            </button>
+            <button class="btn btn-outline" onclick="App.history.showStatistics()" title="Статистика">
+                📊 Статистика
+            </button>
+        </div>
+    </div>
+    
+    <!-- Панель фильтров -->
+    <div class="filters-panel history-filters">
+        <div class="filter-row">
+            <div class="filter-group">
+                <label>Кампания</label>
+                <select id="historyFilterCampaign" class="form-control">
+                    <option value="">Все кампании</option>
+                </select>
+            </div>
+            
+            <div class="filter-group">
+                <label>Статус</label>
+                <select id="historyFilterStatus" class="form-control">
+                    <option value="">Все статусы</option>
+                    <option value="completed">Завершен</option>
+                    <option value="answered">Отвечен</option>
+                    <option value="no_answer">Нет ответа</option>
+                    <option value="busy">Занято</option>
+                    <option value="failed">Ошибка</option>
+                    <option value="cancelled">Отменен</option>
+                </select>
+            </div>
+            
+            <div class="filter-group">
+                <label>Направление</label>
+                <select id="historyFilterDirection" class="form-control">
+                    <option value="">Все</option>
+                    <option value="outbound">Исходящие</option>
+                    <option value="inbound">Входящие</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="filter-row">
+            <div class="filter-group">
+                <label>Номер телефона</label>
+                <input type="text" 
+                       id="historyFilterPhone" 
+                       class="form-control" 
+                       placeholder="Поиск по номеру">
+            </div>
+            
+            <div class="filter-group">
+                <label>Дата с</label>
+                <input type="datetime-local" 
+                       id="historyFilterDateFrom" 
+                       class="form-control">
+            </div>
+            
+            <div class="filter-group">
+                <label>Дата по</label>
+                <input type="datetime-local" 
+                       id="historyFilterDateTo" 
+                       class="form-control">
+            </div>
+            
+            <div class="filter-group filter-actions">
+                <button class="btn btn-primary" id="historyApplyFiltersBtn">
+                    🔍 Применить
+                </button>
+                <button class="btn btn-outline" id="historyResetFiltersBtn">
+                    🔄 Сбросить
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Быстрая статистика -->
+    <div class="history-stats-mini">
+        <div class="stat-mini">
+            <span class="stat-label">Всего звонков:</span>
+            <span class="stat-value" id="historyTotalCalls">0</span>
+        </div>
+        <div class="stat-mini">
+            <span class="stat-label">Отвечено:</span>
+            <span class="stat-value text-success" id="historyAnswered">0</span>
+        </div>
+        <div class="stat-mini">
+            <span class="stat-label">Дозвон:</span>
+            <span class="stat-value" id="historyConversion">0%</span>
+        </div>
+        <div class="stat-mini">
+            <span class="stat-label">Ср. длительность:</span>
+            <span class="stat-value" id="historyAvgDuration">0:00</span>
+        </div>
+    </div>
+    
+    <!-- Таблица истории -->
+    <div class="table-responsive">
+        <table class="table history-table" id="historyTable">
+            <thead>
+                <tr>
+                    <th class="sortable" data-sort="created_at">
+                        Дата/время <span class="sort-icon">↕️</span>
+                    </th>
+                    <th class="sortable" data-sort="phone">
+                        Номер <span class="sort-icon">↕️</span>
+                    </th>
+                    <th>Контакт</th>
+                    <th class="sortable" data-sort="campaign_id">
+                        Кампания <span class="sort-icon">↕️</span>
+                    </th>
+                    <th class="sortable" data-sort="status">
+                        Статус <span class="sort-icon">↕️</span>
+                    </th>
+                    <th>DTMF</th>
+                    <th class="sortable" data-sort="duration">
+                        Длит. <span class="sort-icon">↕️</span>
+                    </th>
+                    <th width="100">Действия</th>
+                </tr>
+            </thead>
+            <tbody id="historyTableBody">
+                <tr><td colspan="8" class="text-center"><div class="loading">Загрузка...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Пагинация -->
+    <div id="historyPagination" class="pagination-container"></div>
+    
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ДЕТАЛЕЙ ЗВОНКА -->
+<!-- ============================================= -->
+<div id="historyDetailModal" class="modal" style="display: none;">
+    <div class="modal-content modal-large">
+        <div class="modal-header">
+            <h3>📞 Детали звонка</h3>
+            <button class="modal-close" onclick="App.history.closeDetailModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="historyDetailContent">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" 
+                    class="btn btn-outline" 
+                    onclick="App.history.closeDetailModal()">
+                Закрыть
+            </button>
+            <button type="button" 
+                    class="btn btn-primary" 
+                    id="historyDownloadDetailBtn">
+                📥 Скачать детали
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО СТАТИСТИКИ -->
+<!-- ============================================= -->
+<div id="historyStatsModal" class="modal" style="display: none;">
+    <div class="modal-content modal-large">
+        <div class="modal-header">
+            <h3>📊 Статистика звонков</h3>
+            <button class="modal-close" onclick="App.hideModal('historyStatsModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="historyStatsContent">
+                <div class="loading">Загрузка статистики...</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" 
+                    class="btn btn-outline" 
+                    onclick="App.hideModal('historyStatsModal')">
+                Закрыть
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- ДОПОЛНИТЕЛЬНЫЕ СТИЛИ -->
+<!-- ============================================= -->
+<style>
+    /* History Container */
+    .history-container {
+        padding: 0;
+    }
+    
+    /* History Filters */
+    .history-filters {
+        background: var(--color-bg-tertiary);
+        padding: var(--spacing-lg);
+        border-radius: var(--radius-lg);
+        margin-bottom: var(--spacing-lg);
+    }
+    
+    .filter-row {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-bottom: var(--spacing-md);
+        flex-wrap: wrap;
+    }
+    
+    .filter-row:last-child {
+        margin-bottom: 0;
+    }
+    
+    .filter-group {
+        flex: 1;
+        min-width: 180px;
+    }
+    
+    .filter-group label {
+        display: block;
+        margin-bottom: var(--spacing-xs);
+        font-size: 0.8rem;
+        color: var(--color-text-muted);
+    }
+    
+    .filter-actions {
+        display: flex;
+        gap: var(--spacing-sm);
+        align-items: flex-end;
+    }
+    
+    /* History Stats Mini */
+    .history-stats-mini {
+        display: flex;
+        gap: var(--spacing-xl);
+        padding: var(--spacing-md) var(--spacing-lg);
+        background: var(--color-bg-card);
+        border-radius: var(--radius-md);
+        margin-bottom: var(--spacing-lg);
+        border: 1px solid var(--color-border);
+    }
+    
+    .stat-mini {
+        display: flex;
+        align-items: baseline;
+        gap: var(--spacing-sm);
+    }
+    
+    .stat-mini .stat-label {
+        color: var(--color-text-muted);
+        font-size: 0.85rem;
+    }
+    
+    .stat-mini .stat-value {
+        font-weight: 600;
+        font-size: 1.1rem;
+    }
+    
+    /* History Table */
+    .history-table {
+        width: 100%;
+    }
+    
+    .history-table .sortable {
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+    }
+    
+    .history-table .sortable:hover {
+        background: var(--color-bg-tertiary);
+    }
+    
+    .sort-icon {
+        opacity: 0.5;
+        margin-left: var(--spacing-xs);
+    }
+    
+    .history-table tbody tr {
+        cursor: pointer;
+        transition: background var(--transition-fast);
+    }
+    
+    .history-table tbody tr:hover {
+        background: var(--color-bg-tertiary);
+    }
+    
+    .history-table tbody tr.answered {
+        background: var(--color-success-bg);
+    }
+    
+    .history-table tbody tr.no_answer {
+        background: var(--color-warning-bg);
+    }
+    
+    .history-table tbody tr.busy,
+    .history-table tbody tr.failed {
+        background: var(--color-danger-bg);
+    }
+    
+    .phone-number {
+        font-weight: 500;
+        white-space: nowrap;
+    }
+    
+    .direction-badge {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: var(--radius-full);
+        font-size: 0.7rem;
+        margin-left: var(--spacing-xs);
+    }
+    
+    .direction-badge.inbound {
+        background: var(--color-info);
+        color: white;
+    }
+    
+    .direction-badge.outbound {
+        background: var(--color-bg-tertiary);
+        color: var(--color-text-secondary);
+    }
+    
+    /* Call Detail */
+    .call-detail {
+        max-height: 60vh;
+        overflow-y: auto;
+    }
+    
+    .detail-section {
+        margin-bottom: var(--spacing-lg);
+        padding-bottom: var(--spacing-lg);
+        border-bottom: 1px solid var(--color-border);
+    }
+    
+    .detail-section:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+    
+    .detail-section h4 {
+        margin-top: 0;
+        margin-bottom: var(--spacing-md);
+        color: var(--color-text-secondary);
+    }
+    
+    .details-table {
+        width: 100%;
+    }
+    
+    .details-table td {
+        padding: var(--spacing-xs) 0;
+    }
+    
+    .details-table td:first-child {
+        font-weight: 500;
+        color: var(--color-text-muted);
+        width: 160px;
+    }
+    
+    .audio-player {
+        width: 100%;
+        margin-top: var(--spacing-sm);
+    }
+    
+    .transcription-box {
+        background: var(--color-bg-tertiary);
+        padding: var(--spacing-md);
+        border-radius: var(--radius-md);
+        max-height: 150px;
+        overflow-y: auto;
+        font-style: italic;
+    }
+    
+    /* Statistics Modal */
+    .statistics-panel {
+        min-width: 500px;
+    }
+    
+    .stats-grid-large {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: var(--spacing-md);
+        margin-bottom: var(--spacing-xl);
+    }
+    
+    .stat-card-large {
+        background: var(--color-bg-tertiary);
+        padding: var(--spacing-lg);
+        border-radius: var(--radius-md);
+        text-align: center;
+    }
+    
+    .stat-card-large .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+    }
+    
+    .stat-card-large .stat-label {
+        color: var(--color-text-muted);
+        margin-top: var(--spacing-xs);
+    }
+    
+    .campaign-stats-table {
+        width: 100%;
+        margin-top: var(--spacing-lg);
+    }
+    
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: var(--spacing-2xl);
+    }
+    
+    .empty-icon {
+        font-size: 3rem;
+        margin-bottom: var(--spacing-md);
+        opacity: 0.5;
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .filter-row {
+            flex-direction: column;
+        }
+        
+        .filter-group {
+            width: 100%;
+        }
+        
+        .history-stats-mini {
+            flex-wrap: wrap;
+            gap: var(--spacing-md);
+        }
+        
+        .statistics-panel {
+            min-width: auto;
+        }
+        
+        .stats-grid-large {
+            grid-template-columns: repeat(2, 1fr);
+        }
+        
+        .details-table td:first-child {
+            width: 120px;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .history-stats-mini {
+            flex-direction: column;
+            gap: var(--spacing-sm);
+        }
+        
+        .stats-grid-large {
+            grid-template-columns: 1fr;
+        }
+        
+        .filter-actions {
+            flex-direction: column;
+            width: 100%;
+        }
+        
+        .filter-actions .btn {
+            width: 100%;
+        }
+    }
+</style>
+
+<script>
+    (function() {
+        // Загрузка кампаний для фильтра
+        const originalInit = App.history?.init;
+        if (App.history) {
+            App.history.init = async function() {
+                await this.loadCampaignsForFilter();
+                if (originalInit) await originalInit.call(this);
+            };
+            
+            // Метод загрузки кампаний для фильтра
+            App.history.loadCampaignsForFilter = async function() {
+                try {
+                    const data = await App.apiGet('/campaigns?limit=100');
+                    const campaigns = data.items || data || [];
+                    
+                    const select = document.getElementById('historyFilterCampaign');
+                    if (select) {
+                        select.innerHTML = '<option value="">Все кампании</option>' +
+                            campaigns.map(c => `<option value="${c.id}">${this.escapeHtml(c.name)}</option>`).join('');
+                    }
+                } catch (error) {
+                    console.error('Failed to load campaigns for filter:', error);
+                }
+            };
+            
+            // Привязка событий фильтров
+            App.history.setupFilterEvents = function() {
+                document.getElementById('historyApplyFiltersBtn')?.addEventListener('click', () => {
+                    this.currentPage = 1;
+                    this.loadHistory();
+                });
+                
+                document.getElementById('historyResetFiltersBtn')?.addEventListener('click', () => {
+                    this.resetFilters();
+                });
+                
+                document.getElementById('historyFilterPhone')?.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        this.currentPage = 1;
+                        this.loadHistory();
+                    }
+                });
+                
+                // Сортировка
+                document.querySelectorAll('.history-table .sortable').forEach(th => {
+                    th.addEventListener('click', () => {
+                        const field = th.dataset.sort;
+                        if (this.sortField === field) {
+                            this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
+                        } else {
+                            this.sortField = field;
+                            this.sortOrder = 'asc';
+                        }
+                        this.loadHistory();
+                        this.updateSortIcons();
+                    });
+                });
+            };
+            
+            // Сброс фильтров
+            App.history.resetFilters = function() {
+                document.getElementById('historyFilterCampaign').value = '';
+                document.getElementById('historyFilterStatus').value = '';
+                document.getElementById('historyFilterDirection').value = '';
+                document.getElementById('historyFilterPhone').value = '';
+                document.getElementById('historyFilterDateFrom').value = '';
+                document.getElementById('historyFilterDateTo').value = '';
+                
+                this.currentPage = 1;
+                this.loadHistory();
+            };
+            
+            // Обновление иконок сортировки
+            App.history.updateSortIcons = function() {
+                document.querySelectorAll('.history-table .sortable').forEach(th => {
+                    const icon = th.querySelector('.sort-icon');
+                    if (icon) {
+                        if (th.dataset.sort === this.sortField) {
+                            icon.textContent = this.sortOrder === 'asc' ? '⬆️' : '⬇️';
+                        } else {
+                            icon.textContent = '↕️';
+                        }
+                    }
+                });
+            };
+            
+            // Закрытие модалки деталей
+            App.history.closeDetailModal = function() {
+                App.hideModal('historyDetailModal');
+            };
+            
+            // Показать статистику
+            App.history.showStatistics = async function() {
+                const modal = document.getElementById('historyStatsModal');
+                const content = document.getElementById('historyStatsContent');
+                
+                modal.style.display = 'flex';
+                content.innerHTML = '<div class="loading">Загрузка статистики...</div>';
+                
+                try {
+                    const data = await App.apiGet('/history/statistics');
+                    
+                    content.innerHTML = `
+                        <div class="statistics-panel">
+                            <div class="stats-grid-large">
+                                <div class="stat-card-large">
+                                    <div class="stat-value">${data.total || 0}</div>
+                                    <div class="stat-label">Всего звонков</div>
+                                </div>
+                                <div class="stat-card-large stat-success">
+                                    <div class="stat-value">${data.answered || 0}</div>
+                                    <div class="stat-label">Отвечено</div>
+                                </div>
+                                <div class="stat-card-large">
+                                    <div class="stat-value">${data.answer_rate || 0}%</div>
+                                    <div class="stat-label">Дозвон</div>
+                                </div>
+                                <div class="stat-card-large stat-warning">
+                                    <div class="stat-value">${data.no_answer || 0}</div>
+                                    <div class="stat-label">Нет ответа</div>
+                                </div>
+                                <div class="stat-card-large stat-danger">
+                                    <div class="stat-value">${data.busy || 0}</div>
+                                    <div class="stat-label">Занято</div>
+                                </div>
+                                <div class="stat-card-large">
+                                    <div class="stat-value">${App.formatDuration(data.avg_duration || 0)}</div>
+                                    <div class="stat-label">Ср. длительность</div>
+                                </div>
+                            </div>
+                            
+                            ${data.by_campaign && data.by_campaign.length > 0 ? `
+                                <h4>По кампаниям</h4>
+                                <table class="table campaign-stats-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Кампания</th>
+                                            <th>Всего</th>
+                                            <th>Отвечено</th>
+                                            <th>Дозвон</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${data.by_campaign.map(c => `
+                                            <tr>
+                                                <td>${this.escapeHtml(c.name)}</td>
+                                                <td>${c.total}</td>
+                                                <td>${c.answered}</td>
+                                                <td>${c.answer_rate}%</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            ` : ''}
+                        </div>
+                    `;
+                } catch (error) {
+                    console.error('Failed to load statistics:', error);
+                    content.innerHTML = '<div class="error-message">Ошибка загрузки статистики</div>';
+                }
+            };
+            
+            // Привязка кнопки скачивания в модалке
+            document.getElementById('historyDownloadDetailBtn')?.addEventListener('click', () => {
+                const callId = App.history.currentCallId;
+                if (callId) {
+                    App.history.downloadCallDetails(callId);
+                }
+            });
+        }
+        
+        // Инициализация при загрузке вкладки
+        if (App.history) {
+            App.history.setupFilterEvents();
+        }
+    })();
+</script>
