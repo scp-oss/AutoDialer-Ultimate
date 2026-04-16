@@ -1,0 +1,701 @@
+<!-- ============================================= -->
+<!-- WEBHOOKS TAB (Admin Only) -->
+<!-- ============================================= -->
+<div class="webhooks-container">
+    
+    <!-- Заголовок с действиями -->
+    <div class="page-header">
+        <h2>🪝 Webhooks</h2>
+        <div class="header-actions">
+            <button class="btn btn-outline" id="webhookRefreshBtn" title="Обновить">
+                🔄 Обновить
+            </button>
+            <button class="btn btn-outline" id="webhookDocsBtn" title="Документация">
+                📚 Документация
+            </button>
+            <button class="btn btn-primary" id="webhookAddBtn">
+                ➕ Добавить Webhook
+            </button>
+        </div>
+    </div>
+    
+    <!-- Описание -->
+    <p class="text-muted">
+        Webhooks позволяют отправлять HTTP-запросы на ваш сервер при наступлении определённых событий.
+        Используйте для интеграции с CRM, телефонией или другими системами.
+    </p>
+    
+    <!-- Информация о формате -->
+    <div class="webhook-info-panel">
+        <div class="info-header">
+            <span>📤 Формат отправляемых данных</span>
+            <button class="btn btn-sm btn-outline" id="toggleFormatInfo">Показать пример</button>
+        </div>
+        <div id="formatExample" class="format-example" style="display: none;">
+            <pre>{
+  "event": "call.completed",
+  "timestamp": "2024-01-15T14:30:00Z",
+  "data": {
+    "call_id": 12345,
+    "phone": "+79161234567",
+    "status": "answered",
+    "duration": 45,
+    "campaign_id": 1,
+    "campaign_name": "Обзвон клиентов",
+    "dtmf_result": "1",
+    "recording_url": "https://..."
+  }
+}</pre>
+            <p class="text-muted">
+                <strong>Заголовки:</strong> X-Webhook-Signature (HMAC-SHA256 подпись), X-Event-Type, X-Delivery-ID
+            </p>
+        </div>
+    </div>
+    
+    <!-- Таблица -->
+    <div class="webhooks-table-container">
+        <table class="table" id="webhooksTable">
+            <thead>
+                <tr>
+                    <th width="60">ID</th>
+                    <th width="180">Название</th>
+                    <th width="250">URL</th>
+                    <th width="150">События</th>
+                    <th width="100">Статус</th>
+                    <th width="120">Статистика</th>
+                    <th width="130">Последняя доставка</th>
+                    <th width="130">Действия</th>
+                </tr>
+            </thead>
+            <tbody id="webhooksTableBody">
+                <tr><td colspan="8" class="text-center"><div class="loading">Загрузка...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Пагинация -->
+    <div id="webhooksPagination" class="pagination-container"></div>
+    
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ДОБАВЛЕНИЯ/РЕДАКТИРОВАНИЯ -->
+<!-- ============================================= -->
+<div id="webhookModal" class="modal" style="display: none;">
+    <div class="modal-content modal-large">
+        <div class="modal-header">
+            <h3 id="webhookModalTitle">Добавить Webhook</h3>
+            <button class="modal-close" onclick="App.webhooks.closeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="webhookForm" onsubmit="return false;">
+                <input type="hidden" id="webhookId">
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Название <span class="required">*</span></label>
+                        <input type="text" 
+                               id="webhookName" 
+                               class="form-control" 
+                               placeholder="Например: Уведомления в CRM"
+                               required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>URL <span class="required">*</span></label>
+                        <input type="url" 
+                               id="webhookUrl" 
+                               class="form-control" 
+                               placeholder="https://your-server.com/webhook"
+                               required>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Описание (опционально)</label>
+                    <textarea id="webhookDescription" 
+                              class="form-control" 
+                              rows="2"
+                              placeholder="Для чего используется этот webhook..."></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label>Секретный ключ (для подписи)</label>
+                    <div class="secret-input-wrapper">
+                        <input type="password" 
+                               id="webhookSecret" 
+                               class="form-control" 
+                               placeholder="Оставьте пустым для авто-генерации">
+                        <button type="button" class="btn btn-outline generate-secret-btn" title="Сгенерировать ключ">🎲</button>
+                        <button type="button" class="btn btn-outline toggle-secret-btn" title="Показать/скрыть">👁️</button>
+                    </div>
+                    <small class="form-text">
+                        Используется для проверки подписи X-Webhook-Signature в заголовке запроса
+                    </small>
+                </div>
+                
+                <div class="form-group">
+                    <label>События <span class="required">*</span></label>
+                    <div class="events-selection">
+                        <div class="events-toolbar">
+                            <button type="button" class="btn btn-sm btn-outline" id="selectAllEvents">Выбрать все</button>
+                            <button type="button" class="btn btn-sm btn-outline" id="deselectAllEvents">Снять все</button>
+                            <select id="eventCategoryFilter" class="form-control form-control-sm">
+                                <option value="">Все категории</option>
+                                <option value="calls">📞 Звонки</option>
+                                <option value="campaigns">📊 Кампании</option>
+                                <option value="contacts">👥 Контакты</option>
+                                <option value="blacklist">🚫 Чёрный список</option>
+                                <option value="incoming">📥 Входящие</option>
+                                <option value="system">⚙️ Система</option>
+                            </select>
+                        </div>
+                        <div class="events-grid" id="eventsGrid"></div>
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Фильтр по кампании (опционально)</label>
+                        <select id="webhookCampaignFilter" class="form-control">
+                            <option value="">Все кампании</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Фильтр по статусу (опционально)</label>
+                        <select id="webhookStatusFilter" class="form-control">
+                            <option value="">Все статусы</option>
+                            <option value="answered">Отвечен</option>
+                            <option value="no_answer">Нет ответа</option>
+                            <option value="busy">Занято</option>
+                            <option value="failed">Ошибка</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Дополнительные заголовки (опционально)</label>
+                    <div id="customHeadersContainer"></div>
+                    <button type="button" class="btn btn-sm btn-outline" id="addHeaderBtn">➕ Добавить заголовок</button>
+                </div>
+                
+                <div class="form-group">
+                    <label>Настройки повторных попыток</label>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Макс. попыток</label>
+                            <input type="number" 
+                                   id="webhookMaxRetries" 
+                                   class="form-control" 
+                                   value="3"
+                                   min="0"
+                                   max="10">
+                        </div>
+                        <div class="form-group">
+                            <label>Интервал (сек)</label>
+                            <input type="number" 
+                                   id="webhookRetryDelay" 
+                                   class="form-control" 
+                                   value="60"
+                                   min="10"
+                                   max="3600">
+                        </div>
+                        <div class="form-group">
+                            <label>Таймаут (сек)</label>
+                            <input type="number" 
+                                   id="webhookTimeout" 
+                                   class="form-control" 
+                                   value="10"
+                                   min="1"
+                                   max="60">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="webhookActive" checked>
+                        Webhook активен
+                    </label>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" 
+                            class="btn btn-outline" 
+                            onclick="App.webhooks.closeModal()">
+                        Отмена
+                    </button>
+                    <button type="button" 
+                            class="btn btn-outline" 
+                            id="testWebhookBtn">
+                        🧪 Тест
+                    </button>
+                    <button type="submit" 
+                            class="btn btn-primary">
+                        Сохранить
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ДЕТАЛЕЙ -->
+<!-- ============================================= -->
+<div id="webhookDetailModal" class="modal" style="display: none;">
+    <div class="modal-content modal-lg">
+        <div class="modal-header">
+            <h3>ℹ️ Информация о Webhook</h3>
+            <button class="modal-close" onclick="App.webhooks.closeDetailModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="webhookDetailContent">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" 
+                    class="btn btn-outline" 
+                    onclick="App.webhooks.closeDetailModal()">
+                Закрыть
+            </button>
+            <button type="button" 
+                    class="btn btn-primary" 
+                    id="webhookEditFromDetailBtn">
+                ✏️ Редактировать
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ДОСТАВОК -->
+<!-- ============================================= -->
+<div id="webhookDeliveriesModal" class="modal" style="display: none;">
+    <div class="modal-content modal-lg">
+        <div class="modal-header">
+            <h3>📋 История доставок</h3>
+            <button class="modal-close" onclick="App.webhooks.closeDeliveriesModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="webhookDeliveriesContent">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" 
+                    class="btn btn-outline" 
+                    onclick="App.webhooks.closeDeliveriesModal()">
+                Закрыть
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ПОДТВЕРЖДЕНИЯ УДАЛЕНИЯ -->
+<!-- ============================================= -->
+<div id="webhookDeleteModal" class="modal" style="display: none;">
+    <div class="modal-content modal-sm">
+        <div class="modal-header">
+            <h3>⚠️ Подтверждение удаления</h3>
+            <button class="modal-close" onclick="App.webhooks.closeDeleteModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p id="webhookDeleteMessage">Вы уверены, что хотите удалить Webhook?</p>
+            
+            <div class="form-actions">
+                <button type="button" 
+                        class="btn btn-outline" 
+                        onclick="App.webhooks.closeDeleteModal()">
+                    Отмена
+                </button>
+                <button type="button" 
+                        class="btn btn-danger" 
+                        id="confirmDeleteWebhookBtn">
+                    Удалить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- ДОПОЛНИТЕЛЬНЫЕ СТИЛИ -->
+<!-- ============================================= -->
+<style>
+    /* Webhooks Container */
+    .webhooks-container {
+        padding: 0;
+    }
+    
+    /* Webhook Info Panel */
+    .webhook-info-panel {
+        background: var(--color-bg-tertiary);
+        border-radius: var(--radius-lg);
+        padding: var(--spacing-lg);
+        margin-bottom: var(--spacing-xl);
+        border: 1px solid var(--color-border);
+    }
+    
+    .info-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: var(--spacing-md);
+    }
+    
+    .format-example {
+        margin-top: var(--spacing-md);
+    }
+    
+    .format-example pre {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: var(--spacing-md);
+        border-radius: var(--radius-md);
+        overflow-x: auto;
+        font-size: 0.85rem;
+        margin: var(--spacing-sm) 0;
+    }
+    
+    /* Table */
+    .webhooks-table-container {
+        overflow-x: auto;
+        margin-bottom: var(--spacing-lg);
+    }
+    
+    #webhooksTable tbody tr {
+        cursor: pointer;
+        transition: background var(--transition-fast);
+    }
+    
+    #webhooksTable tbody tr:hover {
+        background: var(--color-bg-tertiary);
+    }
+    
+    #webhooksTable tbody tr.inactive {
+        opacity: 0.6;
+    }
+    
+    .webhook-url {
+        font-family: var(--font-mono);
+        font-size: 0.8rem;
+        color: var(--color-text-muted);
+        word-break: break-all;
+    }
+    
+    .events-count {
+        font-weight: 500;
+    }
+    
+    .events-preview {
+        font-size: 0.75rem;
+        color: var(--color-text-muted);
+        max-width: 200px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .stats-mini {
+        display: flex;
+        gap: var(--spacing-sm);
+        font-size: 0.8rem;
+    }
+    
+    .stat-success { color: var(--color-success); }
+    .stat-failed { color: var(--color-danger); }
+    .stat-pending { color: var(--color-warning); }
+    
+    /* Secret Input */
+    .secret-input-wrapper {
+        display: flex;
+        gap: var(--spacing-xs);
+    }
+    
+    .secret-input-wrapper .form-control {
+        flex: 1;
+    }
+    
+    /* Events Selection */
+    .events-selection {
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md);
+        padding: var(--spacing-md);
+        max-height: 350px;
+        overflow-y: auto;
+        background: var(--color-bg-tertiary);
+    }
+    
+    .events-toolbar {
+        display: flex;
+        gap: var(--spacing-sm);
+        margin-bottom: var(--spacing-md);
+        padding-bottom: var(--spacing-sm);
+        border-bottom: 1px solid var(--color-border);
+        flex-wrap: wrap;
+    }
+    
+    .events-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: var(--spacing-md);
+    }
+    
+    .event-category h4 {
+        font-size: 0.9rem;
+        margin: 0 0 var(--spacing-sm) 0;
+        color: var(--color-text-secondary);
+    }
+    
+    .event-list {
+        display: flex;
+        flex-direction: column;
+        gap: var(--spacing-xs);
+    }
+    
+    .event-item {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+        cursor: pointer;
+        font-size: 0.85rem;
+        padding: 2px 0;
+    }
+    
+    /* Custom Headers */
+    .custom-header-row {
+        display: flex;
+        gap: var(--spacing-sm);
+        margin-bottom: var(--spacing-sm);
+    }
+    
+    .custom-header-row input:first-child {
+        flex: 1;
+    }
+    
+    .custom-header-row input:last-child {
+        flex: 2;
+    }
+    
+    /* Event Tags */
+    .event-tag {
+        display: inline-block;
+        background: var(--color-bg-card);
+        padding: 2px 8px;
+        border-radius: var(--radius-full);
+        font-size: 0.75rem;
+        margin: 2px;
+        border: 1px solid var(--color-border);
+    }
+    
+    .events-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--spacing-xs);
+        margin-top: var(--spacing-sm);
+    }
+    
+    /* Form Actions */
+    .form-actions {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-top: var(--spacing-lg);
+        justify-content: flex-end;
+    }
+    
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--spacing-md);
+    }
+    
+    .required {
+        color: var(--color-danger);
+    }
+    
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: var(--spacing-3xl) var(--spacing-xl);
+    }
+    
+    .empty-icon {
+        font-size: 4rem;
+        margin-bottom: var(--spacing-lg);
+        opacity: 0.5;
+    }
+    
+    /* Detail */
+    .webhook-detail {
+        max-height: 500px;
+        overflow-y: auto;
+    }
+    
+    .detail-section {
+        margin-bottom: var(--spacing-lg);
+        padding-bottom: var(--spacing-lg);
+        border-bottom: 1px solid var(--color-border);
+    }
+    
+    .detail-section:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+    
+    .detail-section h4 {
+        margin-top: 0;
+        margin-bottom: var(--spacing-md);
+        color: var(--color-text-secondary);
+    }
+    
+    .details-table {
+        width: 100%;
+    }
+    
+    .details-table td {
+        padding: var(--spacing-xs) 0;
+    }
+    
+    .details-table td:first-child {
+        font-weight: 500;
+        color: var(--color-text-muted);
+        width: 160px;
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .events-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .form-row {
+            grid-template-columns: 1fr;
+        }
+        
+        .form-actions {
+            flex-direction: column;
+        }
+        
+        .form-actions .btn {
+            width: 100%;
+        }
+        
+        .secret-input-wrapper {
+            flex-wrap: wrap;
+        }
+        
+        .events-toolbar {
+            flex-direction: column;
+        }
+        
+        .events-toolbar .btn,
+        .events-toolbar select {
+            width: 100%;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .stats-mini {
+            flex-direction: column;
+            gap: 2px;
+        }
+        
+        .custom-header-row {
+            flex-direction: column;
+        }
+    }
+</style>
+
+<script>
+    (function() {
+        const webhooksModule = App.webhooks;
+        if (webhooksModule) {
+            // Кнопка добавления
+            document.getElementById('webhookAddBtn')?.addEventListener('click', () => {
+                webhooksModule.openModal();
+            });
+            
+            // Кнопка обновления
+            document.getElementById('webhookRefreshBtn')?.addEventListener('click', () => {
+                webhooksModule.loadWebhooks();
+            });
+            
+            // Кнопка документации
+            document.getElementById('webhookDocsBtn')?.addEventListener('click', () => {
+                window.open('/docs#/webhooks', '_blank');
+            });
+            
+            // Переключение примера формата
+            document.getElementById('toggleFormatInfo')?.addEventListener('click', function() {
+                const el = document.getElementById('formatExample');
+                const isHidden = el.style.display === 'none';
+                el.style.display = isHidden ? 'block' : 'none';
+                this.textContent = isHidden ? 'Скрыть пример' : 'Показать пример';
+            });
+            
+            // Форма webhook
+            document.getElementById('webhookForm')?.addEventListener('submit', () => {
+                webhooksModule.saveWebhook();
+            });
+            
+            // Кнопка теста
+            document.getElementById('testWebhookBtn')?.addEventListener('click', () => {
+                webhooksModule.testWebhook();
+            });
+            
+            // Генерация секрета
+            document.querySelector('.generate-secret-btn')?.addEventListener('click', () => {
+                webhooksModule.generateSecret();
+            });
+            
+            // Переключение видимости секрета
+            document.querySelector('.toggle-secret-btn')?.addEventListener('click', function() {
+                const input = document.getElementById('webhookSecret');
+                input.type = input.type === 'password' ? 'text' : 'password';
+                this.textContent = input.type === 'password' ? '👁️' : '🙈';
+            });
+            
+            // Выбрать все события
+            document.getElementById('selectAllEvents')?.addEventListener('click', () => {
+                document.querySelectorAll('input[name="webhookEvents"]').forEach(cb => cb.checked = true);
+            });
+            
+            // Снять все события
+            document.getElementById('deselectAllEvents')?.addEventListener('click', () => {
+                document.querySelectorAll('input[name="webhookEvents"]').forEach(cb => cb.checked = false);
+            });
+            
+            // Фильтр по категории событий
+            document.getElementById('eventCategoryFilter')?.addEventListener('change', (e) => {
+                const category = e.target.value;
+                document.querySelectorAll('.event-category').forEach(el => {
+                    el.style.display = (!category || el.dataset.category === category) ? 'block' : 'none';
+                });
+            });
+            
+            // Добавление заголовка
+            document.getElementById('addHeaderBtn')?.addEventListener('click', () => {
+                webhooksModule.addCustomHeaderRow();
+            });
+            
+            // Кнопка подтверждения удаления
+            document.getElementById('confirmDeleteWebhookBtn')?.addEventListener('click', () => {
+                webhooksModule.deleteWebhook();
+            });
+            
+            // Редактирование из деталей
+            document.getElementById('webhookEditFromDetailBtn')?.addEventListener('click', () => {
+                const id = webhooksModule.currentWebhookId;
+                if (id) {
+                    webhooksModule.closeDetailModal();
+                    webhooksModule.openModalById(id);
+                }
+            });
+        }
+    })();
+</script>
