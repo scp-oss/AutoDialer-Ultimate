@@ -70,6 +70,14 @@ class ScheduleType(str, Enum):
     CRON = "cron"
 
 
+class TranscriptionStatus(str, Enum):
+    """Transcription status enum"""
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 # =============================================
 # Base Model
 # =============================================
@@ -100,7 +108,6 @@ class RetryStrategy(BaseModel):
     failed: int = Field(1, ge=0, le=5, description="Max retries for failed")
     timeout: int = Field(1, ge=0, le=5, description="Max retries for timeout")
     
-    # Delays in seconds
     busy_delay: int = Field(120, ge=30, le=3600)
     noanswer_delay: int = Field(300, ge=60, le=7200)
     failed_delay: int = Field(60, ge=30, le=1800)
@@ -115,9 +122,9 @@ class CampaignSchedule(BaseModel):
     end_at: Optional[datetime] = None
     timezone: str = "UTC"
     cron_expression: Optional[str] = None
-    days_of_week: Optional[List[int]] = None  # 0-6, Monday=0
-    hours: Optional[List[int]] = None  # 0-23
-    minutes: Optional[List[int]] = None  # 0-59
+    days_of_week: Optional[List[int]] = None
+    hours: Optional[List[int]] = None
+    minutes: Optional[List[int]] = None
 
 
 class CampaignBase(BaseSchema):
@@ -203,19 +210,13 @@ class ContactBase(BaseSchema):
     
     @validator('phone')
     def validate_phone(cls, v: str) -> str:
-        """Validate and normalize phone number"""
-        # Remove all non-digits
         phone = re.sub(r'[^\d]', '', v)
-        
         if len(phone) < 10:
             raise ValueError('Phone number must have at least 10 digits')
-        
-        # Normalize Russian numbers
         if len(phone) == 11 and phone.startswith('8'):
             phone = '7' + phone[1:]
         elif len(phone) == 10 and phone.startswith('9'):
             phone = '7' + phone
-        
         return phone
 
 
@@ -364,7 +365,6 @@ class UserCreate(UserBase):
     
     @validator('password')
     def validate_password(cls, v: str) -> str:
-        """Validate password strength"""
         if not re.search(r'[A-Z]', v):
             raise ValueError('Password must contain at least one uppercase letter')
         if not re.search(r'[a-z]', v):
@@ -621,14 +621,14 @@ class CampaignStatsResponse(BaseModel):
 # =============================================
 class ComponentStatus(BaseModel):
     """Component health status"""
-    status: str  # "healthy", "degraded", "unhealthy"
+    status: str
     message: Optional[str] = None
     latency_ms: Optional[float] = None
 
 
 class SystemStatusResponse(BaseModel):
     """System status response"""
-    status: str  # "healthy", "degraded", "unhealthy"
+    status: str
     version: str = "3.0.0"
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     uptime_seconds: float
@@ -651,7 +651,7 @@ class ApiTokenResponse(BaseSchema):
     """Schema for API token response"""
     id: int
     name: str
-    token: str  # Only shown once on creation
+    token: str
     last_used_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
     created_at: datetime
@@ -668,7 +668,7 @@ class ApiTokenListResponse(BaseSchema):
 
 
 # =============================================
-# WebSocket Models
+; WebSocket Models
 # =============================================
 class WebSocketMessage(BaseModel):
     """WebSocket message schema"""
@@ -679,7 +679,7 @@ class WebSocketMessage(BaseModel):
 
 class LiveCallUpdate(BaseModel):
     """Live call update for WebSocket"""
-    event: str  # "dial_begin", "answer", "hangup", "dtmf"
+    event: str
     unique_id: str
     linked_id: Optional[str] = None
     campaign_id: Optional[int] = None
@@ -704,7 +704,65 @@ class CampaignProgressUpdate(BaseModel):
 
 
 # =============================================
-# Utility Functions
+# Incoming Call Models (НОВОЕ)
+# =============================================
+class IncomingCallBase(BaseSchema):
+    """Base incoming call schema"""
+    caller_number: str = Field(..., description="Caller phone number")
+    recording_path: str = Field(..., description="Path to recording file")
+    transcription: Optional[str] = Field(None, description="Transcribed text")
+    transcription_status: TranscriptionStatus = TranscriptionStatus.PENDING
+    duration: Optional[int] = Field(None, ge=0, description="Recording duration in seconds")
+    file_size: Optional[int] = Field(None, ge=0, description="File size in bytes")
+    listened: bool = False
+    notes: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class IncomingCallCreate(IncomingCallBase):
+    """Schema for creating an incoming call record"""
+    pass
+
+
+class IncomingCallUpdate(BaseSchema):
+    """Schema for updating an incoming call record"""
+    transcription: Optional[str] = None
+    transcription_status: Optional[TranscriptionStatus] = None
+    duration: Optional[int] = None
+    file_size: Optional[int] = None
+    listened: Optional[bool] = None
+    notes: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class IncomingCallResponse(IncomingCallBase, TimestampSchema):
+    """Schema for incoming call response"""
+    id: int
+    call_date: Optional[datetime] = None
+
+
+class IncomingCallListResponse(BaseSchema):
+    """Schema for paginated incoming call list"""
+    items: List[IncomingCallResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class IncomingCallStats(BaseModel):
+    """Incoming calls statistics"""
+    total: int = 0
+    pending: int = 0
+    processing: int = 0
+    completed: int = 0
+    failed: int = 0
+    avg_duration: float = 0.0
+    total_duration: int = 0
+
+
+# =============================================
+; Utility Functions
 # =============================================
 def model_to_dict(model: BaseModel, exclude_none: bool = True) -> Dict[str, Any]:
     """Convert Pydantic model to dictionary"""
