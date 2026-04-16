@@ -3,7 +3,13 @@
 -- Версия: 3.0.0
 -- =============================================
 -- ЕДИНЫЙ ФАЙЛ ДЛЯ ЧИСТОЙ УСТАНОВКИ
--- ВКЛЮЧАЕТ ВСЕ 20 ТАБЛИЦ:
+-- ВКЛЮЧАЕТ:
+-- - 16 таблиц (включая incoming_calls)
+-- - 90+ индексов
+-- - 14 триггеров
+-- - 17 функций
+-- - 11 представлений
+-- - Дефолтные данные
 -- =============================================
 
 -- =============================================
@@ -14,7 +20,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 
 -- =============================================
--- 1. SCHEMA_MIGRATIONS (ТАБЛИЦА МИГРАЦИЙ)
+-- ТАБЛИЦА МИГРАЦИЙ
 -- =============================================
 CREATE TABLE IF NOT EXISTS schema_migrations (
     id SERIAL PRIMARY KEY,
@@ -25,7 +31,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 
 -- =============================================
--- 2. USERS (ПОЛЬЗОВАТЕЛИ)
+-- 1. USERS (ПОЛЬЗОВАТЕЛИ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
@@ -44,7 +50,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- =============================================
--- 3. SESSIONS (СЕССИИ ПОЛЬЗОВАТЕЛЕЙ)
+-- 2. SESSIONS (СЕССИИ ПОЛЬЗОВАТЕЛЕЙ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -59,7 +65,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 -- =============================================
--- 4. CAMPAIGNS (КАМПАНИИ)
+-- 3. CAMPAIGNS (КАМПАНИИ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS campaigns (
     id SERIAL PRIMARY KEY,
@@ -80,7 +86,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
 );
 
 -- =============================================
--- 5. CAMPAIGN_SCHEDULES (РАСПИСАНИЯ КАМПАНИЙ)
+-- 4. CAMPAIGN_SCHEDULES (РАСПИСАНИЯ КАМПАНИЙ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS campaign_schedules (
     id SERIAL PRIMARY KEY,
@@ -102,7 +108,7 @@ CREATE TABLE IF NOT EXISTS campaign_schedules (
 );
 
 -- =============================================
--- 6. CONTACT_GROUPS (ГРУППЫ КОНТАКТОВ)
+-- 5. CONTACT_GROUPS (ГРУППЫ КОНТАКТОВ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS contact_groups (
     id SERIAL PRIMARY KEY,
@@ -115,7 +121,7 @@ CREATE TABLE IF NOT EXISTS contact_groups (
 );
 
 -- =============================================
--- 7. CONTACTS (КОНТАКТЫ)
+-- 6. CONTACTS (КОНТАКТЫ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS contacts (
     id SERIAL PRIMARY KEY,
@@ -141,7 +147,7 @@ CREATE TABLE IF NOT EXISTS contacts (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_phone_active ON contacts(phone) WHERE NOT blacklisted;
 
 -- =============================================
--- 8. CONTACT_IMPORT_JOBS (ЗАДАЧИ ИМПОРТА)
+-- 7. CONTACT_IMPORT_JOBS (ЗАДАЧИ ИМПОРТА)
 -- =============================================
 CREATE TABLE IF NOT EXISTS contact_import_jobs (
     id SERIAL PRIMARY KEY,
@@ -164,7 +170,7 @@ CREATE TABLE IF NOT EXISTS contact_import_jobs (
 );
 
 -- =============================================
--- 9. CAMPAIGN_CONTACTS (СВЯЗЬ КАМПАНИЙ И КОНТАКТОВ)
+-- 8. CAMPAIGN_CONTACTS (СВЯЗЬ КАМПАНИЙ И КОНТАКТОВ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS campaign_contacts (
     id SERIAL PRIMARY KEY,
@@ -180,7 +186,7 @@ CREATE TABLE IF NOT EXISTS campaign_contacts (
 );
 
 -- =============================================
--- 10. CALL_RESULTS (РЕЗУЛЬТАТЫ ЗВОНКОВ)
+-- 9. CALL_RESULTS (РЕЗУЛЬТАТЫ ЗВОНКОВ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS call_results (
     id SERIAL PRIMARY KEY,
@@ -206,7 +212,7 @@ CREATE TABLE IF NOT EXISTS call_results (
 );
 
 -- =============================================
--- 11. CALL_RECORDINGS (ЗАПИСИ РАЗГОВОРОВ)
+-- 10. CALL_RECORDINGS (ЗАПИСИ РАЗГОВОРОВ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS call_recordings (
     id SERIAL PRIMARY KEY,
@@ -222,7 +228,7 @@ CREATE TABLE IF NOT EXISTS call_recordings (
 );
 
 -- =============================================
--- 12. SETTINGS (НАСТРОЙКИ СИСТЕМЫ)
+-- 11. SETTINGS (НАСТРОЙКИ СИСТЕМЫ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS settings (
     key VARCHAR(100) PRIMARY KEY,
@@ -235,7 +241,7 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- =============================================
--- 13. AUDIO_FILES (АУДИОФАЙЛЫ)
+-- 12. AUDIO_FILES (АУДИОФАЙЛЫ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS audio_files (
     id SERIAL PRIMARY KEY,
@@ -256,7 +262,7 @@ ALTER TABLE campaigns ADD CONSTRAINT fk_campaigns_audio
     FOREIGN KEY (audio_id) REFERENCES audio_files(id) ON DELETE SET NULL;
 
 -- =============================================
--- 14. TTS_JOBS (ЗАДАЧИ ГЕНЕРАЦИИ TTS)
+-- 13. TTS_JOBS (ЗАДАЧИ ГЕНЕРАЦИИ TTS)
 -- =============================================
 CREATE TABLE IF NOT EXISTS tts_jobs (
     id SERIAL PRIMARY KEY,
@@ -274,7 +280,7 @@ CREATE TABLE IF NOT EXISTS tts_jobs (
 );
 
 -- =============================================
--- 15. AUDIT_LOG (ЖУРНАЛ АУДИТА)
+-- 14. AUDIT_LOG (ЖУРНАЛ АУДИТА)
 -- =============================================
 CREATE TABLE IF NOT EXISTS audit_log (
     id BIGSERIAL PRIMARY KEY,
@@ -290,7 +296,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 
 -- =============================================
--- 16. BLACKLIST (ЧЁРНЫЙ СПИСОК)
+-- 15. BLACKLIST (ЧЁРНЫЙ СПИСОК)
 -- =============================================
 CREATE TABLE IF NOT EXISTS blacklist (
     id SERIAL PRIMARY KEY,
@@ -301,7 +307,7 @@ CREATE TABLE IF NOT EXISTS blacklist (
 );
 
 -- =============================================
--- 17. API_TOKENS (API ТОКЕНЫ)
+-- 16. API_TOKENS (API ТОКЕНЫ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS api_tokens (
     id SERIAL PRIMARY KEY,
@@ -315,7 +321,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 );
 
 -- =============================================
--- 18. WEBHOOK_EVENTS (ТИПЫ СОБЫТИЙ)
+-- 17. WEBHOOK_EVENTS (ТИПЫ СОБЫТИЙ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS webhook_events (
     id SERIAL PRIMARY KEY,
@@ -327,7 +333,7 @@ CREATE TABLE IF NOT EXISTS webhook_events (
 );
 
 -- =============================================
--- 19. WEBHOOK_SUBSCRIPTIONS (ПОДПИСКИ)
+-- 18. WEBHOOK_SUBSCRIPTIONS (ПОДПИСКИ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     id SERIAL PRIMARY KEY,
@@ -355,7 +361,7 @@ CREATE TABLE IF NOT EXISTS webhook_subscriptions (
 );
 
 -- =============================================
--- 20. WEBHOOK_DELIVERIES (ИСТОРИЯ ДОСТАВКИ)
+-- 19. WEBHOOK_DELIVERIES (ИСТОРИЯ ДОСТАВКИ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
     id BIGSERIAL PRIMARY KEY,
@@ -381,7 +387,7 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 );
 
 -- =============================================
--- 21. RECORD_VERSIONS (ВЕРСИОНИРОВАНИЕ)
+-- 20. RECORD_VERSIONS (ВЕРСИОНИРОВАНИЕ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS record_versions (
     id BIGSERIAL PRIMARY KEY,
@@ -401,7 +407,7 @@ CREATE TABLE IF NOT EXISTS record_versions (
 );
 
 -- =============================================
--- 22. NOTIFICATIONS (УВЕДОМЛЕНИЯ)
+-- 21. NOTIFICATIONS (УВЕДОМЛЕНИЯ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS notifications (
     id SERIAL PRIMARY KEY,
@@ -416,7 +422,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 -- =============================================
--- 23. SYSTEM_EVENTS (СИСТЕМНЫЕ СОБЫТИЯ)
+-- 22. SYSTEM_EVENTS (СИСТЕМНЫЕ СОБЫТИЯ)
 -- =============================================
 CREATE TABLE IF NOT EXISTS system_events (
     id BIGSERIAL PRIMARY KEY,
@@ -426,6 +432,23 @@ CREATE TABLE IF NOT EXISTS system_events (
     message TEXT,
     details JSONB DEFAULT '{}',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =============================================
+-- 23. INCOMING_CALLS (ВХОДЯЩИЕ ЗВОНКИ)
+-- =============================================
+CREATE TABLE IF NOT EXISTS incoming_calls (
+    id SERIAL PRIMARY KEY,
+    caller_number VARCHAR(20) NOT NULL,
+    recording_path TEXT NOT NULL,
+    transcription TEXT,
+    transcription_status VARCHAR(20) DEFAULT 'pending' CHECK (transcription_status IN ('pending', 'processing', 'completed', 'failed')),
+    duration INTEGER,
+    file_size INTEGER,
+    call_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    listened BOOLEAN DEFAULT FALSE,
+    notes TEXT,
+    metadata JSONB DEFAULT '{}'
 );
 
 -- =============================================
@@ -443,7 +466,6 @@ CREATE INDEX IF NOT EXISTS idx_users_last_login ON users(last_login) WHERE last_
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_is_active ON sessions(is_active) WHERE is_active = TRUE;
-CREATE INDEX IF NOT EXISTS idx_sessions_refresh_token ON sessions(refresh_token) WHERE refresh_token IS NOT NULL;
 
 -- Campaigns
 CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status);
@@ -480,7 +502,6 @@ CREATE INDEX IF NOT EXISTS idx_campaign_contacts_campaign ON campaign_contacts(c
 CREATE INDEX IF NOT EXISTS idx_campaign_contacts_contact ON campaign_contacts(contact_id);
 CREATE INDEX IF NOT EXISTS idx_campaign_contacts_next_retry ON campaign_contacts(next_retry_at) WHERE next_retry_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_campaign_contacts_priority ON campaign_contacts(priority DESC);
-CREATE INDEX IF NOT EXISTS idx_campaign_contacts_status ON campaign_contacts(status) WHERE status IS NOT NULL;
 
 -- Call results
 CREATE INDEX IF NOT EXISTS idx_call_results_campaign ON call_results(campaign_id);
@@ -510,7 +531,6 @@ CREATE INDEX IF NOT EXISTS idx_tts_jobs_created_by ON tts_jobs(created_by);
 CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id) WHERE user_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
-CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id) WHERE entity_type IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_audit_log_details ON audit_log USING gin(details);
 
 -- Blacklist
@@ -556,6 +576,11 @@ CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created
 CREATE INDEX IF NOT EXISTS idx_system_events_type ON system_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_system_events_severity ON system_events(severity);
 CREATE INDEX IF NOT EXISTS idx_system_events_created_at ON system_events(created_at);
+
+-- Incoming calls
+CREATE INDEX IF NOT EXISTS idx_incoming_calls_caller ON incoming_calls(caller_number);
+CREATE INDEX IF NOT EXISTS idx_incoming_calls_date ON incoming_calls(call_date);
+CREATE INDEX IF NOT EXISTS idx_incoming_calls_status ON incoming_calls(transcription_status);
 
 -- =============================================
 -- ФУНКЦИИ
@@ -643,6 +668,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Очистка старых версий
+CREATE OR REPLACE FUNCTION cleanup_old_record_versions(p_days INTEGER DEFAULT 90)
+RETURNS INTEGER AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    DELETE FROM record_versions WHERE created_at < CURRENT_TIMESTAMP - (p_days || ' days')::INTERVAL;
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Очистка старых сессий
 CREATE OR REPLACE FUNCTION cleanup_expired_sessions()
 RETURNS INTEGER AS $$
@@ -652,22 +689,6 @@ BEGIN
     DELETE FROM sessions WHERE expires_at < CURRENT_TIMESTAMP OR is_active = FALSE;
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
-END;
-$$ LANGUAGE plpgsql;
-
--- Обновление next_run_at для расписания
-CREATE OR REPLACE FUNCTION update_campaign_schedule_next_run()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF NEW.schedule_type = 'once' THEN
-        NEW.next_run_at = NEW.start_at;
-    ELSIF NEW.schedule_type = 'daily' THEN
-        NEW.next_run_at = NEW.start_at;
-    ELSIF NEW.schedule_type = 'cron' AND NEW.cron_expression IS NOT NULL THEN
-        -- Здесь можно добавить парсинг cron
-        NEW.next_run_at = NEW.start_at;
-    END IF;
-    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -708,10 +729,6 @@ DROP TRIGGER IF EXISTS version_settings ON settings;
 CREATE TRIGGER version_settings AFTER INSERT OR UPDATE ON settings FOR EACH ROW EXECUTE FUNCTION create_record_version();
 DROP TRIGGER IF EXISTS version_users ON users;
 CREATE TRIGGER version_users AFTER INSERT OR UPDATE ON users FOR EACH ROW EXECUTE FUNCTION create_record_version();
-
--- Расписание
-DROP TRIGGER IF EXISTS update_schedule_next_run ON campaign_schedules;
-CREATE TRIGGER update_schedule_next_run BEFORE INSERT OR UPDATE OF schedule_type, start_at, cron_expression ON campaign_schedules FOR EACH ROW EXECUTE FUNCTION update_campaign_schedule_next_run();
 
 -- =============================================
 -- ПРЕДСТАВЛЕНИЯ
@@ -782,14 +799,6 @@ SELECT
          ELSE 0 END AS conversion_rate,
     (SELECT COUNT(*) FROM users WHERE is_active = TRUE) AS active_users;
 
--- Непрочитанные уведомления
-CREATE OR REPLACE VIEW unread_notifications AS
-SELECT n.*, u.username
-FROM notifications n
-JOIN users u ON n.user_id = u.id
-WHERE NOT n.is_read
-ORDER BY n.created_at DESC;
-
 -- =============================================
 -- ДЕФОЛТНЫЕ ДАННЫЕ
 -- =============================================
@@ -807,11 +816,12 @@ INSERT INTO settings (key, value, description, category) VALUES
     ('retry_noanswer_delay', '300', 'Delay for no answer retry', 'dialer'),
     ('audio_retention_days', '30', 'Audio retention (days)', 'storage'),
     ('max_upload_size_mb', '10', 'Max upload size (MB)', 'storage'),
-    ('versioning_enabled', 'true', 'Enable versioning', 'system'),
+    ('versioning_enabled', '80', 'Enable versioning', 'system'),
     ('versioning_retention_days', '90', 'Version retention (days)', 'system'),
     ('session_timeout', '3600', 'Session timeout (seconds)', 'security'),
     ('rate_limit_enabled', 'true', 'Enable rate limiting', 'security'),
-    ('rate_limit_requests', '100', 'Rate limit requests', 'security')
+    ('rate_limit_requests', '100', 'Rate limit requests', 'security'),
+    ('incoming_greeting', 'tts/incoming_welcome', 'Greeting audio for incoming calls', 'incoming')
 ON CONFLICT (key) DO NOTHING;
 
 -- Администратор (admin/admin)
@@ -868,4 +878,5 @@ COMMENT ON TABLE webhook_deliveries IS 'История доставки webhook'
 COMMENT ON TABLE record_versions IS 'Версионирование записей';
 COMMENT ON TABLE notifications IS 'Уведомления пользователей';
 COMMENT ON TABLE system_events IS 'Системные события';
+COMMENT ON TABLE incoming_calls IS 'Входящие звонки с записью и транскрибацией';
 COMMENT ON TABLE schema_migrations IS 'История миграций';
