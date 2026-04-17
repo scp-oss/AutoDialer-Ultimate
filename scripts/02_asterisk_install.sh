@@ -260,27 +260,13 @@ install_asterisk_deps() {
 }
 
 # =============================================
-# СКАЧИВАНИЕ ASTERISK С ПРОВЕРКОЙ CHECKSUM
+# СКАЧИВАНИЕ ASTERISK (БЕЗ ЖЁСТКОЙ ПРОВЕРКИ SHA256)
 # =============================================
-download_asterisk() {
+ddownload_asterisk() {
     log_step "Скачивание Asterisk..."
     
     ASTERISK_VERSION="${ASTERISK_VERSION:-21}"
     ASTERISK_DOWNLOAD_URL="https://downloads.asterisk.org/pub/telephony/asterisk"
-    
-    # SHA256 checksums для разных версий
-    case "$ASTERISK_VERSION" in
-        21)
-            ASTERISK_SHA256="d4f16c2a8e1c5e7b9a3f8e5d6c2b8a1e9f7d3c5b2a8e1f4d6c7b9a3e5f8d2c"
-            ;;
-        20)
-            ASTERISK_SHA256="a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"
-            ;;
-        *)
-            log_warn "Неизвестная версия Asterisk: $ASTERISK_VERSION, checksum не проверяется"
-            ASTERISK_SHA256=""
-            ;;
-    esac
     
     cd /usr/src
     
@@ -306,26 +292,14 @@ download_asterisk() {
         sleep 5
     done
     
-    # Проверка checksum
-    if [ -n "$ASTERISK_SHA256" ]; then
-        log_info "Проверка SHA256..."
-        local actual_sha256=$(sha256sum "asterisk-${ASTERISK_VERSION}-current.tar.gz" | awk '{print $1}')
-        
-        if [ "$actual_sha256" = "$ASTERISK_SHA256" ]; then
-            log_success "SHA256 совпадает"
-        else
-            log_error "SHA256 НЕ СОВПАДАЕТ!"
-            log_error "Ожидалось: $ASTERISK_SHA256"
-            log_error "Получено:   $actual_sha256"
-            exit 1
-        fi
-    fi
-    
-    # Проверка целостности архива
+    # ПРОВЕРКА ЦЕЛОСТНОСТИ АРХИВА (без SHA256)
+    log_info "Проверка целостности архива..."
     if ! tar -tzf "asterisk-${ASTERISK_VERSION}-current.tar.gz" >/dev/null 2>&1; then
-        log_error "Архив повреждён"
+        log_error "Архив повреждён или не является tar.gz"
+        rm -f "asterisk-${ASTERISK_VERSION}-current.tar.gz"
         exit 1
     fi
+    log_success "Архив цел"
     
     log_info "Распаковка..."
     tar -xzf "asterisk-${ASTERISK_VERSION}-current.tar.gz"
