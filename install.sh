@@ -525,12 +525,12 @@ create_user() {
     if id -u autodialer &>/dev/null; then
         log_info "Пользователь autodialer уже существует"
     else
-        useradd -r -s /bin/bash -m -d /opt/autodialer autodialer
+        /usr/sbin/useradd -r -s /bin/bash -m -d /opt/autodialer autodialer
         log_success "Пользователь autodialer создан"
     fi
     
-    usermod -aG audio autodialer 2>/dev/null || true
-    usermod -aG www-data autodialer 2>/dev/null || true
+    /usr/sbin/usermod -aG audio autodialer 2>/dev/null || true
+    /usr/sbin/usermod -aG www-data autodialer 2>/dev/null || true
     
     mkdir -p /opt/autodialer/{logs,backups,uploads,recordings}
     chown -R autodialer:autodialer /opt/autodialer
