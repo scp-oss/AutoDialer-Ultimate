@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================
 # AutoDialer Ultimate - System Setup
-# Version: 3.0.0
+# Version: 3.0.2 (ENTERPRISE)
 # Description: Настройка системы и установка зависимостей
 # =============================================
 
@@ -11,8 +11,12 @@ set -euo pipefail
 # Определение директорий
 # =============================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/../.env" ]; then
-    source "$SCRIPT_DIR/../.env"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
 fi
 
 # =============================================
@@ -30,9 +34,6 @@ else
     RED=''; GREEN=''; YELLOW=''; BLUE=''; CYAN=''; BOLD=''; NC=''
 fi
 
-# =============================================
-# Функции логирования
-# =============================================
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
@@ -55,7 +56,7 @@ check_root() {
 INSTALLED_MARKER="/opt/autodialer/.system_setup_done"
 
 check_already_installed() {
-    if [ -f "$INSTALLED_MARKER" ]; then
+    if [ -f "$INSTALLED_MARKER" ] && [ "${FORCE_REINSTALL:-false}" != "true" ]; then
         log_warn "Системные зависимости уже установлены (найден $INSTALLED_MARKER)"
         log_info "Для принудительной переустановки удалите маркер: rm -f $INSTALLED_MARKER"
         exit 0
@@ -94,7 +95,6 @@ check_os() {
 check_resources() {
     log_step "Проверка системных ресурсов..."
     
-    # Проверка RAM
     TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
     if [ "$TOTAL_RAM" -ge 3500 ]; then
         log_success "RAM: ${TOTAL_RAM}MB"
@@ -103,7 +103,6 @@ check_resources() {
         log_warn "Производительность может быть снижена"
     fi
     
-    # Проверка CPU
     CPU_CORES=$(nproc)
     if [ "$CPU_CORES" -ge 2 ]; then
         log_success "CPU ядер: $CPU_CORES"
@@ -111,7 +110,6 @@ check_resources() {
         log_warn "Рекомендуется минимум 2 ядра CPU. Обнаружено: $CPU_CORES"
     fi
     
-    # Проверка диска
     FREE_DISK=$(df -BG /opt 2>/dev/null | awk 'NR==2 {print $4}' | sed 's/G//')
     if [ -z "$FREE_DISK" ]; then
         FREE_DISK=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
@@ -125,13 +123,67 @@ check_resources() {
 }
 
 # =============================================
+# 🔥 НАДЁЖНЫЙ APT С ПОВТОРНЫМИ ПОПЫТКАМИ
+# =============================================
+apt_update_with_retry() {
+    local max_attempts=5
+    local attempt=0
+    local wait_time=5
+    
+    while [ $attempt -lt $max_attempts ]; do
+        if apt-get update -y 2>/tmp/apt-error.log; then
+            log_success "apt update выполнен успешно"
+            return 0
+        fi
+        
+        attempt=$((attempt + 1))
+        
+        if [ $attempt -lt $max_attempts ]; then
+            log_warn "apt update не удался (попытка $attempt/$max_attempts)"
+            log_info "Ожидание ${wait_time}с перед повтором..."
+            
+            if [ -s /tmp/apt-error.log ]; then
+                tail -5 /tmp/apt-error.log
+            fi
+            
+            sleep $wait_time
+            wait_time=$((wait_time + 5))
+        fi
+    done
+    
+    log_error "apt update не удался после $max_attempts попыток"
+    return 1
+}
+
+apt_install_with_retry() {
+    local packages="$1"
+    local max_attempts=3
+    
+    for i in $(seq 1 $max_attempts); do
+        if apt-get install -y -qq $packages 2>/tmp/apt-install-error.log; then
+            return 0
+        fi
+        
+        log_warn "apt install не удался (попытка $i/$max_attempts)"
+        
+        if [ $i -lt $max_attempts ]; then
+            sleep 5
+            apt_update_with_retry || true
+        fi
+    done
+    
+    log_error "Не удалось установить: $packages"
+    tail -20 /tmp/apt-install-error.log
+    return 1
+}
+
+# =============================================
 # Обновление системы
 # =============================================
 update_system() {
     log_step "Обновление системных пакетов..."
     
-    log_info "Обновление списка пакетов..."
-    apt-get update -qq
+    apt_update_with_retry
     
     log_info "Обновление установленных пакетов..."
     apt-get upgrade -y -qq
@@ -145,17 +197,19 @@ update_system() {
 install_base_utils() {
     log_step "Установка базовых утилит..."
     
-    apt-get install -y -qq \
-        curl wget git \
-        ca-certificates gnupg lsb-release \
-        software-properties-common \
-        unzip zip \
-        net-tools iproute2 \
-        dnsutils \
-        jq \
-        vim nano \
+    local packages=(
+        curl wget git
+        ca-certificates gnupg lsb-release
+        software-properties-common
+        unzip zip
+        net-tools iproute2
+        dnsutils
+        jq
+        vim nano
         htop iotop
+    )
     
+    apt_install_with_retry "${packages[*]}"
     log_success "Базовые утилиты установлены"
 }
 
@@ -165,13 +219,15 @@ install_base_utils() {
 install_build_tools() {
     log_step "Установка инструментов сборки..."
     
-    apt-get install -y -qq \
-        build-essential \
-        gcc g++ make \
-        cmake pkg-config \
-        automake autoconf libtool \
+    local packages=(
+        build-essential
+        gcc g++ make
+        cmake pkg-config
+        automake autoconf libtool
         patch
+    )
     
+    apt_install_with_retry "${packages[*]}"
     log_success "Инструменты сборки установлены"
 }
 
@@ -181,24 +237,26 @@ install_build_tools() {
 install_python_deps() {
     log_step "Установка Python и зависимостей..."
     
-    apt-get install -y -qq \
-        python3 \
-        python3-pip \
-        python3-venv \
-        python3-dev \
-        python3-setuptools \
-        python3-wheel \
-        libpq-dev \
-        libffi-dev \
-        libssl-dev \
-        libxml2-dev \
-        libxslt1-dev \
-        libjpeg-dev \
+    local packages=(
+        python3
+        python3-pip
+        python3-venv
+        python3-dev
+        python3-setuptools
+        python3-wheel
+        libpq-dev
+        libffi-dev
+        libssl-dev
+        libxml2-dev
+        libxslt1-dev
+        libjpeg-dev
         zlib1g-dev
+    )
     
-    # Обновление pip
+    apt_install_with_retry "${packages[*]}"
+    
     log_info "Обновление pip..."
-    python3 -m pip install --upgrade pip setuptools wheel -q
+    python3 -m pip install --upgrade pip setuptools wheel -q 2>/dev/null || true
     
     log_success "Python и зависимости установлены"
 }
@@ -209,16 +267,18 @@ install_python_deps() {
 install_audio_deps() {
     log_step "Установка аудио зависимостей..."
     
-    apt-get install -y -qq \
-        ffmpeg \
-        sox \
-        libsox-fmt-all \
-        alsa-utils \
-        pulseaudio-utils \
-        libsndfile1 \
+    local packages=(
+        ffmpeg
+        sox
+        libsox-fmt-all
+        alsa-utils
+        pulseaudio-utils
+        libsndfile1
         libsndfile1-dev
+    )
     
-    # Проверка ffmpeg
+    apt_install_with_retry "${packages[*]}"
+    
     if command -v ffmpeg &>/dev/null; then
         log_success "ffmpeg установлен: $(ffmpeg -version 2>/dev/null | head -1)"
     else
@@ -234,11 +294,7 @@ install_audio_deps() {
 install_db_clients() {
     log_step "Установка клиентов баз данных..."
     
-    # PostgreSQL клиент
-    apt-get install -y -qq postgresql-client
-    
-    # Redis клиент
-    apt-get install -y -qq redis-tools
+    apt_install_with_retry "postgresql-client redis-tools"
     
     log_success "Клиенты БД установлены"
 }
@@ -252,18 +308,12 @@ install_nginx() {
     if command -v nginx &>/dev/null; then
         log_info "Nginx уже установлен: $(nginx -v 2>&1)"
     else
-        apt-get install -y -qq nginx
+        apt_install_with_retry "nginx"
         log_success "Nginx установлен"
     fi
     
-    # Создание директорий для логов
     mkdir -p /var/log/nginx
     chown -R www-data:www-data /var/log/nginx
-    
-    # Базовая конфигурация если ещё не настроена
-    if [ ! -f /etc/nginx/sites-available/autodialer ]; then
-        log_info "Базовая конфигурация Nginx будет создана позже"
-    fi
 }
 
 # =============================================
@@ -280,10 +330,13 @@ install_certbot() {
     if command -v certbot &>/dev/null; then
         log_info "Certbot уже установлен"
     else
-        apt-get install -y -qq certbot python3-certbot-nginx
+        apt_install_with_retry "certbot python3-certbot-nginx"
         log_success "Certbot установлен"
     fi
 }
+
+# =============================================
+// ... продолжение ...
 
 # =============================================
 # Создание пользователя autodialer
@@ -298,7 +351,6 @@ create_user() {
         log_success "Пользователь autodialer создан"
     fi
     
-    # Добавление в группы
     usermod -aG audio autodialer 2>/dev/null || true
     usermod -aG www-data autodialer 2>/dev/null || true
     
@@ -311,7 +363,6 @@ create_user() {
 setup_limits() {
     log_step "Настройка системных лимитов..."
     
-    # Лимиты открытых файлов
     cat > /etc/security/limits.d/99-autodialer.conf << 'EOF'
 # AutoDialer Ultimate - System Limits
 autodialer soft nofile 65536
@@ -321,12 +372,10 @@ autodialer hard nproc 32768
 autodialer soft memlock unlimited
 autodialer hard memlock unlimited
 
-# Для root тоже увеличиваем
 root soft nofile 65536
 root hard nofile 65536
 EOF
 
-    # Sysctl параметры
     cat > /etc/sysctl.d/99-autodialer.conf << 'EOF'
 # AutoDialer Ultimate - Network Optimizations
 net.core.somaxconn = 65535
@@ -340,22 +389,15 @@ net.ipv4.tcp_keepalive_time = 600
 net.ipv4.tcp_keepalive_intvl = 60
 net.ipv4.tcp_keepalive_probes = 5
 
-# Memory optimizations
 vm.swappiness = 10
 vm.dirty_ratio = 15
 vm.dirty_background_ratio = 5
 vm.overcommit_memory = 1
 
-# File handles
 fs.file-max = 2097152
 fs.inotify.max_user_watches = 524288
-
-# Redis optimizations
-net.core.somaxconn = 1024
-vm.overcommit_memory = 1
 EOF
 
-    # Применение параметров
     sysctl -p /etc/sysctl.d/99-autodialer.conf 2>/dev/null || true
     
     log_success "Системные лимиты настроены"
@@ -367,18 +409,15 @@ EOF
 create_directories() {
     log_step "Создание рабочих директорий..."
     
-    # Основные директории
     mkdir -p /opt/autodialer
     mkdir -p /opt/autodialer/{logs,backups,uploads,recordings,scripts}
     mkdir -p /opt/autodialer/logs/{nginx,backend,asterisk,celery}
     mkdir -p /opt/autodialer/backups/{db,recordings,config}
     mkdir -p /var/log/autodialer
     
-    # Директории для Asterisk (будут созданы при установке)
     mkdir -p /var/spool/asterisk/monitor
     mkdir -p /var/lib/asterisk/sounds/tts
     
-    # Установка прав
     chown -R autodialer:autodialer /opt/autodialer
     chown -R autodialer:autodialer /var/log/autodialer
     chmod 755 /opt/autodialer
@@ -407,18 +446,15 @@ setup_swap() {
     
     log_warn "Мало RAM (${TOTAL_RAM}MB), создаю swap файл 2GB..."
     
-    # Создание swap файла
-    fallocate -l 2G /swapfile
+    fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 2>/dev/null
     chmod 600 /swapfile
     mkswap /swapfile
     swapon /swapfile
     
-    # Добавление в fstab
     if ! grep -q "/swapfile" /etc/fstab; then
         echo '/swapfile none swap sw 0 0' >> /etc/fstab
     fi
     
-    # Настройка swappiness
     echo 10 > /proc/sys/vm/swappiness
     
     log_success "Swap файл создан и активирован"
@@ -446,7 +482,6 @@ setup_timezone() {
         echo "UTC" > /etc/timezone 2>/dev/null || true
     fi
     
-    # Синхронизация времени
     if command -v timedatectl &>/dev/null; then
         timedatectl set-ntp true 2>/dev/null || true
     fi
@@ -458,14 +493,18 @@ setup_timezone() {
 install_extra_tools() {
     log_step "Установка дополнительных инструментов..."
     
-    apt-get install -y -qq \
-        tmux screen \
-        tree \
-        ncdu \
-        ripgrep \
-        fd-find \
-        silversearcher-ag \
-        2>/dev/null || true
+    local packages=(
+        tmux screen
+        tree
+        ncdu
+        ripgrep
+        fd-find
+        silversearcher-ag
+    )
+    
+    for pkg in "${packages[@]}"; do
+        apt-get install -y -qq "$pkg" 2>/dev/null || true
+    done
     
     log_success "Дополнительные инструменты установлены"
 }
@@ -478,7 +517,6 @@ verify_installation() {
     
     local all_ok=true
     
-    # Проверка Python
     if python3 --version &>/dev/null; then
         log_success "Python: $(python3 --version)"
     else
@@ -486,7 +524,6 @@ verify_installation() {
         all_ok=false
     fi
     
-    # Проверка pip
     if python3 -m pip --version &>/dev/null; then
         log_success "pip: $(python3 -m pip --version)"
     else
@@ -494,28 +531,24 @@ verify_installation() {
         all_ok=false
     fi
     
-    # Проверка ffmpeg
     if command -v ffmpeg &>/dev/null; then
         log_success "ffmpeg установлен"
     else
         log_warn "ffmpeg не установлен (TTS может не работать)"
     fi
     
-    # Проверка Nginx
     if command -v nginx &>/dev/null; then
         log_success "Nginx: $(nginx -v 2>&1)"
     else
         log_warn "Nginx не установлен"
     fi
     
-    # Проверка Redis клиента
     if command -v redis-cli &>/dev/null; then
         log_success "Redis клиент установлен"
     else
         log_warn "Redis клиент не установлен"
     fi
     
-    # Проверка PostgreSQL клиента
     if command -v psql &>/dev/null; then
         log_success "PostgreSQL клиент: $(psql --version | head -1)"
     else
@@ -585,17 +618,15 @@ main() {
     echo ""
     echo "=============================================="
     echo -e "${BOLD}${BLUE}AutoDialer Ultimate - System Setup${NC}"
-    echo -e "${BOLD}${BLUE}Version: 3.0.0${NC}"
+    echo -e "${BOLD}${BLUE}Version: 3.0.2${NC}"
     echo "=============================================="
     echo ""
     
-    # Проверки
     check_root
     check_already_installed
     check_os
     check_resources
     
-    # Установка
     update_system
     install_base_utils
     install_build_tools
@@ -606,17 +637,14 @@ main() {
     install_certbot
     install_extra_tools
     
-    # Настройка
     create_user
     setup_limits
     create_directories
     setup_swap
     setup_timezone
     
-    # Проверка
     verify_installation
     
-    # Завершение
     mark_installed
     print_summary
 }
