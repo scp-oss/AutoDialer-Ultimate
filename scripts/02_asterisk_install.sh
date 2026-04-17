@@ -302,7 +302,7 @@ configure_asterisk() {
     menuselect/menuselect --enable app_dial menuselect.makeopts
     menuselect/menuselect --enable app_playback menuselect.makeopts
     menuselect/menuselect --enable app_mixmonitor menuselect.makeopts
-    menuselect/menuselect --enable app_answer menuselect.makeopts
+    # menuselect/menuselect --enable app_answer menuselect.makeopts
     menuselect/menuselect --enable app_read menuselect.makeopts
     menuselect/menuselect --enable app_verbose menuselect.makeopts
     menuselect/menuselect --enable app_userevent menuselect.makeopts
