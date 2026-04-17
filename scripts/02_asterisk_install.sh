@@ -311,7 +311,7 @@ configure_asterisk() {
     menuselect/menuselect --enable app_amd menuselect.makeopts
     
     menuselect/menuselect --enable chan_pjsip menuselect.makeopts
-    menuselect/menuselect --disable chan_sip menuselect.makeopts
+    # menuselect/menuselect --disable chan_sip menuselect.makeopts
     
     menuselect/menuselect --enable res_pjsip menuselect.makeopts
     menuselect/menuselect --enable res_pjsip_outbound_registration menuselect.makeopts
