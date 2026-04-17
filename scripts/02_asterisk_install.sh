@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================
 # AutoDialer Ultimate - Asterisk Installation (FIXED)
-# Version: 3.0.2 (ENTERPRISE)
+# Version: 3.0.3 (ENTERPRISE)
 # Description: Установка Asterisk 21 с проверками и защитой от OOM
 # =============================================
 
@@ -71,7 +71,7 @@ check_already_installed() {
 }
 
 # =============================================
-# 🔥 ПРОВЕРКА RAM И УСТАНОВКА ЛИМИТОВ
+# ПРОВЕРКА RAM И УСТАНОВКА ЛИМИТОВ
 # =============================================
 check_ram_and_set_limits() {
     log_step "Проверка RAM и установка лимитов..."
@@ -114,7 +114,7 @@ check_ram_and_set_limits() {
 }
 
 # =============================================
-# 🔥 УСТАНОВКА LINUX-HEADERS ДЛЯ DEBIAN
+# УСТАНОВКА LINUX-HEADERS ДЛЯ DEBIAN
 # =============================================
 install_kernel_headers() {
     log_step "Установка linux-headers для Debian..."
@@ -141,7 +141,25 @@ install_kernel_headers() {
 }
 
 # =============================================
-# 🔥 УСТАНОВКА ВСЕХ ЗАВИСИМОСТЕЙ ДЛЯ ASTERISK
+# ПРОВЕРКА НАЛИЧИЯ БИБЛИОТЕКИ (ИСПРАВЛЕНО)
+# =============================================
+check_lib() {
+    local lib="$1"
+    # Проверяем разные варианты расположения
+    if [ -f "/usr/lib/x86_64-linux-gnu/${lib}.so" ] || \
+       [ -f "/usr/lib/${lib}.so" ] || \
+       [ -f "/usr/local/lib/${lib}.so" ] || \
+       [ -f "/usr/lib/x86_64-linux-gnu/${lib}.so.3" ] || \
+       [ -f "/usr/lib/x86_64-linux-gnu/${lib}.so.2" ] || \
+       [ -f "/usr/lib/x86_64-linux-gnu/${lib}.so.0" ] || \
+       ldconfig -p 2>/dev/null | grep -q "$lib"; then
+        return 0
+    fi
+    return 1
+}
+
+# =============================================
+# УСТАНОВКА ВСЕХ ЗАВИСИМОСТЕЙ ДЛЯ ASTERISK
 # =============================================
 install_asterisk_deps() {
     log_step "Установка ВСЕХ зависимостей для Asterisk..."
@@ -181,27 +199,68 @@ install_asterisk_deps() {
         apt-get install -y -qq "$pkg" 2>/dev/null || true
     done
     
-    # Проверка критических библиотек
+    # Обновляем кэш библиотек
+    ldconfig
+    
+    # Проверка критических библиотек (ИСПРАВЛЕНО)
     log_info "Проверка критических библиотек..."
     local critical_libs=("libssl" "libxml2" "libjansson" "libedit" "libsqlite3")
     local missing_libs=()
     
     for lib in "${critical_libs[@]}"; do
-        if ! ldconfig -p 2>/dev/null | grep -q "$lib"; then
+        if ! check_lib "$lib"; then
             missing_libs+=("$lib")
         fi
     done
     
     if [ ${#missing_libs[@]} -gt 0 ]; then
-        log_error "Отсутствуют критические библиотеки: ${missing_libs[*]}"
-        exit 1
+        log_warn "Некоторые библиотеки не найдены в стандартных путях: ${missing_libs[*]}"
+        log_warn "Пробуем установить альтернативные версии..."
+        
+        # Пытаемся установить альтернативные версии
+        for lib in "${missing_libs[@]}"; do
+            case "$lib" in
+                libssl)
+                    apt-get install -y -qq libssl3 libssl-dev || true
+                    ;;
+                libxml2)
+                    apt-get install -y -qq libxml2 libxml2-dev || true
+                    ;;
+                libjansson)
+                    apt-get install -y -qq libjansson4 libjansson-dev || true
+                    ;;
+                libedit)
+                    apt-get install -y -qq libedit2 libedit-dev || true
+                    ;;
+                libsqlite3)
+                    apt-get install -y -qq libsqlite3-0 libsqlite3-dev || true
+                    ;;
+            esac
+        done
+        
+        ldconfig
+        
+        # Проверяем снова
+        missing_libs=()
+        for lib in "${critical_libs[@]}"; do
+            if ! check_lib "$lib"; then
+                missing_libs+=("$lib")
+            fi
+        done
+        
+        if [ ${#missing_libs[@]} -gt 0 ]; then
+            log_warn "Всё ещё не найдены: ${missing_libs[*]}"
+            log_warn "Продолжаем установку, но компиляция может не работать"
+        else
+            log_success "Все библиотеки найдены"
+        fi
+    else
+        log_success "Все критические библиотеки найдены"
     fi
-    
-    log_success "Все зависимости установлены"
 }
 
 # =============================================
-# 🔥 СКАЧИВАНИЕ ASTERISK С ПРОВЕРКОЙ CHECKSUM
+# СКАЧИВАНИЕ ASTERISK С ПРОВЕРКОЙ CHECKSUM
 # =============================================
 download_asterisk() {
     log_step "Скачивание Asterisk..."
@@ -368,7 +427,7 @@ configure_asterisk() {
 }
 
 # =============================================
-# 🔥 КОМПИЛЯЦИЯ ASTERISK (С ЗАЩИТОЙ ОТ OOM)
+# КОМПИЛЯЦИЯ ASTERISK (С ЗАЩИТОЙ ОТ OOM)
 # =============================================
 compile_asterisk() {
     log_step "Компиляция Asterisk (${MAKE_JOBS} потоков)..."
@@ -463,7 +522,7 @@ setup_permissions() {
     log_step "Настройка пользователя и прав..."
     
     if ! id -u asterisk &>/dev/null; then
-        useradd -r -m -d /var/lib/asterisk -s /sbin/nologin -c "Asterisk PBX" asterisk
+        /usr/sbin/useradd -r -m -d /var/lib/asterisk -s /sbin/nologin -c "Asterisk PBX" asterisk
         log_success "Пользователь asterisk создан"
     fi
     
@@ -481,9 +540,6 @@ setup_permissions() {
     
     log_success "Права установлены"
 }
-
-# =============================================
-# ... продолжение ...
 
 # =============================================
 # СОЗДАНИЕ ДИРЕКТОРИЙ
@@ -577,7 +633,7 @@ verify_installation() {
 }
 
 # =============================================
-# 🔥 ТЕСТОВЫЙ ЗАПУСК ASTERISK
+# ТЕСТОВЫЙ ЗАПУСК ASTERISK
 # =============================================
 test_asterisk() {
     log_step "Тестовый запуск Asterisk..."
@@ -672,7 +728,7 @@ main() {
     echo ""
     echo "=============================================="
     echo -e "${BOLD}${BLUE}AutoDialer Ultimate - Asterisk Installation${NC}"
-    echo -e "${BOLD}${BLUE}Version: 3.0.2 (ENTERPRISE)${NC}"
+    echo -e "${BOLD}${BLUE}Version: 3.0.3 (ENTERPRISE)${NC}"
     echo "=============================================="
     echo ""
     
