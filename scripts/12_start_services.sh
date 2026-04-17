@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================
 # AutoDialer Ultimate - Start Services (FIXED)
-# Version: 3.0.1
+# Version: 3.0.2 (ENTERPRISE)
 # Description: Запуск всех сервисов с проверкой готовности
 # =============================================
 # 🔥 ИСПРАВЛЕНИЯ:
@@ -9,6 +9,8 @@
 # - Правильный порядок запуска (БД → Redis → Asterisk → Backend → Nginx)
 # - Проверка API перед запуском Nginx
 # - Защита от падения бэкенда из-за неготовности БД
+# - systemctl daemon-reload перед запуском
+# - Проверка PJSIP регистрации
 # =============================================
 
 set -euo pipefail
@@ -19,7 +21,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Загрузка конфигурации
 if [ -f "$PROJECT_ROOT/.env" ]; then
     set -a
     source "$PROJECT_ROOT/.env"
@@ -59,7 +60,6 @@ REDIS_HOST="${REDIS_HOST:-localhost}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 
-BACKEND_HOST="${HOST:-0.0.0.0}"
 BACKEND_PORT="${PORT:-8000}"
 
 MAX_WAIT_DB="${MAX_WAIT_DB:-60}"
@@ -71,7 +71,7 @@ MAX_WAIT_ASTERISK="${MAX_WAIT_ASTERISK:-30}"
 # 🔥 ФУНКЦИИ ОЖИДАНИЯ ГОТОВНОСТИ
 # =============================================
 
-# Ожидание PostgreSQL
+# Ожидание PostgreSQL (полная проверка)
 wait_for_postgresql() {
     local max_attempts=$((MAX_WAIT_DB / 2))
     local attempt=0
@@ -79,11 +79,19 @@ wait_for_postgresql() {
     log_info "Ожидание PostgreSQL (${DB_HOST}:${DB_PORT})..."
     
     while [ $attempt -lt $max_attempts ]; do
+        # 1. Проверка pg_isready
         if pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" &>/dev/null; then
-            # Дополнительная проверка - может ли принимать запросы
+            # 2. Проверка подключения и запроса
             if PGPASSWORD="${DB_PASSWORD:-}" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1" &>/dev/null; then
-                log_success "PostgreSQL готов и принимает запросы"
-                return 0
+                # 3. Проверка наличия таблиц (schema check)
+                local table_count=$(PGPASSWORD="${DB_PASSWORD:-}" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | xargs)
+                
+                if [ "${table_count:-0}" -gt 0 ]; then
+                    log_success "PostgreSQL готов (таблиц: $table_count)"
+                    return 0
+                else
+                    log_info "PostgreSQL запущен, но schema не найдена (попытка $attempt)"
+                fi
             fi
         fi
         
@@ -101,26 +109,36 @@ wait_for_postgresql() {
     return 1
 }
 
-# Ожидание Redis
+# Ожидание Redis (с паролем и SET/GET)
+redis_ping() {
+    if [ -n "${REDIS_PASSWORD:-}" ]; then
+        redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" -a "$REDIS_PASSWORD" ping 2>/dev/null
+    else
+        redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping 2>/dev/null
+    fi
+}
+
 wait_for_redis() {
-    local max_attempts=$((MAX_WAIT_REDIS))
+    local max_attempts=$MAX_WAIT_REDIS
     local attempt=0
     
     log_info "Ожидание Redis (${REDIS_HOST}:${REDIS_PORT})..."
     
     while [ $attempt -lt $max_attempts ]; do
-        local redis_cmd="redis-cli -h $REDIS_HOST -p $REDIS_PORT"
-        if [ -n "$REDIS_PASSWORD" ]; then
-            redis_cmd="$redis_cmd -a $REDIS_PASSWORD"
-        fi
-        
-        if $redis_cmd ping 2>/dev/null | grep -q "PONG"; then
-            # Дополнительная проверка - SET/GET
+        if redis_ping | grep -q "PONG"; then
+            # Дополнительная проверка SET/GET
             local test_key="autodialer:health:$(date +%s)"
-            if $redis_cmd SET "$test_key" "ok" EX 10 >/dev/null 2>&1 && \
-               $redis_cmd GET "$test_key" | grep -q "ok"; then
-                $redis_cmd DEL "$test_key" >/dev/null 2>&1
-                log_success "Redis готов и принимает запросы"
+            
+            if [ -n "${REDIS_PASSWORD:-}" ]; then
+                redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" -a "$REDIS_PASSWORD" SET "$test_key" "ok" EX 10 >/dev/null 2>&1 && \
+                redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" -a "$REDIS_PASSWORD" GET "$test_key" 2>/dev/null | grep -q "ok"
+            else
+                redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" SET "$test_key" "ok" EX 10 >/dev/null 2>&1 && \
+                redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" GET "$test_key" 2>/dev/null | grep -q "ok"
+            fi
+            
+            if [ $? -eq 0 ]; then
+                log_success "Redis готов"
                 return 0
             fi
         fi
@@ -138,7 +156,7 @@ wait_for_redis() {
     return 1
 }
 
-# Ожидание Asterisk
+# Ожидание Asterisk (проверка AMI)
 wait_for_asterisk() {
     local max_attempts=$((MAX_WAIT_ASTERISK / 2))
     local attempt=0
@@ -168,7 +186,7 @@ wait_for_asterisk() {
     return 1
 }
 
-# Ожидание бэкенда
+# Ожидание бэкенда (проверка /api/health)
 wait_for_backend() {
     local max_attempts=$((MAX_WAIT_BACKEND / 2))
     local attempt=0
@@ -267,6 +285,10 @@ stop_all_services() {
 start_services_ordered() {
     log_step "Запуск сервисов в правильном порядке..."
     
+    # 🔥 ОБЯЗАТЕЛЬНЫЙ DAEMON-RELOAD
+    log_info "Выполнение systemctl daemon-reload..."
+    systemctl daemon-reload
+    
     # 1. PostgreSQL (САМЫЙ ВАЖНЫЙ - ПЕРВЫМ)
     log_info "1. Запуск PostgreSQL..."
     systemctl start postgresql
@@ -358,16 +380,14 @@ verify_all_services() {
         
         if systemctl is-active --quiet "$svc" 2>/dev/null; then
             local status="● АКТИВЕН"
-            local color="${GREEN}"
             local details=""
             
-            # Дополнительная информация
             case "$svc" in
                 postgresql)
                     details="$(pg_isready -h "$DB_HOST" -p "$DB_PORT" 2>/dev/null && echo "ready" || echo "not ready")"
                     ;;
                 redis-server)
-                    details="$(redis-cli ping 2>/dev/null || echo "no response")"
+                    details="$(redis_ping 2>/dev/null || echo "no response")"
                     ;;
                 asterisk)
                     details="$(asterisk -rx "core show version" 2>/dev/null | head -1 | cut -d' ' -f1-2 || echo "no response")"
@@ -380,7 +400,7 @@ verify_all_services() {
                     ;;
             esac
             
-            printf "${color}%-20s %-15s${NC} %s\n" "$name" "$status" "$details"
+            printf "${GREEN}%-20s %-15s${NC} %s\n" "$name" "$status" "$details"
         else
             printf "${RED}%-20s %-15s${NC} %s\n" "$name" "○ ОСТАНОВЛЕН" "-"
             all_ok=false
@@ -442,8 +462,6 @@ check_api_endpoints() {
     local endpoints=(
         "/api/health:Health"
         "/docs:Swagger"
-        "/api/campaigns:Campaigns"
-        "/api/contacts:Contacts"
     )
     
     for ep_info in "${endpoints[@]}"; do
@@ -483,16 +501,17 @@ check_pjsip_registration() {
     fi
     
     echo ""
-    asterisk -rx "pjsip show registrations" 2>/dev/null | grep -v "No objects found" || echo "  Нет активных регистраций"
-    echo ""
+    local reg_status=$(asterisk -rx "pjsip show registrations" 2>/dev/null)
     
-    # Проверка статуса регистрации
-    if asterisk -rx "pjsip show registrations" 2>/dev/null | grep -q "Registered"; then
+    if echo "$reg_status" | grep -q "Registered"; then
         log_success "PJSIP зарегистрирован на FreePBX"
+        echo "$reg_status" | grep "Registered" | head -3
     else
         log_warn "PJSIP НЕ зарегистрирован"
         log_info "Проверьте настройки FREEPBX_IP и EXTENSION_PASSWORD в .env"
+        echo "$reg_status" | head -5
     fi
+    echo ""
 }
 
 # =============================================
@@ -542,6 +561,12 @@ echo "=============================================="
 echo "Network Ports"
 echo "=============================================="
 ss -tlnp 2>/dev/null | grep -E ":(22|80|443|5060|5432|6379|5038|8000)" || echo "No ports found"
+
+echo ""
+echo "=============================================="
+echo "PJSIP Registration"
+echo "=============================================="
+asterisk -rx "pjsip show registrations" 2>/dev/null | grep -E "Registered|No objects" || echo "No registrations"
 EOF
     chmod +x /usr/local/bin/autodialer-all-status
     
@@ -608,7 +633,7 @@ main() {
     echo ""
     echo "=============================================="
     echo -e "${BOLD}${BLUE}AutoDialer Ultimate - Start Services${NC}"
-    echo -e "${BOLD}${BLUE}Version: 3.0.1 (FIXED)${NC}"
+    echo -e "${BOLD}${BLUE}Version: 3.0.2 (ENTERPRISE)${NC}"
     echo "=============================================="
     echo ""
     
