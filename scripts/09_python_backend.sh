@@ -164,12 +164,13 @@ copy_backend_files() {
     
     if [ -d "$PROJECT_ROOT/backend" ]; then
         cp -r "$PROJECT_ROOT/backend/"* /opt/autodialer/backend/
-        log_success "Файлы скопированы"
+        log_success "Файлы скопированы из backend/"
     elif [ -d "$PROJECT_ROOT/app" ]; then
         # Модульная структура
         mkdir -p /opt/autodialer/backend/app
         cp -r "$PROJECT_ROOT/app/"* /opt/autodialer/backend/app/
         [ -d "$PROJECT_ROOT/utils" ] && cp -r "$PROJECT_ROOT/utils" /opt/autodialer/backend/
+        [ -f "$PROJECT_ROOT/main.py" ] && cp "$PROJECT_ROOT/main.py" /opt/autodialer/backend/
         log_success "Файлы скопированы (модульная структура)"
     else
         log_error "Директория backend не найдена"
@@ -286,6 +287,60 @@ EOF
 }
 
 # =============================================
+# 🔥 НАСТРОЙКА SYSTEMD СЕРВИСА (ДО МИГРАЦИЙ)
+# =============================================
+setup_systemd() {
+    log_step "Настройка systemd сервиса..."
+    
+    cat > /etc/systemd/system/autodialer.service << 'EOF'
+[Unit]
+Description=AutoDialer Ultimate Backend
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=autodialer
+Group=autodialer
+WorkingDirectory=/opt/autodialer/backend
+Environment="PATH=/opt/autodialer/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/opt/autodialer/.env
+
+ExecStartPre=/bin/bash -c 'until pg_isready -h ${DB_HOST:-127.0.0.1} -p ${DB_PORT:-5432}; do sleep 1; done'
+ExecStartPre=/bin/bash -c 'until redis-cli -h ${REDIS_HOST:-127.0.0.1} -p ${REDIS_PORT:-6379} ping 2>/dev/null; do sleep 1; done'
+
+ExecStart=/opt/autodialer/backend/venv/bin/gunicorn \
+    -w ${WORKERS:-4} \
+    -k uvicorn.workers.UvicornWorker \
+    -b ${HOST:-0.0.0.0}:${PORT:-8000} \
+    --access-logfile /opt/autodialer/logs/backend/access.log \
+    --error-logfile /opt/autodialer/logs/backend/error.log \
+    --timeout 120 \
+    --graceful-timeout 30 \
+    backend.main:app
+
+Restart=always
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Если backend.main не найден, пробуем app.main
+    if [ ! -f "/opt/autodialer/backend/backend/main.py" ] && [ -f "/opt/autodialer/backend/app/main.py" ]; then
+        sed -i 's|backend.main:app|app.main:app|g' /etc/systemd/system/autodialer.service
+    fi
+    
+    mkdir -p /opt/autodialer/logs/backend
+    chown -R autodialer:autodialer /opt/autodialer/logs
+    
+    systemctl daemon-reload
+    log_success "Systemd сервис создан"
+}
+
+# =============================================
 # Ожидание баз данных
 # =============================================
 wait_for_databases() {
@@ -326,7 +381,7 @@ setup_database() {
     else
         log_warn "Файл схемы не найден, создаю базовые таблицы..."
         
-        PGPASSWORD="${DB_PASSWORD}" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" << 'EOF'
+        PGPASSWORD="${DB_PASSWORD}" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" << 'EOSQL'
 -- Базовые таблицы для AutoDialer
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
@@ -387,6 +442,7 @@ INSERT INTO settings (key, value, description) VALUES
     ('global_max_calls', '50', 'Maximum concurrent calls')
 ON CONFLICT (key) DO NOTHING;
 
+-- Администратор по умолчанию (пароль: admin)
 INSERT INTO users (username, password_hash, role, email, force_password_change) VALUES (
     'admin',
     '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYIqK0hVdGW',
@@ -394,7 +450,7 @@ INSERT INTO users (username, password_hash, role, email, force_password_change) 
     'admin@localhost',
     TRUE
 ) ON CONFLICT (username) DO NOTHING;
-EOF
+EOSQL
         log_success "Базовые таблицы созданы"
     fi
 }
@@ -418,83 +474,7 @@ IMPORTANT: Change this password after first login!
 EOF
     chmod 600 /opt/autodialer/.admin_credentials
     
-    # Обновляем пароль в БД если админ уже существует
-    PGPASSWORD="${DB_PASSWORD}" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "
-        UPDATE users SET password_hash = crypt('${ADMIN_PASSWORD}', gen_salt('bf')) WHERE username = 'admin';
-    " 2>/dev/null || true
-    
-    log_success "Учётные данные сохранены"
-}
-
-# =============================================
-# Настройка systemd сервиса
-# =============================================
-setup_systemd() {
-    log_step "Настройка systemd сервиса..."
-    
-    cat > /etc/systemd/system/autodialer.service << EOF
-[Unit]
-Description=AutoDialer Ultimate Backend
-After=network.target postgresql.service redis-server.service
-Requires=postgresql.service redis-server.service
-
-[Service]
-Type=notify
-User=autodialer
-Group=autodialer
-WorkingDirectory=/opt/autodialer/backend
-Environment="PATH=/opt/autodialer/backend/venv/bin:/usr/bin:/bin"
-EnvironmentFile=/opt/autodialer/.env
-
-ExecStartPre=/bin/bash -c 'until pg_isready -h ${DB_HOST} -p ${DB_PORT}; do sleep 1; done'
-ExecStartPre=/bin/bash -c 'until redis-cli -h ${REDIS_HOST} -p ${REDIS_PORT} ping; do sleep 1; done'
-
-ExecStart=/opt/autodialer/backend/venv/bin/gunicorn \
-    -w ${WORKERS:-4} \
-    -k uvicorn.workers.UvicornWorker \
-    -b ${HOST:-0.0.0.0}:${PORT:-8000} \
-    --access-logfile /opt/autodialer/logs/backend/access.log \
-    --error-logfile /opt/autodialer/logs/backend/error.log \
-    --timeout 120 \
-    backend.main:app
-
-Restart=always
-RestartSec=5
-StartLimitBurst=5
-StartLimitIntervalSec=60
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    mkdir -p /opt/autodialer/logs/backend
-    chown -R autodialer:autodialer /opt/autodialer/logs
-    
-    systemctl daemon-reload
-    log_success "Systemd сервис создан"
-}
-
-# =============================================
-# Запуск сервиса
-# =============================================
-start_service() {
-    log_step "Запуск сервиса..."
-    
-    systemctl enable autodialer
-    systemctl start autodialer
-    
-    log_info "Ожидание бэкенда..."
-    for i in $(seq 1 30); do
-        curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok" && break
-        sleep 2
-    done
-    
-    if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok"; then
-        log_success "Бэкенд запущен"
-    else
-        log_warn "Бэкенд не ответил, проверьте логи"
-        journalctl -u autodialer -n 20 --no-pager
-    fi
+    log_success "Учётные данные сохранены в /opt/autodialer/.admin_credentials"
 }
 
 # =============================================
@@ -523,6 +503,29 @@ EOF
     chmod +x /usr/local/bin/autodialer-restart
     
     log_success "Скрипты управления созданы"
+}
+
+# =============================================
+# Запуск сервиса
+# =============================================
+start_service() {
+    log_step "Запуск сервиса..."
+    
+    systemctl enable autodialer
+    systemctl start autodialer
+    
+    log_info "Ожидание бэкенда..."
+    for i in $(seq 1 30); do
+        curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok" && break
+        sleep 2
+    done
+    
+    if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok"; then
+        log_success "Бэкенд запущен"
+    else
+        log_warn "Бэкенд не ответил, проверьте логи"
+        journalctl -u autodialer -n 20 --no-pager
+    fi
 }
 
 # =============================================
@@ -571,7 +574,7 @@ print_summary() {
 }
 
 # =============================================
-# ГЛАВНАЯ ФУНКЦИЯ
+# ГЛАВНАЯ ФУНКЦИЯ (ИСПРАВЛЕННЫЙ ПОРЯДОК)
 # =============================================
 main() {
     echo ""
@@ -592,12 +595,14 @@ main() {
     install_requirements
     verify_imports
     
+    # 🔥 СЕРВИС И СКРИПТЫ ДО МИГРАЦИЙ
+    setup_systemd
+    create_management_scripts
+    
     wait_for_databases
     setup_database
     create_admin_user
     
-    setup_systemd
-    create_management_scripts
     start_service
     verify_installation
     mark_installed
