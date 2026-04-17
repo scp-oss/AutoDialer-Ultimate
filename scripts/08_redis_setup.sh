@@ -161,7 +161,7 @@ aof-rewrite-incremental-fsync yes
 rdb-save-incremental-fsync yes
 
 # Active Defragmentation
-activedefrag yes
+activedefrag no
 active-defrag-ignore-bytes 100mb
 active-defrag-threshold-lower 10
 active-defrag-threshold-upper 100
