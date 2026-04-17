@@ -184,11 +184,11 @@ if [ -f /sys/kernel/mm/transparent_hugepage/enabled ]; then
 fi
 
 # Set vm.overcommit_memory
-sysctl -w vm.overcommit_memory=1
+/sbin/sysctl -w vm.overcommit_memory=1
 echo "vm.overcommit_memory = 1" >> /etc/sysctl.conf
 
 # Set net.core.somaxconn
-sysctl -w net.core.somaxconn=65535
+/sbin/sysctl -w net.core.somaxconn=65535
 
 print_success "System limits configured"
 
