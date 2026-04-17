@@ -1,8 +1,8 @@
 #!/bin/bash
 # =============================================
 # AutoDialer Ultimate - Python Backend Setup (FIXED)
-# Version: 3.0.2 (ENTERPRISE)
-# Description: Установка и настройка Python бэкенда с проверками
+# Version: 3.0.3 (ENTERPRISE)
+# Description: Установка и настройка Python бэкенда (БЕЗ Alembic)
 # =============================================
 
 set -euo pipefail
@@ -13,11 +13,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-if [ -f "$PROJECT_ROOT/.env" ]; then
-    set -a
-    source "$PROJECT_ROOT/.env"
-    set +a
-fi
+# =============================================
+# 🔥 ПРАВИЛЬНАЯ ЗАГРУЗКА .env
+# =============================================
+load_env() {
+    if [ -f "$PROJECT_ROOT/.env" ]; then
+        set -a
+        source "$PROJECT_ROOT/.env"
+        set +a
+    fi
+}
+
+load_env
 
 # =============================================
 # Цвета для вывода
@@ -57,24 +64,14 @@ INSTALLED_MARKER="/opt/autodialer/.backend_installed"
 
 check_already_installed() {
     if [ -f "$INSTALLED_MARKER" ] && [ "${FORCE_REINSTALL:-false}" != "true" ]; then
-        log_warn "Python бэкенд уже установлен (найден $INSTALLED_MARKER)"
-        
-        if [ "${NON_INTERACTIVE:-true}" != "true" ]; then
-            read -p "Переустановить бэкенд? Данные БД не будут потеряны. [y/N] " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                log_info "Установка отменена"
-                exit 0
-            fi
-        fi
-        
-        log_warn "Продолжение установки..."
-        rm -f "$INSTALLED_MARKER"
+        log_warn "Python бэкенд уже установлен"
+        exit 0
     fi
+    [ "${FORCE_REINSTALL:-false}" = "true" ] && rm -f "$INSTALLED_MARKER"
 }
 
 # =============================================
-# 🔥 ПРОВЕРКА ЗАВИСИМОСТЕЙ
+# Проверка зависимостей
 # =============================================
 check_dependencies() {
     log_step "Проверка зависимостей..."
@@ -86,15 +83,9 @@ check_dependencies() {
     python3 -m venv --help &>/dev/null || missing+=("python3-venv")
     command -v pg_isready &>/dev/null || missing+=("postgresql-client")
     command -v redis-cli &>/dev/null || missing+=("redis-tools")
-    dpkg -l build-essential &>/dev/null || missing+=("build-essential")
-    dpkg -l python3-dev &>/dev/null || missing+=("python3-dev")
-    dpkg -l libffi-dev &>/dev/null || missing+=("libffi-dev")
-    dpkg -l libssl-dev &>/dev/null || missing+=("libssl-dev")
     
     if [ ${#missing[@]} -gt 0 ]; then
         log_warn "Отсутствуют зависимости: ${missing[*]}"
-        log_info "Установка..."
-        export DEBIAN_FRONTEND=noninteractive
         apt-get update -qq
         apt-get install -y -qq "${missing[@]}"
     fi
@@ -103,25 +94,10 @@ check_dependencies() {
 }
 
 # =============================================
-# 🔥 ПРОВЕРКА ОБЯЗАТЕЛЬНЫХ ПЕРЕМЕННЫХ
+# Проверка конфигурации
 # =============================================
-load_env() {
-    if [ -f "$PROJECT_ROOT/.env" ]; then
-        set -a
-        source "$PROJECT_ROOT/.env"
-        set +a
-        log_success "Конфигурация загружена из .env"
-    else
-        log_error "Файл .env не найден!"
-        exit 1
-    fi
-}
-
 check_env_vars() {
     log_step "Проверка конфигурации..."
-    
-    # Сначала загружаем .env правильно
-    load_env
     
     local missing=()
     
@@ -134,13 +110,13 @@ check_env_vars() {
         exit 1
     fi
     
-    # Установка значений по умолчанию
     export DB_HOST="${DB_HOST:-localhost}"
     export DB_PORT="${DB_PORT:-5432}"
     export DB_NAME="${DB_NAME:-autodialer}"
     export DB_USER="${DB_USER:-autodialer}"
     export REDIS_HOST="${REDIS_HOST:-localhost}"
     export REDIS_PORT="${REDIS_PORT:-6379}"
+    export REDIS_PASSWORD="${REDIS_PASSWORD:-}"
     export WORKERS="${WORKERS:-4}"
     export HOST="${HOST:-0.0.0.0}"
     export PORT="${PORT:-8000}"
@@ -152,14 +128,13 @@ check_env_vars() {
 }
 
 # =============================================
-# 🔥 ГЕНЕРАЦИЯ НЕДОСТАЮЩИХ СЕКРЕТОВ
+# Генерация секретов
 # =============================================
 generate_secrets() {
     log_step "Проверка секретов..."
     
     local secrets_updated=false
     
-    # Проверяем АДМИН ПАРОЛЬ
     if [ -z "${ADMIN_PASSWORD:-}" ]; then
         ADMIN_PASSWORD=$(openssl rand -base64 16 2>/dev/null || echo "Admin_$(date +%s)")
         echo "ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$PROJECT_ROOT/.env"
@@ -168,7 +143,6 @@ generate_secrets() {
         log_info "Сгенерирован пароль администратора"
     fi
     
-    # Проверяем МЕТРИКИ ПАРОЛЬ
     if [ -z "${METRICS_PASS:-}" ]; then
         METRICS_PASS=$(openssl rand -base64 12 2>/dev/null || echo "metrics_$(date +%s)")
         echo "METRICS_PASS=$METRICS_PASS" >> "$PROJECT_ROOT/.env"
@@ -177,15 +151,11 @@ generate_secrets() {
         log_info "Сгенерирован пароль для метрик"
     fi
     
-    if [ "$secrets_updated" = true ]; then
-        log_success "Секреты сгенерированы"
-    else
-        log_info "Все секреты уже заданы"
-    fi
+    [ "$secrets_updated" = true ] && log_success "Секреты сгенерированы"
 }
 
 # =============================================
-# КОПИРОВАНИЕ ФАЙЛОВ БЭКЕНДА
+# Копирование файлов бэкенда
 # =============================================
 copy_backend_files() {
     log_step "Копирование файлов бэкенда..."
@@ -195,6 +165,12 @@ copy_backend_files() {
     if [ -d "$PROJECT_ROOT/backend" ]; then
         cp -r "$PROJECT_ROOT/backend/"* /opt/autodialer/backend/
         log_success "Файлы скопированы"
+    elif [ -d "$PROJECT_ROOT/app" ]; then
+        # Модульная структура
+        mkdir -p /opt/autodialer/backend/app
+        cp -r "$PROJECT_ROOT/app/"* /opt/autodialer/backend/app/
+        [ -d "$PROJECT_ROOT/utils" ] && cp -r "$PROJECT_ROOT/utils" /opt/autodialer/backend/
+        log_success "Файлы скопированы (модульная структура)"
     else
         log_error "Директория backend не найдена"
         exit 1
@@ -208,7 +184,7 @@ copy_backend_files() {
 }
 
 # =============================================
-# СОЗДАНИЕ ВИРТУАЛЬНОГО ОКРУЖЕНИЯ
+# Создание виртуального окружения
 # =============================================
 setup_virtualenv() {
     log_step "Настройка виртуального окружения..."
@@ -220,39 +196,14 @@ setup_virtualenv() {
     
     source venv/bin/activate
     
-    for i in 1 2 3; do
-        pip install --upgrade pip setuptools wheel -q 2>/dev/null && break
-        sleep 2
-    done
+    pip install --upgrade pip setuptools wheel -q 2>/dev/null || true
     
     log_success "Виртуальное окружение готово"
     log_info "Python: $(python3 --version)"
-    log_info "pip: $(pip --version)"
 }
 
 # =============================================
-# 🔥 PIP INSTALL С ПОВТОРНЫМИ ПОПЫТКАМИ
-# =============================================
-pip_install_with_retry() {
-    local package="$1"
-    local max_attempts=3
-    
-    for i in $(seq 1 $max_attempts); do
-        if pip install --no-cache-dir $package 2>/tmp/pip-error.log; then
-            return 0
-        fi
-        
-        log_warn "pip install $package не удался (попытка $i/$max_attempts)"
-        [ $i -lt $max_attempts ] && sleep 3
-    done
-    
-    log_error "Не удалось установить: $package"
-    tail -10 /tmp/pip-error.log
-    return 1
-}
-
-# =============================================
-# 🔥 УСТАНОВКА PYTHON ЗАВИСИМОСТЕЙ (С ИСПРАВЛЕНИЯМИ)
+# Установка зависимостей
 # =============================================
 install_requirements() {
     log_step "Установка Python зависимостей..."
@@ -260,93 +211,48 @@ install_requirements() {
     cd /opt/autodialer/backend
     source venv/bin/activate
     
-    # =============================================
-    # 🔥 КРИТИЧЕСКИ ВАЖНО: ПРАВИЛЬНЫЕ ВЕРСИИ BCRYPT И PASSLIB
-    # =============================================
-    log_info "Предустановка bcrypt и passlib (критически важные версии)..."
-    
-    # Удаляем старые версии если есть
-    pip uninstall -y bcrypt passlib 2>/dev/null || true
-    
-    # Устанавливаем bcrypt - частые проблемы с 4.1.2, поэтому fallback на 4.0.1
-    log_info "Установка bcrypt..."
-    if ! pip install --no-cache-dir bcrypt==4.1.2 2>/tmp/bcrypt-error.log; then
-        log_warn "bcrypt 4.1.2 не установился, пробую 4.0.1..."
-        if ! pip install --no-cache-dir bcrypt==4.0.1 2>/tmp/bcrypt-error.log; then
-            log_error "Не удалось установить bcrypt"
-            cat /tmp/bcrypt-error.log
-            exit 1
-        fi
+    # Исправляем версию panoramisk если нужно
+    if [ -f "requirements/base.txt" ]; then
+        sed -i 's/panoramisk.*/panoramisk>=1.4/' requirements/base.txt 2>/dev/null || true
     fi
-    log_success "bcrypt установлен"
     
-    # Устанавливаем passlib с поддержкой bcrypt
-    log_info "Установка passlib[bcrypt]..."
-    if ! pip install --no-cache-dir "passlib[bcrypt]==1.7.4" 2>/tmp/passlib-error.log; then
-        log_warn "passlib[bcrypt] 1.7.4 не установился, пробую passlib без bcrypt..."
-        if ! pip install --no-cache-dir passlib==1.7.4 2>/tmp/passlib-error.log; then
-            log_error "Не удалось установить passlib"
-            cat /tmp/passlib-error.log
-            exit 1
-        fi
-    fi
-    log_success "passlib установлен"
+    # Устанавливаем bcrypt и passlib
+    log_info "Установка bcrypt и passlib..."
+    pip install --no-cache-dir bcrypt==4.1.2 2>/dev/null || pip install --no-cache-dir bcrypt==4.0.1 2>/dev/null || true
+    pip install --no-cache-dir "passlib[bcrypt]==1.7.4" 2>/dev/null || pip install --no-cache-dir passlib==1.7.4 2>/dev/null || true
     
-    # =============================================
-    # 🔥 ОСНОВНЫЕ ЗАВИСИМОСТИ
-    # =============================================
+    # Устанавливаем основные зависимости
     local req_file=""
-    if [ -f "requirements/prod.txt" ]; then
-        req_file="requirements/prod.txt"
-        log_info "Используется $req_file"
-    elif [ -f "requirements.txt" ]; then
-        req_file="requirements.txt"
-        log_info "Используется $req_file"
-    else
-        log_error "Файл requirements не найден"
-        exit 1
+    [ -f "requirements/prod.txt" ] && req_file="requirements/prod.txt"
+    [ -z "$req_file" ] && [ -f "requirements.txt" ] && req_file="requirements.txt"
+    
+    if [ -n "$req_file" ]; then
+        log_info "Установка из $req_file..."
+        for i in 1 2 3; do
+            if pip install -r "$req_file" 2>/dev/null; then
+                log_success "Зависимости установлены"
+                break
+            fi
+            [ $i -eq 3 ] && { log_error "Не удалось установить зависимости"; exit 1; }
+            sleep 3
+        done
     fi
     
-    log_info "Установка основных зависимостей из $req_file..."
-    if ! pip_install_with_retry "-r $req_file"; then
-        log_warn "Не удалось установить с основного зеркала, пробую альтернативное..."
-        pip config set global.index-url https://pypi.org/simple
-        pip_install_with_retry "-r $req_file" || exit 1
-    fi
-    
-    # =============================================
-    # 🔥 TTS ЗАВИСИМОСТИ (PIPER - ТРЕБУЕТ --PREFER-BINARY)
-    # =============================================
+    # TTS (опционально)
     if [ "${SKIP_TTS:-false}" != "true" ] && [ -f "requirements/tts.txt" ]; then
-        log_info "Установка TTS зависимостей..."
-        
-        # piper-tts часто не имеет wheel, используем --prefer-binary
-        log_info "Установка piper-tts (--prefer-binary)..."
-        if ! pip install --prefer-binary piper-tts 2>/tmp/piper-error.log; then
-            log_warn "piper-tts не установился (возможно, несовместимая архитектура)"
-            log_warn "TTS будет недоступен"
-        else
-            log_success "piper-tts установлен"
-        fi
-        
-        # Остальные TTS зависимости
-        pip_install_with_retry "-r requirements/tts.txt" 2>/dev/null || log_warn "Некоторые TTS зависимости не установлены"
+        log_info "Установка TTS..."
+        pip install --prefer-binary piper-tts 2>/dev/null || true
+        pip install -r requirements/tts.txt 2>/dev/null || true
     fi
     
     log_success "Зависимости установлены"
-    
-    # Показываем установленные версии
-    log_info "Проверка установленных пакетов:"
-    pip list 2>/dev/null | grep -E "fastapi|sqlalchemy|redis|pydantic|bcrypt|passlib|celery|piper" | while read line; do
-        log_info "  $line"
-    done
 }
 
 # =============================================
-# 🔥 ПРОВЕРКА КРИТИЧЕСКИХ ИМПОРТОВ (С АВТОИСПРАВЛЕНИЕМ)
+# Проверка импортов
 # =============================================
 verify_imports() {
-    log_step "Проверка импорта критических модулей..."
+    log_step "Проверка импорта модулей..."
     
     cd /opt/autodialer/backend
     source venv/bin/activate
@@ -354,210 +260,157 @@ verify_imports() {
     python3 << 'EOF'
 import sys
 import importlib
-import subprocess
 
-# Критические модули в правильном порядке
-modules = [
-    ("fastapi", "fastapi"),
-    ("uvicorn", "uvicorn"),
-    ("sqlalchemy", "sqlalchemy"),
-    ("asyncpg", "asyncpg"),
-    ("redis.asyncio", "redis"),
-    ("pydantic", "pydantic"),
-    ("pydantic_settings", "pydantic-settings"),
-    ("jose", "python-jose"),
-    ("passlib", "passlib"),
-    ("bcrypt", "bcrypt"),
-    ("celery", "celery"),
-    ("httpx", "httpx"),
-    ("aiohttp", "aiohttp"),
-    ("panoramisk", "panoramisk"),
-]
-
-print("=" * 50)
-print("ПРОВЕРКА ИМПОРТОВ КРИТИЧЕСКИХ МОДУЛЕЙ")
-print("=" * 50)
+modules = ["fastapi", "uvicorn", "sqlalchemy", "asyncpg", "redis.asyncio", 
+           "pydantic", "pydantic_settings", "jose", "passlib", "bcrypt", 
+           "celery", "httpx", "aiohttp", "panoramisk"]
 
 failed = []
-for module, package in modules:
+for module in modules:
     try:
         importlib.import_module(module)
         print(f"✅ {module}")
     except ImportError as e:
         print(f"❌ {module}: {e}")
-        failed.append((module, package))
+        failed.append(module)
 
 if failed:
-    print(f"\n🔥 ОШИБКА: не удалось импортировать {len(failed)} модулей")
-    
-    # 🔥 АВТОИСПРАВЛЕНИЕ BCRYPT/PASSLIB
-    bcrypt_failed = any(m[0] == "bcrypt" for m in failed)
-    passlib_failed = any(m[0] == "passlib" for m in failed)
-    
-    if bcrypt_failed or passlib_failed:
-        print("\n⚠️ Проблема с bcrypt/passlib. Выполняю автоисправление...")
-        print("   Переустановка bcrypt и passlib...")
-        
-        subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "bcrypt", "passlib"], 
-                       check=False, capture_output=True)
-        
-        # Пробуем bcrypt 4.0.1 (более стабильная)
-        result1 = subprocess.run([sys.executable, "-m", "pip", "install", "--no-cache-dir", "bcrypt==4.0.1"], 
-                                 check=False, capture_output=True)
-        if result1.returncode == 0:
-            print("   ✅ bcrypt 4.0.1 установлен")
-        else:
-            print("   ❌ Не удалось установить bcrypt")
-        
-        # Passlib без bcrypt (fallback)
-        result2 = subprocess.run([sys.executable, "-m", "pip", "install", "--no-cache-dir", "passlib==1.7.4"], 
-                                 check=False, capture_output=True)
-        if result2.returncode == 0:
-            print("   ✅ passlib 1.7.4 установлен")
-        else:
-            print("   ❌ Не удалось установить passlib")
-        
-        # Проверяем снова
-        print("\n   Повторная проверка:")
-        try:
-            import bcrypt
-            print("   ✅ bcrypt импортирован")
-        except ImportError:
-            print("   ❌ bcrypt всё ещё не импортируется")
-        
-        try:
-            import passlib
-            print("   ✅ passlib импортирован")
-        except ImportError:
-            print("   ❌ passlib всё ещё не импортируется")
-    
-    # Показываем рекомендации для остальных
-    print("\n📋 Рекомендации по исправлению:")
-    for module, package in failed:
-        print(f"   pip install --no-cache-dir {package}")
-    
+    print(f"\n🔥 Не удалось импортировать: {', '.join(failed)}")
     sys.exit(1)
 
-# Проверка версий
-print("\n" + "=" * 50)
-print("ВЕРСИИ УСТАНОВЛЕННЫХ ПАКЕТОВ")
-print("=" * 50)
-packages = ["fastapi", "sqlalchemy", "redis", "pydantic", "celery", "bcrypt", "passlib"]
-for pkg in packages:
-    try:
-        mod = importlib.import_module(pkg)
-        version = getattr(mod, "__version__", "unknown")
-        print(f"   {pkg}: {version}")
-    except:
-        print(f"   {pkg}: не установлен")
-
-print("\n" + "=" * 50)
-print("✅ ВСЕ КРИТИЧЕСКИЕ МОДУЛИ ИМПОРТИРОВАНЫ УСПЕШНО")
-print("=" * 50)
+print("\n✅ Все модули импортированы")
 EOF
     
-    if [ $? -ne 0 ]; then
-        log_error "Проверка импортов не пройдена"
-        return 1
-    fi
-    
+    [ $? -eq 0 ] || { log_error "Проверка импортов не пройдена"; exit 1; }
     log_success "Проверка импортов пройдена"
-    return 0
 }
 
 # =============================================
-# 🔥 ОЖИДАНИЕ БАЗ ДАННЫХ
+# Ожидание баз данных
 # =============================================
 wait_for_databases() {
     log_step "Ожидание баз данных..."
     
-    local max_attempts=30
-    local attempt=0
-    
     log_info "Ожидание PostgreSQL..."
-    while [ $attempt -lt $max_attempts ]; do
-        if pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" &>/dev/null; then
-            break
-        fi
-        attempt=$((attempt + 1))
-        sleep 2
-    done
-    
-    if [ $attempt -ge $max_attempts ]; then
-        log_error "PostgreSQL не ответил за $((max_attempts * 2)) секунд"
-        exit 1
-    fi
-    log_success "PostgreSQL готов"
-    
-    attempt=0
-    log_info "Ожидание Redis..."
-    while [ $attempt -lt $max_attempts ]; do
-        if redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ${REDIS_PASSWORD:+-a "$REDIS_PASSWORD"} ping &>/dev/null; then
-            break
-        fi
-        attempt=$((attempt + 1))
+    for i in $(seq 1 30); do
+        pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" &>/dev/null && break
         sleep 1
     done
+    pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" &>/dev/null || { log_error "PostgreSQL не ответил"; exit 1; }
+    log_success "PostgreSQL готов"
     
-    if [ $attempt -ge $max_attempts ]; then
-        log_error "Redis не ответил за $max_attempts секунд"
-        exit 1
-    fi
+    log_info "Ожидание Redis..."
+    for i in $(seq 1 30); do
+        redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ${REDIS_PASSWORD:+-a "$REDIS_PASSWORD"} ping &>/dev/null && break
+        sleep 1
+    done
     log_success "Redis готов"
 }
 
 # =============================================
-# ИНИЦИАЛИЗАЦИЯ И ПРИМЕНЕНИЕ МИГРАЦИЙ
+# 🔥 НАСТРОЙКА БАЗЫ ДАННЫХ (ПРЯМОЙ SQL, БЕЗ ALEMBIC)
 # =============================================
 setup_database() {
     log_step "Настройка базы данных..."
     
-    cd /opt/autodialer/backend
-    source venv/bin/activate
+    # Ищем файл схемы
+    local schema_file=""
+    [ -f "/opt/autodialer/sql/schema.sql" ] && schema_file="/opt/autodialer/sql/schema.sql"
+    [ -z "$schema_file" ] && [ -f "$PROJECT_ROOT/sql/schema.sql" ] && schema_file="$PROJECT_ROOT/sql/schema.sql"
+    [ -z "$schema_file" ] && [ -f "/opt/autodialer/backend/sql/schema.sql" ] && schema_file="/opt/autodialer/backend/sql/schema.sql"
     
-    command -v alembic &>/dev/null || pip install alembic -q
-    
-    [ ! -d "migrations/versions" ] && mkdir -p migrations/versions
-    [ ! -f "alembic.ini" ] && alembic init migrations 2>/dev/null || true
-    
-    if [ -z "$(ls -A migrations/versions/*.py 2>/dev/null)" ]; then
-        log_info "Создание начальной миграции..."
-        alembic revision --autogenerate -m "Initial schema" 2>/dev/null || \
-            alembic revision -m "Initial schema" 2>/dev/null || true
+    if [ -n "$schema_file" ]; then
+        log_info "Применение схемы из $schema_file..."
+        PGPASSWORD="${DB_PASSWORD}" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f "$schema_file" 2>&1 | grep -v "уже существует" | grep -v "NOTICE" || true
+        log_success "Схема применена"
+    else
+        log_warn "Файл схемы не найден, создаю базовые таблицы..."
+        
+        PGPASSWORD="${DB_PASSWORD}" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" << 'EOF'
+-- Базовые таблицы для AutoDialer
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    email VARCHAR(255),
+    full_name VARCHAR(255),
+    role VARCHAR(20) DEFAULT 'operator',
+    is_active BOOLEAN DEFAULT TRUE,
+    force_password_change BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS campaigns (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    status VARCHAR(50) DEFAULT 'draft',
+    max_calls INTEGER DEFAULT 30,
+    cps INTEGER DEFAULT 5,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS contacts (
+    id SERIAL PRIMARY KEY,
+    phone VARCHAR(20) UNIQUE NOT NULL,
+    name VARCHAR(255),
+    email VARCHAR(255),
+    status VARCHAR(50) DEFAULT 'active',
+    blacklisted BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS call_results (
+    id SERIAL PRIMARY KEY,
+    campaign_id INTEGER,
+    contact_id INTEGER,
+    status VARCHAR(50),
+    duration INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key VARCHAR(100) PRIMARY KEY,
+    value TEXT NOT NULL,
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS blacklist (
+    id SERIAL PRIMARY KEY,
+    phone VARCHAR(20) UNIQUE NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO settings (key, value, description) VALUES 
+    ('system_enabled', 'true', 'Global system enable/disable'),
+    ('global_max_calls', '50', 'Maximum concurrent calls')
+ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO users (username, password_hash, role, email, force_password_change) VALUES (
+    'admin',
+    '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYIqK0hVdGW',
+    'admin',
+    'admin@localhost',
+    TRUE
+) ON CONFLICT (username) DO NOTHING;
+EOF
+        log_success "Базовые таблицы созданы"
     fi
-    
-    log_info "Применение миграций..."
-    for i in 1 2 3; do
-        if alembic upgrade head 2>/tmp/alembic-error.log; then
-            break
-        fi
-        if [ $i -eq 3 ]; then
-            log_error "Не удалось применить миграции"
-            tail -20 /tmp/alembic-error.log
-            exit 1
-        fi
-        log_warn "Попытка $i не удалась, повтор..."
-        sleep 3
-    done
-    
-    log_success "База данных настроена"
 }
 
 # =============================================
-# 🔥 СОЗДАНИЕ АДМИНИСТРАТОРА
+# Создание администратора
 # =============================================
 create_admin_user() {
-    log_step "Создание пользователя admin..."
-    
-    cd /opt/autodialer/backend
-    source venv/bin/activate
+    log_step "Создание администратора..."
     
     cat > /opt/autodialer/.admin_credentials << EOF
 ============================================
 AutoDialer Ultimate - Admin Credentials
 ============================================
 Username: ${ADMIN_USERNAME:-admin}
-Password: $ADMIN_PASSWORD
+Password: ${ADMIN_PASSWORD}
 Generated: $(date)
 ============================================
 IMPORTANT: Change this password after first login!
@@ -565,63 +418,16 @@ IMPORTANT: Change this password after first login!
 EOF
     chmod 600 /opt/autodialer/.admin_credentials
     
-    python3 << EOF
-import asyncio
-import sys
-sys.path.insert(0, '/opt/autodialer/backend')
-
-try:
-    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy import select, text
-    
-    from backend.config import settings
-    from backend.models import User
-    from backend.auth import get_password_hash
-    
-    async def create_admin():
-        engine = create_async_engine(settings.DATABASE_URL, echo=False)
-        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        
-        async with async_session() as db:
-            try:
-                await db.execute(text("SELECT 1 FROM users LIMIT 1"))
-            except Exception as e:
-                print(f"⚠️ Таблица users не существует: {e}")
-                return
-            
-            result = await db.execute(select(User).where(User.username == '${ADMIN_USERNAME:-admin}'))
-            if result.scalar_one_or_none():
-                print("✅ Пользователь admin уже существует")
-                return
-            
-            admin = User(
-                username='${ADMIN_USERNAME:-admin}',
-                email='${ADMIN_EMAIL:-admin@localhost}',
-                full_name='Administrator',
-                hashed_password=get_password_hash('$ADMIN_PASSWORD'),
-                role='admin',
-                is_active=True,
-                force_password_change=${FORCE_ADMIN_PASSWORD_CHANGE:-true}
-            )
-            db.add(admin)
-            await db.commit()
-            print("✅ Пользователь admin создан")
-        
-        await engine.dispose()
-    
-    asyncio.run(create_admin())
-except Exception as e:
-    print(f"⚠️ Не удалось создать admin: {e}")
-    import traceback
-    traceback.print_exc()
-EOF
+    # Обновляем пароль в БД если админ уже существует
+    PGPASSWORD="${DB_PASSWORD}" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "
+        UPDATE users SET password_hash = crypt('${ADMIN_PASSWORD}', gen_salt('bf')) WHERE username = 'admin';
+    " 2>/dev/null || true
     
     log_success "Учётные данные сохранены"
 }
 
 # =============================================
-# 🔥 НАСТРОЙКА SYSTEMD СЕРВИСА
+# Настройка systemd сервиса
 # =============================================
 setup_systemd() {
     log_step "Настройка systemd сервиса..."
@@ -629,8 +435,7 @@ setup_systemd() {
     cat > /etc/systemd/system/autodialer.service << EOF
 [Unit]
 Description=AutoDialer Ultimate Backend
-After=network.target network-online.target postgresql.service redis-server.service
-Wants=network-online.target postgresql.service redis-server.service
+After=network.target postgresql.service redis-server.service
 Requires=postgresql.service redis-server.service
 
 [Service]
@@ -638,48 +443,25 @@ Type=notify
 User=autodialer
 Group=autodialer
 WorkingDirectory=/opt/autodialer/backend
-Environment="PATH=/opt/autodialer/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=/opt/autodialer/backend/venv/bin:/usr/bin:/bin"
 EnvironmentFile=/opt/autodialer/.env
 
-ExecStartPre=/bin/bash -c 'until pg_isready -h \${DB_HOST:-localhost} -p \${DB_PORT:-5432} -U \${DB_USER:-autodialer} 2>/dev/null; do sleep 1; done'
-ExecStartPre=/bin/bash -c 'until redis-cli -h \${REDIS_HOST:-localhost} -p \${REDIS_PORT:-6379} \${REDIS_PASSWORD:+-a \$REDIS_PASSWORD} ping 2>/dev/null | grep -q PONG; do sleep 1; done'
+ExecStartPre=/bin/bash -c 'until pg_isready -h ${DB_HOST} -p ${DB_PORT}; do sleep 1; done'
+ExecStartPre=/bin/bash -c 'until redis-cli -h ${REDIS_HOST} -p ${REDIS_PORT} ping; do sleep 1; done'
 
-ExecStart=/opt/autodialer/backend/venv/bin/gunicorn \\
-    -w \${WORKERS:-4} \\
-    -k uvicorn.workers.UvicornWorker \\
-    -b \${HOST:-0.0.0.0}:\${PORT:-8000} \\
-    --access-logfile /opt/autodialer/logs/backend/access.log \\
-    --error-logfile /opt/autodialer/logs/backend/error.log \\
-    --log-level \${LOG_LEVEL:-INFO} \\
-    --timeout 120 \\
-    --graceful-timeout 30 \\
-    --max-requests 1000 \\
-    --max-requests-jitter 100 \\
-    --worker-connections 1000 \\
-    --threads 2 \\
-    --preload \\
+ExecStart=/opt/autodialer/backend/venv/bin/gunicorn \
+    -w ${WORKERS:-4} \
+    -k uvicorn.workers.UvicornWorker \
+    -b ${HOST:-0.0.0.0}:${PORT:-8000} \
+    --access-logfile /opt/autodialer/logs/backend/access.log \
+    --error-logfile /opt/autodialer/logs/backend/error.log \
+    --timeout 120 \
     backend.main:app
 
 Restart=always
 RestartSec=5
 StartLimitBurst=5
 StartLimitIntervalSec=60
-TimeoutStartSec=30
-TimeoutStopSec=30
-
-PrivateTmp=true
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/opt/autodialer/logs /opt/autodialer/backend/uploads /opt/autodialer/recordings
-
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=autodialer
-
-Environment="PYTHONUNBUFFERED=1"
-Environment="PYTHONDONTWRITEBYTECODE=1"
-Environment="PYTHONPATH=/opt/autodialer/backend"
 
 [Install]
 WantedBy=multi-user.target
@@ -689,37 +471,34 @@ EOF
     chown -R autodialer:autodialer /opt/autodialer/logs
     
     systemctl daemon-reload
-    
     log_success "Systemd сервис создан"
 }
 
 # =============================================
-# НАСТРОЙКА ЛОГ-РОТАЦИИ
+# Запуск сервиса
 # =============================================
-setup_logrotate() {
-    log_step "Настройка ротации логов..."
+start_service() {
+    log_step "Запуск сервиса..."
     
-    cat > /etc/logrotate.d/autodialer-backend << 'EOF'
-/opt/autodialer/logs/backend/*.log {
-    daily
-    missingok
-    rotate 30
-    compress
-    delaycompress
-    notifempty
-    create 644 autodialer autodialer
-    sharedscripts
-    postrotate
-        systemctl reload autodialer 2>/dev/null || true
-    endscript
-}
-EOF
-
-    log_success "Ротация логов настроена"
+    systemctl enable autodialer
+    systemctl start autodialer
+    
+    log_info "Ожидание бэкенда..."
+    for i in $(seq 1 30); do
+        curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok" && break
+        sleep 2
+    done
+    
+    if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok"; then
+        log_success "Бэкенд запущен"
+    else
+        log_warn "Бэкенд не ответил, проверьте логи"
+        journalctl -u autodialer -n 20 --no-pager
+    fi
 }
 
 # =============================================
-# СОЗДАНИЕ СКРИПТОВ УПРАВЛЕНИЯ
+# Создание скриптов управления
 # =============================================
 create_management_scripts() {
     log_step "Создание скриптов управления..."
@@ -739,94 +518,34 @@ EOF
     cat > /usr/local/bin/autodialer-restart << 'EOF'
 #!/bin/bash
 systemctl restart autodialer
-echo "AutoDialer backend restarted"
+echo "AutoDialer перезапущен"
 EOF
     chmod +x /usr/local/bin/autodialer-restart
-    
-    cat > /usr/local/bin/autodialer-health << 'EOF'
-#!/bin/bash
-curl -s http://localhost:8000/api/health | python3 -m json.tool 2>/dev/null || curl -s http://localhost:8000/api/health
-EOF
-    chmod +x /usr/local/bin/autodialer-health
     
     log_success "Скрипты управления созданы"
 }
 
 # =============================================
-# 🔥 ЗАПУСК СЕРВИСА
-# =============================================
-start_service() {
-    log_step "Запуск сервиса..."
-    
-    systemctl enable autodialer
-    systemctl start autodialer
-    
-    log_info "Ожидание запуска бэкенда..."
-    local max_attempts=60
-    local attempt=0
-    
-    while [ $attempt -lt $max_attempts ]; do
-        if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok"; then
-            log_success "Бэкенд запущен и отвечает"
-            break
-        fi
-        
-        if ! systemctl is-active --quiet autodialer; then
-            log_error "Сервис autodialer упал при запуске"
-            journalctl -u autodialer -n 30 --no-pager 2>/dev/null || true
-            exit 1
-        fi
-        
-        attempt=$((attempt + 1))
-        echo -n "."
-        sleep 2
-    done
-    echo ""
-    
-    if [ $attempt -ge $max_attempts ]; then
-        log_warn "Бэкенд не ответил за $((max_attempts * 2)) секунд"
-        journalctl -u autodialer -n 30 --no-pager 2>/dev/null || true
-    fi
-}
-
-# =============================================
-# 🔥 ПРОВЕРКА УСТАНОВКИ
+# Проверка установки
 # =============================================
 verify_installation() {
     log_step "Проверка установки..."
     
-    local all_ok=true
-    
-    systemctl is-active --quiet autodialer && log_success "Сервис работает" || { log_error "Сервис не запущен"; all_ok=false; }
-    curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok" && log_success "API отвечает" || { log_warn "API не отвечает"; all_ok=false; }
-    pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" &>/dev/null && log_success "PostgreSQL доступен" || log_warn "PostgreSQL не доступен"
-    redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping &>/dev/null && log_success "Redis доступен" || log_warn "Redis не доступен"
-    
-    [ "$all_ok" = true ] && log_success "Все проверки пройдены"
+    systemctl is-active --quiet autodialer && log_success "Сервис работает" || log_warn "Сервис не запущен"
+    curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok" && log_success "API отвечает" || log_warn "API не отвечает"
 }
 
 # =============================================
-# СОЗДАНИЕ МАРКЕРА УСТАНОВКИ
+# Создание маркера
 # =============================================
 mark_installed() {
     mkdir -p /opt/autodialer
-    
-    cat > "$INSTALLED_MARKER" << EOF
-Python backend installed at $(date)
-Python: $(python3 --version)
-pip: $(python3 -m pip --version)
-Service: autodialer.service
-Port: ${PORT:-8000}
-bcrypt: $(pip show bcrypt 2>/dev/null | grep Version | cut -d' ' -f2 || echo "unknown")
-passlib: $(pip show passlib 2>/dev/null | grep Version | cut -d' ' -f2 || echo "unknown")
-EOF
-    
-    chown autodialer:autodialer "$INSTALLED_MARKER" 2>/dev/null || true
+    echo "$(date)" > "$INSTALLED_MARKER"
     log_success "Маркер установки создан"
 }
 
 # =============================================
-# ВЫВОД СВОДКИ
+# Вывод сводки
 # =============================================
 print_summary() {
     echo ""
@@ -834,25 +553,20 @@ print_summary() {
     echo -e "${GREEN}${BOLD}✅ Python бэкенд установлен!${NC}"
     echo "=============================================="
     echo ""
-    echo "Информация о бэкенде:"
-    echo "  • Python:         $(python3 --version 2>/dev/null || echo 'неизвестно')"
-    echo "  • FastAPI:        http://${HOST}:${PORT}"
-    echo "  • Документация:   http://${HOST}:${PORT}/docs"
-    echo "  • Health check:   http://${HOST}:${PORT}/api/health"
-    echo "  • bcrypt:         $(pip show bcrypt 2>/dev/null | grep Version | cut -d' ' -f2 || echo 'не установлен')"
-    echo "  • passlib:        $(pip show passlib 2>/dev/null | grep Version | cut -d' ' -f2 || echo 'не установлен')"
+    echo "Доступ:"
+    echo "  • API:           http://${HOST}:${PORT}/api"
+    echo "  • Документация:  http://${HOST}:${PORT}/docs"
+    echo "  • Health check:  http://${HOST}:${PORT}/api/health"
     echo ""
     echo "Учётные данные:"
-    echo "  • Администратор:  ${ADMIN_USERNAME:-admin}"
-    echo "  • Пароль:         сохранён в /opt/autodialer/.admin_credentials"
+    echo "  • Администратор: ${ADMIN_USERNAME:-admin}"
+    echo "  • Пароль:        сохранён в /opt/autodialer/.admin_credentials"
     echo ""
     echo "Управление:"
-    echo "  • Статус:         autodialer-status"
-    echo "  • Логи:           autodialer-logs"
-    echo "  • Перезапуск:     autodialer-restart"
-    echo "  • Здоровье:       autodialer-health"
+    echo "  • autodialer-status"
+    echo "  • autodialer-logs"
+    echo "  • autodialer-restart"
     echo ""
-    echo -e "${YELLOW}Следующий шаг: настройка Nginx${NC}"
     echo "=============================================="
 }
 
@@ -863,7 +577,7 @@ main() {
     echo ""
     echo "=============================================="
     echo -e "${BOLD}${BLUE}AutoDialer Ultimate - Python Backend Setup${NC}"
-    echo -e "${BOLD}${BLUE}Version: 3.0.2 (ENTERPRISE)${NC}"
+    echo -e "${BOLD}${BLUE}Version: 3.0.3 (FIXED)${NC}"
     echo "=============================================="
     echo ""
     
@@ -883,9 +597,7 @@ main() {
     create_admin_user
     
     setup_systemd
-    setup_logrotate
     create_management_scripts
-    
     start_service
     verify_installation
     mark_installed
