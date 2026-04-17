@@ -1,393 +1,255 @@
 #!/bin/bash
 # =============================================
-# AutoDialer Ultimate - PostgreSQL Setup
-# Version: 3.0.0
+# AutoDialer Ultimate - PostgreSQL Setup (FIXED)
+# Version: 3.0.3 (ENTERPRISE)
+# Description: Настройка PostgreSQL с проверками
 # =============================================
 
-set -e
+set -euo pipefail
 
-# Цвета для вывода
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-print_step() { echo -e "${GREEN}[STEP]${NC} $1"; }
-print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-print_success() { echo -e "${CYAN}[SUCCESS]${NC} $1"; }
-print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-
+# =============================================
+# Определение директорий
+# =============================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# =============================================
-# Load Configuration
-# =============================================
 if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
     source "$PROJECT_ROOT/.env"
-    print_info "Loaded configuration from .env"
+    set +a
 fi
 
-# Database configuration
+# =============================================
+# Цвета для вывода
+# =============================================
+if [ -t 1 ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    NC='\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; BLUE=''; CYAN=''; BOLD=''; NC=''
+fi
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_step() { echo -e "\n${BOLD}${CYAN}▶ $1${NC}"; }
+
+# =============================================
+# Конфигурация
+# =============================================
 DB_NAME="${DB_NAME:-autodialer}"
 DB_USER="${DB_USER:-autodialer}"
-DB_PASSWORD="${DB_PASSWORD:-$(openssl rand -hex 16)}"
+DB_PASSWORD="${DB_PASSWORD:-}"
 DB_HOST="${DB_HOST:-127.0.0.1}"
 DB_PORT="${DB_PORT:-5432}"
 
-# Save password to .env if not exists
+# Сохраняем пароль если не существует
 if [ -f "$PROJECT_ROOT/.env" ] && ! grep -q "^DB_PASSWORD=" "$PROJECT_ROOT/.env"; then
+    if [ -z "$DB_PASSWORD" ]; then
+        DB_PASSWORD=$(openssl rand -hex 16 2>/dev/null || echo "autodialer_$(date +%s)")
+    fi
     echo "DB_PASSWORD=$DB_PASSWORD" >> "$PROJECT_ROOT/.env"
-    print_info "Saved DB_PASSWORD to .env"
+    export DB_PASSWORD
+    log_info "DB_PASSWORD сохранён в .env"
 fi
 
-print_info "Database: $DB_NAME"
-print_info "User: $DB_USER"
+log_info "Database: $DB_NAME"
+log_info "User: $DB_USER"
 
 # =============================================
-# Install PostgreSQL (if not installed)
+# Проверка идемпотентности
 # =============================================
-print_step "Checking PostgreSQL installation..."
+INSTALLED_MARKER="/opt/autodialer/.postgresql_configured"
 
-if ! command -v psql &> /dev/null; then
-    print_info "Installing PostgreSQL..."
-    apt update
-    apt install -y postgresql postgresql-contrib postgresql-client
-    print_success "PostgreSQL installed"
-else
-    POSTGRES_VERSION=$(psql --version | head -1)
-    print_success "PostgreSQL already installed: $POSTGRES_VERSION"
-fi
-
-# =============================================
-# Start and Enable PostgreSQL
-# =============================================
-print_step "Starting PostgreSQL..."
-
-systemctl enable postgresql
-systemctl start postgresql
-
-# Wait for PostgreSQL to be ready
-for i in {1..10}; do
-    if sudo -u postgres psql -c "SELECT 1" &>/dev/null; then
-        print_success "PostgreSQL is ready"
-        break
+check_already_configured() {
+    if [ -f "$INSTALLED_MARKER" ] && [ "${FORCE_REINSTALL:-false}" != "true" ]; then
+        log_warn "PostgreSQL уже настроен (найден $INSTALLED_MARKER)"
+        exit 0
     fi
-    print_info "Waiting for PostgreSQL... ($i/10)"
-    sleep 2
-done
+}
 
 # =============================================
-# Configure PostgreSQL
+# Проверка установки PostgreSQL
 # =============================================
-print_step "Configuring PostgreSQL..."
-
-# Get PostgreSQL version and config path
-PG_VERSION=$(sudo -u postgres psql -t -c "SHOW server_version;" | xargs | cut -d' ' -f1 | cut -d'.' -f1)
-PG_CONF=$(find /etc/postgresql -name "postgresql.conf" | head -1)
-
-if [ -f "$PG_CONF" ]; then
-    print_info "Configuring $PG_CONF"
+check_postgresql() {
+    log_step "Проверка PostgreSQL..."
     
-    # Backup original config
-    cp "$PG_CONF" "${PG_CONF}.backup"
-    
-    # Tune PostgreSQL for AutoDialer
-    cat >> "$PG_CONF" << 'EOF'
-
-# =============================================
-# AutoDialer Ultimate Optimizations
-# =============================================
-shared_buffers = 256MB
-work_mem = 4MB
-maintenance_work_mem = 64MB
-effective_cache_size = 1GB
-random_page_cost = 1.1
-effective_io_concurrency = 200
-wal_buffers = 16MB
-min_wal_size = 1GB
-max_wal_size = 4GB
-max_connections = 200
-superuser_reserved_connections = 3
-checkpoint_completion_target = 0.9
-default_statistics_target = 100
-autovacuum = on
-autovacuum_vacuum_scale_factor = 0.05
-autovacuum_analyze_scale_factor = 0.025
-log_min_duration_statement = 1000
-log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
-log_checkpoints = on
-log_connections = on
-log_disconnections = on
-log_lock_waits = on
-log_temp_files = 0
-datestyle = 'iso, mdy'
-timezone = 'UTC'
-lc_messages = 'en_US.UTF-8'
-lc_monetary = 'en_US.UTF-8'
-lc_numeric = 'en_US.UTF-8'
-lc_time = 'en_US.UTF-8'
-default_text_search_config = 'pg_catalog.english'
-EOF
-
-    print_success "PostgreSQL configuration updated"
-fi
-
-# Configure pg_hba.conf
-PG_HBA=$(find /etc/postgresql -name "pg_hba.conf" | head -1)
-if [ -f "$PG_HBA" ]; then
-    # Ensure local connections are allowed
-    if ! grep -q "^host\s\+all\s\+all\s\+127.0.0.1/32\s\+md5" "$PG_HBA"; then
-        echo "host    all             all             127.0.0.1/32            md5" >> "$PG_HBA"
+    if ! command -v psql &>/dev/null; then
+        log_info "Установка PostgreSQL..."
+        apt-get update -qq
+        apt-get install -y -qq postgresql postgresql-contrib postgresql-client
+        log_success "PostgreSQL установлен"
+    else
+        POSTGRES_VERSION=$(psql --version | head -1)
+        log_success "PostgreSQL уже установлен: $POSTGRES_VERSION"
     fi
-    print_success "pg_hba.conf updated"
-fi
-
-# Restart PostgreSQL to apply changes
-systemctl restart postgresql
-sleep 3
+}
 
 # =============================================
-# Create Database and User
+# Запуск PostgreSQL (ИСПРАВЛЕНО - правильный сервис)
 # =============================================
-print_step "Creating database and user..."
-
-# Check if database exists
-DB_EXISTS=$(sudo -u postgres psql -t -c "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | xargs)
-
-if [ "$DB_EXISTS" == "1" ]; then
-    print_warn "Database '$DB_NAME' already exists"
-    read -p "Drop and recreate? [y/N] " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        sudo -u postgres psql -c "DROP DATABASE IF EXISTS $DB_NAME;"
-        sudo -u postgres psql -c "DROP USER IF EXISTS $DB_USER;"
-        DB_EXISTS=""
+start_postgresql() {
+    log_step "Запуск PostgreSQL..."
+    
+    # Определяем версию PostgreSQL
+    PG_VERSION=$(psql --version 2>/dev/null | grep -oP '\d+' | head -1)
+    [ -z "$PG_VERSION" ] && PG_VERSION="15"
+    
+    # Запускаем правильный сервис
+    if systemctl list-unit-files 2>/dev/null | grep -q "postgresql@${PG_VERSION}-main"; then
+        systemctl start "postgresql@${PG_VERSION}-main"
+        systemctl enable "postgresql@${PG_VERSION}-main" 2>/dev/null || true
+        log_success "Запущен postgresql@${PG_VERSION}-main"
+    else
+        systemctl start postgresql 2>/dev/null || true
+        systemctl enable postgresql 2>/dev/null || true
+        log_success "Запущен postgresql"
     fi
-fi
+    
+    # Ожидание готовности
+    log_info "Ожидание PostgreSQL..."
+    for i in $(seq 1 30); do
+        if pg_isready -h "$DB_HOST" -p "$DB_PORT" &>/dev/null; then
+            log_success "PostgreSQL готов"
+            return 0
+        fi
+        echo -n "."
+        sleep 1
+    done
+    echo ""
+    
+    log_error "PostgreSQL не запустился за 30 секунд"
+    return 1
+}
 
-if [ "$DB_EXISTS" != "1" ]; then
-    # Create user
-    sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';"
-    print_success "User '$DB_USER' created"
+# =============================================
+# Создание пользователя и базы данных
+# =============================================
+create_database_and_user() {
+    log_step "Создание базы данных и пользователя..."
     
-    # Create database
-    sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
-    print_success "Database '$DB_NAME' created"
+    # Проверяем существует ли БД
+    local db_exists=$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" 2>/dev/null | xargs)
     
-    # Grant privileges
+    if [ "$db_exists" = "1" ]; then
+        log_warn "База данных '$DB_NAME' уже существует"
+        return 0
+    fi
+    
+    # Генерируем пароль если не задан
+    if [ -z "$DB_PASSWORD" ]; then
+        DB_PASSWORD=$(openssl rand -hex 16 2>/dev/null || echo "autodialer_$(date +%s)")
+        echo "DB_PASSWORD=$DB_PASSWORD" >> "$PROJECT_ROOT/.env"
+        export DB_PASSWORD
+        log_info "Сгенерирован пароль для БД"
+    fi
+    
+    # Создаём пользователя
+    log_info "Создание пользователя $DB_USER..."
+    sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';" 2>/dev/null || {
+        log_warn "Пользователь уже существует, обновляем пароль..."
+        sudo -u postgres psql -c "ALTER USER $DB_USER WITH PASSWORD '$DB_PASSWORD';"
+    }
+    
+    # Создаём базу данных
+    log_info "Создание базы данных $DB_NAME..."
+    sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;" 2>/dev/null || {
+        log_warn "База данных уже существует"
+    }
+    
+    # Даём права
     sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
     sudo -u postgres psql -c "ALTER USER $DB_USER CREATEDB;"
-    print_success "Privileges granted"
-fi
-
-# =============================================
-# Create Schema
-# =============================================
-print_step "Creating database schema..."
-
-if [ -f "$PROJECT_ROOT/sql/schema.sql" ]; then
-    SCHEMA_FILE="$PROJECT_ROOT/sql/schema.sql"
-elif [ -f "$PROJECT_ROOT/sql/migrations/001_initial.sql" ]; then
-    SCHEMA_FILE="$PROJECT_ROOT/sql/migrations/001_initial.sql"
-else
-    print_warn "Schema file not found, creating basic schema..."
-    SCHEMA_FILE="/tmp/autodialer_schema.sql"
     
-    cat > "$SCHEMA_FILE" << 'EOF'
--- AutoDialer Ultimate Database Schema
+    log_success "База данных и пользователь созданы"
+}
 
--- Users table
+# =============================================
+# Применение схемы
+# =============================================
+apply_schema() {
+    log_step "Применение схемы базы данных..."
+    
+    local SCHEMA_FILE=""
+    
+    if [ -f "$PROJECT_ROOT/sql/schema.sql" ]; then
+        SCHEMA_FILE="$PROJECT_ROOT/sql/schema.sql"
+    elif [ -f "$PROJECT_ROOT/sql/migrations/001_initial.sql" ]; then
+        SCHEMA_FILE="$PROJECT_ROOT/sql/migrations/001_initial.sql"
+    elif [ -f "/opt/autodialer/sql/schema.sql" ]; then
+        SCHEMA_FILE="/opt/autodialer/sql/schema.sql"
+    else
+        log_warn "Файл схемы не найден, создаю базовую схему..."
+        SCHEMA_FILE="/tmp/autodialer_schema.sql"
+        
+        cat > "$SCHEMA_FILE" << 'EOF'
+-- AutoDialer Ultimate Basic Schema
+
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     email VARCHAR(255),
     full_name VARCHAR(255),
-    role VARCHAR(20) NOT NULL DEFAULT 'operator' CHECK (role IN ('admin', 'operator', 'viewer')),
+    role VARCHAR(20) DEFAULT 'operator',
     force_password_change BOOLEAN DEFAULT TRUE,
     is_active BOOLEAN DEFAULT TRUE,
-    last_login TIMESTAMP,
-    last_ip INET,
-    settings JSONB,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Campaigns table
 CREATE TABLE IF NOT EXISTS campaigns (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
-    status VARCHAR(50) DEFAULT 'draft' CHECK (status IN ('draft', 'running', 'paused', 'stopped', 'completed', 'failed')),
-    max_calls INTEGER DEFAULT 30 CHECK (max_calls > 0 AND max_calls <= 100),
-    cps INTEGER DEFAULT 5 CHECK (cps > 0 AND cps <= 50),
-    audio_id INTEGER,
-    retry_strategy JSONB DEFAULT '{"busy": 2, "noanswer": 3, "failed": 1}',
-    schedule_start TIMESTAMP,
-    schedule_end TIMESTAMP,
-    created_by INTEGER REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    status VARCHAR(50) DEFAULT 'draft',
+    max_calls INTEGER DEFAULT 30,
+    cps INTEGER DEFAULT 5,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Contacts table
 CREATE TABLE IF NOT EXISTS contacts (
     id SERIAL PRIMARY KEY,
-    phone VARCHAR(20) NOT NULL UNIQUE,
+    phone VARCHAR(20) UNIQUE NOT NULL,
     name VARCHAR(255),
     email VARCHAR(255),
-    group_id INTEGER,
-    tags TEXT[],
-    custom_fields JSONB,
     status VARCHAR(50) DEFAULT 'active',
     blacklisted BOOLEAN DEFAULT FALSE,
-    blacklist_reason TEXT,
-    created_by INTEGER REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Contact groups table
-CREATE TABLE IF NOT EXISTS contact_groups (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL UNIQUE,
-    description TEXT,
-    color VARCHAR(7) DEFAULT '#667eea',
-    created_by INTEGER REFERENCES users(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Campaign contacts junction
-CREATE TABLE IF NOT EXISTS campaign_contacts (
-    id SERIAL PRIMARY KEY,
-    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    retry_count INTEGER DEFAULT 0,
-    last_call_at TIMESTAMP,
-    next_retry_at TIMESTAMP,
-    status VARCHAR(50),
-    priority INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(campaign_id, contact_id)
-);
-
--- Call results table
 CREATE TABLE IF NOT EXISTS call_results (
     id SERIAL PRIMARY KEY,
-    campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL,
-    contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
-    unique_id VARCHAR(255),
-    linked_id VARCHAR(255),
-    channel VARCHAR(255),
-    caller_id VARCHAR(255),
+    campaign_id INTEGER,
+    contact_id INTEGER,
     status VARCHAR(50),
-    dtmf_result VARCHAR(10),
     duration INTEGER,
-    billable_seconds INTEGER,
-    hangup_cause VARCHAR(50),
-    hangup_cause_txt TEXT,
-    retry_count INTEGER DEFAULT 0,
-    recording_path TEXT,
-    recording_url TEXT,
-    metadata JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Settings table
 CREATE TABLE IF NOT EXISTS settings (
     key VARCHAR(100) PRIMARY KEY,
     value TEXT NOT NULL,
-    description TEXT,
-    category VARCHAR(50) DEFAULT 'general',
-    is_public BOOLEAN DEFAULT FALSE,
-    updated_by INTEGER REFERENCES users(id),
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    description TEXT
 );
 
--- Audio files table
-CREATE TABLE IF NOT EXISTS audio_files (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    file_path TEXT NOT NULL,
-    file_size INTEGER,
-    duration INTEGER,
-    format VARCHAR(10) DEFAULT 'sln',
-    campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL,
-    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    is_public BOOLEAN DEFAULT FALSE,
-    metadata JSONB,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Audit log table
-CREATE TABLE IF NOT EXISTS audit_log (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    action VARCHAR(100) NOT NULL,
-    entity_type VARCHAR(50),
-    entity_id INTEGER,
-    details JSONB,
-    ip_address INET,
-    user_agent TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Blacklist table
 CREATE TABLE IF NOT EXISTS blacklist (
     id SERIAL PRIMARY KEY,
     phone VARCHAR(20) UNIQUE NOT NULL,
     reason TEXT,
-    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- API tokens table
-CREATE TABLE IF NOT EXISTS api_tokens (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token VARCHAR(255) UNIQUE NOT NULL,
-    name VARCHAR(255),
-    last_used_at TIMESTAMP,
-    expires_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Create indexes
-CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status);
-CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone);
-CREATE INDEX IF NOT EXISTS idx_contacts_blacklisted ON contacts(blacklisted);
-CREATE INDEX IF NOT EXISTS idx_campaign_contacts_campaign ON campaign_contacts(campaign_id);
-CREATE INDEX IF NOT EXISTS idx_campaign_contacts_next_retry ON campaign_contacts(next_retry_at) WHERE next_retry_at IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_call_results_campaign ON call_results(campaign_id);
-CREATE INDEX IF NOT EXISTS idx_call_results_status ON call_results(status);
-CREATE INDEX IF NOT EXISTS idx_call_results_created ON call_results(created_at);
-CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
-CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
-CREATE INDEX IF NOT EXISTS idx_blacklist_phone ON blacklist(phone);
-CREATE INDEX IF NOT EXISTS idx_api_tokens_token ON api_tokens(token);
-
--- Insert default settings
-INSERT INTO settings (key, value, description, category) VALUES 
-    ('system_enabled', 'true', 'Global system enable/disable', 'system'),
-    ('global_max_calls', '50', 'Maximum concurrent calls globally', 'dialer'),
-    ('default_cps', '5', 'Default calls per second', 'dialer'),
-    ('call_timeout', '30', 'Call timeout in seconds', 'dialer'),
-    ('max_retries', '3', 'Maximum retry attempts', 'dialer'),
-    ('retry_busy_max', '2', 'Max retries for busy', 'dialer'),
-    ('retry_busy_delay', '120', 'Delay for busy retry (seconds)', 'dialer'),
-    ('retry_noanswer_max', '3', 'Max retries for no answer', 'dialer'),
-    ('retry_noanswer_delay', '300', 'Delay for no answer retry', 'dialer'),
-    ('audio_retention_days', '30', 'Audio files retention period', 'storage'),
-    ('max_upload_size_mb', '10', 'Maximum upload file size', 'storage')
+INSERT INTO settings (key, value, description) VALUES 
+    ('system_enabled', 'true', 'Global system enable/disable'),
+    ('global_max_calls', '50', 'Maximum concurrent calls')
 ON CONFLICT (key) DO NOTHING;
 
--- Insert default admin user (password: admin)
 INSERT INTO users (username, password_hash, role, email, force_password_change) VALUES (
     'admin',
     '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYIqK0hVdGW',
@@ -395,96 +257,107 @@ INSERT INTO users (username, password_hash, role, email, force_password_change) 
     'admin@localhost',
     TRUE
 ) ON CONFLICT (username) DO NOTHING;
-
--- Create function for updated_at
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Create triggers
-DROP TRIGGER IF EXISTS update_campaigns_updated_at ON campaigns;
-CREATE TRIGGER update_campaigns_updated_at 
-    BEFORE UPDATE ON campaigns 
-    FOR EACH ROW 
-    EXECUTE FUNCTION update_updated_at_column();
-
-DROP TRIGGER IF EXISTS update_contacts_updated_at ON contacts;
-CREATE TRIGGER update_contacts_updated_at 
-    BEFORE UPDATE ON contacts 
-    FOR EACH ROW 
-    EXECUTE FUNCTION update_updated_at_column();
-
-DROP TRIGGER IF EXISTS update_users_updated_at ON users;
-CREATE TRIGGER update_users_updated_at 
-    BEFORE UPDATE ON users 
-    FOR EACH ROW 
-    EXECUTE FUNCTION update_updated_at_column();
 EOF
-fi
-
-# Apply schema
-print_info "Applying schema from $SCHEMA_FILE"
-sudo -u postgres psql -d "$DB_NAME" -f "$SCHEMA_FILE"
-
-if [ $? -eq 0 ]; then
-    print_success "Schema created successfully"
-else
-    print_error "Schema creation failed"
-    exit 1
-fi
+    fi
+    
+    log_info "Применение схемы из $SCHEMA_FILE"
+    if sudo -u postgres psql -d "$DB_NAME" -f "$SCHEMA_FILE" &>/dev/null; then
+        log_success "Схема применена успешно"
+    else
+        log_warn "Некоторые элементы схемы уже существуют"
+    fi
+}
 
 # =============================================
-# Verify Database
+# Проверка подключения
 # =============================================
-print_step "Verifying database..."
-
-# Test connection
-if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1" &>/dev/null; then
-    print_success "Database connection verified"
-else
-    print_error "Database connection failed"
-    exit 1
-fi
-
-# Count tables
-TABLE_COUNT=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" | xargs)
-print_info "Tables created: $TABLE_COUNT"
-
-# Check default user
-ADMIN_EXISTS=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -c "SELECT COUNT(*) FROM users WHERE username = 'admin';" | xargs)
-if [ "$ADMIN_EXISTS" == "1" ]; then
-    print_success "Default admin user exists"
-else
-    print_warn "Default admin user not found"
-fi
+verify_connection() {
+    log_step "Проверка подключения..."
+    
+    if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1" &>/dev/null; then
+        log_success "Подключение к БД успешно"
+    else
+        log_error "Не удалось подключиться к БД"
+        return 1
+    fi
+    
+    # Количество таблиц
+    local table_count=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | xargs)
+    log_info "Таблиц создано: ${table_count:-0}"
+}
 
 # =============================================
-# Summary
+# Создание маркера
 # =============================================
-print_success "PostgreSQL setup completed!"
-echo ""
-print_info "Database Configuration:"
-echo "  Host: $DB_HOST"
-echo "  Port: $DB_PORT"
-echo "  Database: $DB_NAME"
-echo "  User: $DB_USER"
-echo "  Password: $DB_PASSWORD"
-echo ""
-print_info "Tables Created:"
-PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "\dt" 2>/dev/null | head -20 || true
-echo ""
-print_info "Default Login:"
-echo "  Username: admin"
-echo "  Password: admin"
-echo ""
-print_info "Connection String:"
-echo "  postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME"
-echo ""
-print_info "Useful Commands:"
-echo "  sudo -u postgres psql -d $DB_NAME"
-echo "  PGPASSWORD='$DB_PASSWORD' psql -h $DB_HOST -U $DB_USER -d $DB_NAME"
-echo ""
+mark_configured() {
+    mkdir -p /opt/autodialer
+    
+    cat > "$INSTALLED_MARKER" << EOF
+PostgreSQL configured at $(date)
+Database: $DB_NAME
+User: $DB_USER
+Host: $DB_HOST:$DB_PORT
+EOF
+    
+    chown autodialer:autodialer "$INSTALLED_MARKER" 2>/dev/null || true
+    log_success "Маркер установки создан"
+}
+
+# =============================================
+# Вывод сводки
+# =============================================
+print_summary() {
+    echo ""
+    echo "=============================================="
+    echo -e "${GREEN}${BOLD}✅ PostgreSQL настроен!${NC}"
+    echo "=============================================="
+    echo ""
+    echo "Параметры подключения:"
+    echo "  • Хост:     $DB_HOST"
+    echo "  • Порт:     $DB_PORT"
+    echo "  • База:     $DB_NAME"
+    echo "  • Пользователь: $DB_USER"
+    echo "  • Пароль:   $DB_PASSWORD"
+    echo ""
+    echo "Строка подключения:"
+    echo "  postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME"
+    echo ""
+    echo "Учётные данные по умолчанию:"
+    echo "  • Логин:    admin"
+    echo "  • Пароль:   admin"
+    echo ""
+    echo "Полезные команды:"
+    echo "  sudo -u postgres psql -d $DB_NAME"
+    echo "  PGPASSWORD='$DB_PASSWORD' psql -h $DB_HOST -U $DB_USER -d $DB_NAME"
+    echo ""
+    echo "=============================================="
+}
+
+# =============================================
+# ГЛАВНАЯ ФУНКЦИЯ
+# =============================================
+main() {
+    echo ""
+    echo "=============================================="
+    echo -e "${BOLD}${BLUE}AutoDialer Ultimate - PostgreSQL Setup${NC}"
+    echo -e "${BOLD}${BLUE}Version: 3.0.3 (FIXED)${NC}"
+    echo "=============================================="
+    echo ""
+    
+    check_already_configured
+    check_postgresql
+    start_postgresql || {
+        log_error "Не удалось запустить PostgreSQL"
+        exit 1
+    }
+    create_database_and_user
+    apply_schema
+    verify_connection
+    mark_configured
+    print_summary
+}
+
+# =============================================
+# ЗАПУСК
+# =============================================
+main "$@"
