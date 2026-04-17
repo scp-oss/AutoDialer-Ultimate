@@ -1,15 +1,16 @@
 #!/bin/bash
 # =============================================
 # AutoDialer Ultimate - Firewall Setup (FIXED)
-# Version: 3.0.1
+# Version: 3.0.2 (ENTERPRISE)
 # Description: Безопасная настройка файрвола (ТОЛЬКО UFW)
 # =============================================
 # 🔥 ИСПРАВЛЕНИЯ:
-# - Убран конфликт UFW + iptables + nftables
-# - SSH НИКОГДА не блокируется
-# - Проверка правил до включения UFW
-# - Автоопределение порта SSH
-# - SIP/RTP только от FreePBX
+# - Только UFW (никаких iptables-persistent, nftables)
+# - SSH НИКОГДА не блокируется (автоопределение порта)
+# - Проверка правил ДО и ПОСЛЕ включения
+# - UFW default policies перед enable
+# - SIP/RTP только от FreePBX (и SIP_ALLOWED_IPS)
+# - Дополнительная защита в before.rules
 # =============================================
 
 set -euo pipefail
@@ -20,7 +21,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Загрузка конфигурации
 if [ -f "$PROJECT_ROOT/.env" ]; then
     set -a
     source "$PROJECT_ROOT/.env"
@@ -120,7 +120,7 @@ cleanup_conflicting_firewalls() {
         systemctl disable nftables
     fi
     
-    # Удаляем конфликтующие пакеты
+    # 🔥 Удаляем конфликтующие пакеты (главная причина проблем)
     log_info "Удаление iptables-persistent и netfilter-persistent..."
     apt-get purge -y netfilter-persistent iptables-persistent 2>/dev/null || true
     
@@ -160,12 +160,12 @@ install_and_reset_ufw() {
     ufw --force disable
     ufw --force reset
     
-    # Установка политик по умолчанию
-    ufw default deny incoming
-    ufw default allow outgoing
-    ufw default deny routed
+    # 🔥 ЯВНО УСТАНАВЛИВАЕМ ПОЛИТИКИ ПО УМОЛЧАНИЮ
+    ufw --force default deny incoming
+    ufw --force default allow outgoing
+    ufw --force default deny routed
     
-    log_success "UFW сброшен"
+    log_success "UFW сброшен и политики установлены"
 }
 
 # =============================================
@@ -177,7 +177,7 @@ add_ufw_rules() {
     log_step "Добавление правил UFW..."
     
     # =============================================
-    # 🔥 САМОЕ ВАЖНОЕ: SSH
+    # 🔥 САМОЕ ВАЖНОЕ: SSH (ВСЕГДА ПЕРВЫМ)
     # =============================================
     ufw allow "$ssh_port/tcp" comment 'SSH'
     log_success "  ✅ SSH порт $ssh_port/tcp РАЗРЕШЁН"
@@ -185,6 +185,7 @@ add_ufw_rules() {
     # Дополнительно разрешаем SSH на стандартном порту (на случай если порт не 22)
     if [ "$ssh_port" != "22" ]; then
         ufw allow 22/tcp comment 'SSH (fallback)' 2>/dev/null || true
+        log_info "  ✅ SSH fallback порт 22/tcp РАЗРЕШЁН"
     fi
     
     # =============================================
@@ -309,6 +310,72 @@ verify_ssh_rule() {
 }
 
 # =============================================
+# 🔥 ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА В BEFORE.RULES
+# =============================================
+add_extra_protection() {
+    log_step "Добавление дополнительной защиты в before.rules..."
+    
+    # Создаём резервную копию
+    if [ -f /etc/ufw/before.rules ] && [ ! -f /etc/ufw/before.rules.backup ]; then
+        cp /etc/ufw/before.rules /etc/ufw/before.rules.backup
+    fi
+    
+    # Добавляем защиту в before.rules (перед COMMIT)
+    local before_rules="/etc/ufw/before.rules"
+    local temp_file=$(mktemp)
+    
+    # Копируем всё до *filter
+    awk '!found && /^\*filter/ {found=1} !found {print}' "$before_rules" > "$temp_file"
+    
+    # Добавляем *filter и наши правила
+    cat >> "$temp_file" << 'EOF'
+*filter
+
+# =============================================
+# AutoDialer Ultimate - Extra Protection
+# =============================================
+
+# Защита от SYN flood
+-A ufw-before-input -p tcp --syn -m limit --limit 10/s --limit-burst 20 -j ACCEPT
+-A ufw-before-input -p tcp --syn -j DROP
+
+# Защита от port scan
+-A ufw-before-input -p tcp --tcp-flags ALL NONE -j DROP
+-A ufw-before-input -p tcp --tcp-flags ALL ALL -j DROP
+-A ufw-before-input -p tcp ! --syn -m state --state NEW -j DROP
+
+# Блокировка невалидных пакетов
+-A ufw-before-input -m state --state INVALID -j DROP
+
+# Блокировка фрагментированных пакетов
+-A ufw-before-input -f -j DROP
+
+# Защита от smurf атак
+-A ufw-before-input -p icmp -m icmp --icmp-type address-mask-request -j DROP
+-A ufw-before-input -p icmp -m icmp --icmp-type timestamp-request -j DROP
+
+# Ограничение подключений к SSH (брутфорс защита)
+-A ufw-before-input -p tcp --dport 22 -m connlimit --connlimit-above 10 --connlimit-mask 32 -j DROP
+-A ufw-before-input -p tcp --dport 22 -m recent --name ssh_attack --set
+-A ufw-before-input -p tcp --dport 22 -m recent --name ssh_attack --rcheck --seconds 60 --hitcount 5 -j DROP
+
+# Ограничение подключений к HTTP/HTTPS
+-A ufw-before-input -p tcp --dport 80 -m connlimit --connlimit-above 100 --connlimit-mask 32 -j DROP
+-A ufw-before-input -p tcp --dport 443 -m connlimit --connlimit-above 100 --connlimit-mask 32 -j DROP
+
+EOF
+    
+    # Копируем остальное после *filter (пропуская уже добавленное)
+    awk 'found {print}' "$before_rules" >> "$temp_file"
+    
+    # Заменяем оригинал
+    mv "$temp_file" "$before_rules"
+    chmod 640 "$before_rules"
+    
+    log_success "Дополнительная защита добавлена"
+}
+
+# =============================================
 # 🔥 ВКЛЮЧЕНИЕ UFW (С БЕЗОПАСНОЙ ПРОВЕРКОЙ)
 # =============================================
 enable_ufw_safe() {
@@ -348,59 +415,16 @@ enable_ufw_safe() {
         return 1
     fi
     
-    # Повторная проверка SSH правила
+    # 🔥 ПОВТОРНАЯ ПРОВЕРКА SSH ПОСЛЕ ВКЛЮЧЕНИЯ
     if ! ufw status | grep -q "$ssh_port/tcp.*ALLOW"; then
         log_error "КРИТИЧЕСКАЯ ОШИБКА: SSH правило пропало после включения!"
         log_error "ЭКСТРЕННО ДОБАВЛЯЮ SSH..."
         ufw allow "$ssh_port/tcp" comment 'SSH (post-enable emergency)'
+        ufw allow 22/tcp comment 'SSH fallback (post-enable emergency)'
         ufw reload
     fi
     
     log_success "UFW включён и работает"
-}
-
-# =============================================
-# 🔥 ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА (БЕЗ КОНФЛИКТОВ)
-# =============================================
-add_extra_protection() {
-    log_step "Добавление дополнительной защиты..."
-    
-    # Настройка UFW для защиты от брутфорса
-    cat > /etc/ufw/before.rules << 'EOF'
-# =============================================
-# AutoDialer Ultimate - UFW Extra Protection
-# =============================================
-
-# Защита от SYN flood
--A ufw-before-input -p tcp --syn -m limit --limit 10/s --limit-burst 20 -j ACCEPT
--A ufw-before-input -p tcp --syn -j DROP
-
-# Защита от port scan
--A ufw-before-input -p tcp --tcp-flags ALL NONE -j DROP
--A ufw-before-input -p tcp --tcp-flags ALL ALL -j DROP
--A ufw-before-input -p tcp ! --syn -m state --state NEW -j DROP
-
-# Блокировка невалидных пакетов
--A ufw-before-input -m state --state INVALID -j DROP
-
-# Блокировка фрагментированных пакетов
--A ufw-before-input -f -j DROP
-
-# Защита от smurf атак
--A ufw-before-input -p icmp -m icmp --icmp-type address-mask-request -j DROP
--A ufw-before-input -p icmp -m icmp --icmp-type timestamp-request -j DROP
-
-# Ограничение подключений к SSH
--A ufw-before-input -p tcp --dport 22 -m connlimit --connlimit-above 10 --connlimit-mask 32 -j DROP
--A ufw-before-input -p tcp --dport 22 -m recent --name ssh_attack --set
--A ufw-before-input -p tcp --dport 22 -m recent --name ssh_attack --rcheck --seconds 60 --hitcount 5 -j DROP
-
-# Ограничение подключений к HTTP/HTTPS
--A ufw-before-input -p tcp --dport 80 -m connlimit --connlimit-above 100 --connlimit-mask 32 -j DROP
--A ufw-before-input -p tcp --dport 443 -m connlimit --connlimit-above 100 --connlimit-mask 32 -j DROP
-EOF
-
-    log_success "Дополнительная защита добавлена"
 }
 
 # =============================================
@@ -540,18 +564,22 @@ print_summary() {
     echo ""
     echo -e "${YELLOW}${BOLD}⚠️  ВАЖНО: SSH порт $ssh_port/tcp открыт!${NC}"
     echo ""
+    echo "Дополнительная защита:"
+    echo "  • SYN flood protection"
+    echo "  • Port scan protection"
+    echo "  • SSH brute force protection"
+    echo "  • HTTP/HTTPS connection limits"
+    echo ""
     echo "Хелпер-скрипты:"
     echo "  autodialer-firewall-status   - Статус файрвола"
-    echo "  autodialer-firewall-allow     - Разрешить IP"
-    echo "  autodialer-firewall-deny      - Заблокировать IP навсегда"
-    echo "  autodialer-firewall-ban       - Временный бан IP"
+    echo "  autodialer-firewall-allow    - Разрешить IP"
+    echo "  autodialer-firewall-deny     - Заблокировать IP навсегда"
+    echo "  autodialer-firewall-ban      - Временный бан IP"
     echo ""
     echo "Полезные команды:"
-    echo "  ufw status verbose             - Подробный статус"
-    echo "  ufw reload                     - Перезагрузить правила"
-    echo "  ufw disable                    - ОТКЛЮЧИТЬ UFW (экстренно!)"
-    echo "  ufw allow/deny                 - Добавить правило"
-    echo "  ufw delete <номер>             - Удалить правило"
+    echo "  ufw status verbose            - Подробный статус"
+    echo "  ufw reload                    - Перезагрузить правила"
+    echo "  ufw disable                   - ОТКЛЮЧИТЬ UFW (экстренно!)"
     echo ""
     echo "=============================================="
 }
@@ -563,11 +591,10 @@ main() {
     echo ""
     echo "=============================================="
     echo -e "${BOLD}${BLUE}AutoDialer Ultimate - Firewall Setup${NC}"
-    echo -e "${BOLD}${BLUE}Version: 3.0.1 (FIXED)${NC}"
+    echo -e "${BOLD}${BLUE}Version: 3.0.2 (ENTERPRISE)${NC}"
     echo "=============================================="
     echo ""
     
-    # Проверки
     check_root
     check_already_configured
     
