@@ -105,8 +105,21 @@ check_dependencies() {
 # =============================================
 # 🔥 ПРОВЕРКА ОБЯЗАТЕЛЬНЫХ ПЕРЕМЕННЫХ
 # =============================================
+load_env() {
+    if [ -f "$PROJECT_ROOT/.env" ]; then
+        # Загружаем .env БЕЗ парсинга вручную
+        set -a
+        source "$PROJECT_ROOT/.env"
+        set +a
+        log_success "Конфигурация загружена из .env"
+    fi
+}
+
 check_env_vars() {
     log_step "Проверка конфигурации..."
+    
+    # Сначала загружаем .env правильно
+    load_env
     
     local missing=()
     
@@ -115,30 +128,24 @@ check_env_vars() {
     [ -z "${AMI_PASSWORD:-}" ] && missing+=("AMI_PASSWORD")
     
     if [ ${#missing[@]} -gt 0 ]; then
-        log_error "Отсутствуют обязательные переменные в .env:"
-        for var in "${missing[@]}"; do
-            echo "  - $var"
-        done
+        log_error "Отсутствуют обязательные переменные: ${missing[*]}"
         exit 1
     fi
     
+    # Установка значений по умолчанию
     export DB_HOST="${DB_HOST:-localhost}"
     export DB_PORT="${DB_PORT:-5432}"
     export DB_NAME="${DB_NAME:-autodialer}"
     export DB_USER="${DB_USER:-autodialer}"
     export REDIS_HOST="${REDIS_HOST:-localhost}"
     export REDIS_PORT="${REDIS_PORT:-6379}"
-    export REDIS_DB="${REDIS_DB:-0}"
-    export REDIS_PASSWORD="${REDIS_PASSWORD:-}"
     export WORKERS="${WORKERS:-4}"
     export HOST="${HOST:-0.0.0.0}"
     export PORT="${PORT:-8000}"
-    export LOG_LEVEL="${LOG_LEVEL:-INFO}"
-    export ENVIRONMENT="${ENVIRONMENT:-production}"
     
     log_success "Конфигурация проверена"
     log_info "  DB: ${DB_USER}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
-    log_info "  Redis: ${REDIS_HOST}:${REDIS_PORT}/${REDIS_DB}"
+    log_info "  Redis: ${REDIS_HOST}:${REDIS_PORT}"
     log_info "  Workers: $WORKERS"
 }
 
