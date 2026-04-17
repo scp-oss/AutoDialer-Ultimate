@@ -203,4 +203,20 @@ async def stream_preview(
     import json
     from pathlib import Path
     
-   
+    redis_client = get_redis_client()
+    data = await redis_client.get(f"tts_preview:{preview_id}")
+    
+    if not data:
+        raise HTTPException(404, "Preview not found or expired")
+    
+    preview = json.loads(data)
+    path = Path(preview['path'])
+    
+    if not path.exists():
+        raise HTTPException(404, "Preview file not found")
+    
+    return FileResponse(
+        path,
+        media_type="audio/wav",
+        headers={"Content-Disposition": "inline"}
+    )
