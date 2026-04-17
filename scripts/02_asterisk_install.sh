@@ -467,19 +467,19 @@ EOF
 verify_installation() {
     log_step "Проверка установки Asterisk..."
     
-    if ! command -v asterisk &>/dev/null; then
-        log_error "Asterisk не найден в PATH"
+    if [ ! -f /usr/sbin/asterisk ]; then
+        log_error "Asterisk не найден в /usr/sbin"
         return 1
     fi
     
-    local asterisk_version=$(asterisk -V 2>/dev/null | head -1)
+    local asterisk_version=$(/usr/sbin/asterisk -V 2>/dev/null | head -1)
     log_success "Asterisk установлен: $asterisk_version"
     
     log_info "Проверка ключевых модулей..."
     
-    asterisk -rx "module show" 2>/dev/null | grep -q "chan_pjsip" && log_success "  ✓ chan_pjsip" || log_warn "  ✗ chan_pjsip"
-    asterisk -rx "module show" 2>/dev/null | grep -q "res_rtp_asterisk" && log_success "  ✓ res_rtp_asterisk" || log_warn "  ✗ res_rtp_asterisk"
-    asterisk -rx "module show" 2>/dev/null | grep -q "app_dial" && log_success "  ✓ app_dial" || log_warn "  ✗ app_dial"
+    /usr/sbin/asterisk -rx "module show" 2>/dev/null | grep -q "chan_pjsip" && log_success "  ✓ chan_pjsip" || log_warn "  ✗ chan_pjsip"
+    /usr/sbin/asterisk -rx "module show" 2>/dev/null | grep -q "res_rtp_asterisk" && log_success "  ✓ res_rtp_asterisk" || log_warn "  ✗ res_rtp_asterisk"
+    /usr/sbin/asterisk -rx "module show" 2>/dev/null | grep -q "app_dial" && log_success "  ✓ app_dial" || log_warn "  ✗ app_dial"
     [ -f /etc/asterisk/asterisk.conf ] && log_success "  ✓ Конфигурация найдена"
     
     log_success "Проверка установки завершена"
