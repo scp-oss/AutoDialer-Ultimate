@@ -81,11 +81,6 @@ check_ram_and_set_limits() {
     if [ "$TOTAL_RAM" -lt 2048 ]; then
         log_error "Недостаточно RAM для компиляции Asterisk"
         log_error "Требуется минимум 2GB RAM. Обнаружено: ${TOTAL_RAM}MB"
-        log_error ""
-        log_info "Варианты решения:"
-        log_info "  1. Увеличьте RAM VPS до 4GB"
-        log_info "  2. Создайте swap файл перед установкой"
-        log_info "  3. Пропустите установку Asterisk через главный install.sh"
         exit 1
     fi
     
@@ -94,7 +89,6 @@ check_ram_and_set_limits() {
     elif [ "$TOTAL_RAM" -lt 4096 ]; then
         MAKE_JOBS=1
         log_warn "Мало RAM (${TOTAL_RAM}MB), компиляция в 1 поток"
-        log_warn "Это займёт 10-15 минут, но предотвратит OOM"
     elif [ "$TOTAL_RAM" -lt 8192 ]; then
         MAKE_JOBS=2
         log_info "RAM ${TOTAL_RAM}MB, компиляция в 2 потока"
@@ -105,11 +99,6 @@ check_ram_and_set_limits() {
     
     export MAKE_JOBS
     
-    SWAP_TOTAL=$(free -m | awk '/^Swap:/{print $2}')
-    if [ "$TOTAL_RAM" -lt 4096 ] && [ "$SWAP_TOTAL" -lt 1024 ]; then
-        log_warn "Мало RAM и swap. Рекомендуется создать swap файл"
-    fi
-    
     log_success "Проверка RAM завершена (MAKE_JOBS=$MAKE_JOBS)"
 }
 
@@ -119,19 +108,16 @@ check_ram_and_set_limits() {
 install_kernel_headers() {
     log_step "Установка linux-headers для Debian..."
     
-    # Пробуем точную версию
     if apt-get install -y -qq "linux-headers-$(uname -r)" 2>/dev/null; then
         log_success "Установлены linux-headers-$(uname -r)"
         return 0
     fi
     
-    # Fallback на метапакет amd64 (для Debian)
     if apt-get install -y -qq linux-headers-amd64 2>/dev/null; then
         log_success "Установлены linux-headers-amd64"
         return 0
     fi
     
-    # Последняя попытка для cloud-образов
     if apt-get install -y -qq linux-headers-cloud-amd64 2>/dev/null; then
         log_success "Установлены linux-headers-cloud-amd64"
         return 0
@@ -141,21 +127,17 @@ install_kernel_headers() {
 }
 
 # =============================================
-# ПРОВЕРКА НАЛИЧИЯ БИБЛИОТЕКИ (ИСПРАВЛЕНО)
+# ПРОВЕРКА НАЛИЧИЯ БИБЛИОТЕКИ
 # =============================================
 check_lib() {
     local lib="$1"
-    # Проверяем разные варианты расположения
-    if [ -f "/usr/lib/x86_64-linux-gnu/${lib}.so" ] || \
-       [ -f "/usr/lib/${lib}.so" ] || \
-       [ -f "/usr/local/lib/${lib}.so" ] || \
-       [ -f "/usr/lib/x86_64-linux-gnu/${lib}.so.3" ] || \
-       [ -f "/usr/lib/x86_64-linux-gnu/${lib}.so.2" ] || \
-       [ -f "/usr/lib/x86_64-linux-gnu/${lib}.so.0" ] || \
-       ldconfig -p 2>/dev/null | grep -q "$lib"; then
-        return 0
-    fi
-    return 1
+    [ -f "/usr/lib/x86_64-linux-gnu/${lib}.so" ] ||
+    [ -f "/usr/lib/${lib}.so" ] ||
+    [ -f "/usr/local/lib/${lib}.so" ] ||
+    [ -f "/usr/lib/x86_64-linux-gnu/${lib}.so.3" ] ||
+    [ -f "/usr/lib/x86_64-linux-gnu/${lib}.so.2" ] ||
+    [ -f "/usr/lib/x86_64-linux-gnu/${lib}.so.0" ] ||
+    /sbin/ldconfig -p 2>/dev/null | grep -q "$lib"
 }
 
 # =============================================
@@ -172,10 +154,7 @@ install_asterisk_deps() {
     log_info "Установка библиотек для сборки..."
     
     local packages=(
-        build-essential gcc g++ make
-        automake autoconf libtool pkg-config
-        patch flex bison
-        
+        build-essential gcc g++ make automake autoconf libtool pkg-config patch flex bison
         libssl-dev libncurses-dev libxml2-dev libsqlite3-dev
         libjansson-dev libedit-dev libuuid-dev
         libcurl4-openssl-dev libiksemel-dev libogg-dev libvorbis-dev
@@ -188,21 +167,16 @@ install_asterisk_deps() {
         liblua5.1-0-dev libcodec2-dev
         libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
         libvpx-dev libmp3lame-dev libx264-dev
-        libpri-dev libss7-dev libopenr2-dev
-        libnewt-dev
-        
-        wget tar gzip bzip2 xz-utils
-        sox ffmpeg
+        libpri-dev libss7-dev libopenr2-dev libnewt-dev
+        wget tar gzip bzip2 xz-utils sox ffmpeg
     )
     
     for pkg in "${packages[@]}"; do
         apt-get install -y -qq "$pkg" 2>/dev/null || true
     done
     
-    # Обновляем кэш библиотек
-    ldconfig
+    /sbin/ldconfig
     
-    # Проверка критических библиотек (ИСПРАВЛЕНО)
     log_info "Проверка критических библиотек..."
     local critical_libs=("libssl" "libxml2" "libjansson" "libedit" "libsqlite3")
     local missing_libs=()
@@ -214,62 +188,34 @@ install_asterisk_deps() {
     done
     
     if [ ${#missing_libs[@]} -gt 0 ]; then
-        log_warn "Некоторые библиотеки не найдены в стандартных путях: ${missing_libs[*]}"
-        log_warn "Пробуем установить альтернативные версии..."
+        log_warn "Некоторые библиотеки не найдены: ${missing_libs[*]}"
         
-        # Пытаемся установить альтернативные версии
         for lib in "${missing_libs[@]}"; do
             case "$lib" in
-                libssl)
-                    apt-get install -y -qq libssl3 libssl-dev || true
-                    ;;
-                libxml2)
-                    apt-get install -y -qq libxml2 libxml2-dev || true
-                    ;;
-                libjansson)
-                    apt-get install -y -qq libjansson4 libjansson-dev || true
-                    ;;
-                libedit)
-                    apt-get install -y -qq libedit2 libedit-dev || true
-                    ;;
-                libsqlite3)
-                    apt-get install -y -qq libsqlite3-0 libsqlite3-dev || true
-                    ;;
+                libssl)    apt-get install -y -qq libssl3 libssl-dev || true ;;
+                libxml2)   apt-get install -y -qq libxml2 libxml2-dev || true ;;
+                libjansson) apt-get install -y -qq libjansson4 libjansson-dev || true ;;
+                libedit)   apt-get install -y -qq libedit2 libedit-dev || true ;;
+                libsqlite3) apt-get install -y -qq libsqlite3-0 libsqlite3-dev || true ;;
             esac
         done
-        
-        ldconfig
-        
-        # Проверяем снова
-        missing_libs=()
-        for lib in "${critical_libs[@]}"; do
-            if ! check_lib "$lib"; then
-                missing_libs+=("$lib")
-            fi
-        done
-        
-        if [ ${#missing_libs[@]} -gt 0 ]; then
-            log_warn "Всё ещё не найдены: ${missing_libs[*]}"
-            log_warn "Продолжаем установку, но компиляция может не работать"
-        else
-            log_success "Все библиотеки найдены"
-        fi
+        /sbin/ldconfig
+        log_warn "Продолжаем установку"
     else
         log_success "Все критические библиотеки найдены"
     fi
 }
 
 # =============================================
-# СКАЧИВАНИЕ ASTERISK (БЕЗ ЖЁСТКОЙ ПРОВЕРКИ SHA256)
+# СКАЧИВАНИЕ ASTERISK (БЕЗ SHA256 - АРХИВ ОБНОВЛЯЕТСЯ)
 # =============================================
-ddownload_asterisk() {
+download_asterisk() {
     log_step "Скачивание Asterisk..."
     
     ASTERISK_VERSION="${ASTERISK_VERSION:-21}"
     ASTERISK_DOWNLOAD_URL="https://downloads.asterisk.org/pub/telephony/asterisk"
     
     cd /usr/src
-    
     rm -f "asterisk-${ASTERISK_VERSION}-current.tar.gz"
     rm -rf "asterisk-${ASTERISK_VERSION}."*
     
@@ -292,11 +238,9 @@ ddownload_asterisk() {
         sleep 5
     done
     
-    # ПРОВЕРКА ЦЕЛОСТНОСТИ АРХИВА (без SHA256)
     log_info "Проверка целостности архива..."
     if ! tar -tzf "asterisk-${ASTERISK_VERSION}-current.tar.gz" >/dev/null 2>&1; then
-        log_error "Архив повреждён или не является tar.gz"
-        rm -f "asterisk-${ASTERISK_VERSION}-current.tar.gz"
+        log_error "Архив повреждён"
         exit 1
     fi
     log_success "Архив цел"
@@ -317,7 +261,6 @@ configure_asterisk() {
     log_step "Конфигурация Asterisk..."
     
     cd "$ASTERISK_SRC_DIR"
-    
     make clean >/dev/null 2>&1 || true
     make distclean >/dev/null 2>&1 || true
     
@@ -337,35 +280,16 @@ configure_asterisk() {
     if ! ./configure \
         --with-pjproject-bundled \
         --with-jansson-bundled \
-        --with-ssl \
-        --with-crypto \
-        --with-srtp \
-        --with-gsm \
-        --with-speex \
-        --with-opus \
-        --with-vorbis \
-        --with-ogg \
-        --with-ical \
-        --with-iksemel \
-        --with-ldap \
-        --with-curl \
-        --with-libxml2 \
-        --with-systemd \
-        --with-popt \
-        --with-spandsp \
-        --with-neon \
-        --with-unixodbc \
-        --with-postgres \
-        --prefix=/usr \
-        --sysconfdir=/etc \
-        --localstatedir=/var \
-        --datarootdir=/usr/share \
-        --docdir=/usr/share/doc/asterisk \
+        --with-ssl --with-crypto --with-srtp \
+        --with-gsm --with-speex --with-opus --with-vorbis --with-ogg \
+        --with-ical --with-iksemel --with-ldap --with-curl --with-libxml2 \
+        --with-systemd --with-popt --with-spandsp --with-neon \
+        --with-unixodbc --with-postgres \
+        --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
+        --datarootdir=/usr/share --docdir=/usr/share/doc/asterisk \
         > "$configure_log" 2>&1; then
         
         log_error "Ошибка configure. Лог: $configure_log"
-        echo ""
-        echo "Последние 30 строк:"
         tail -30 "$configure_log"
         exit 1
     fi
@@ -415,7 +339,6 @@ compile_asterisk() {
     fi
     
     local make_log="/tmp/asterisk-make.log"
-    
     log_info "Запуск make -j${MAKE_JOBS}..."
     
     make -j"${MAKE_JOBS}" > "$make_log" 2>&1 &
@@ -447,20 +370,13 @@ compile_asterisk() {
     
     if [ $make_result -ne 0 ]; then
         log_error "Ошибка компиляции (код $make_result)"
-        log_error "Лог: $make_log"
-        echo ""
-        echo "Последние 50 строк лога:"
         tail -50 "$make_log"
         
         if grep -q "virtual memory exhausted" "$make_log"; then
             log_error "ОШИБКА: Недостаточно памяти (OOM)!"
-            log_error "Решение: увеличьте RAM или swap"
-        elif grep -q "No such file or directory" "$make_log"; then
-            log_error "ОШИБКА: Отсутствуют файлы исходников"
         elif grep -q "undefined reference" "$make_log"; then
             log_error "ОШИБКА: Проблема с линковкой библиотек"
         fi
-        
         exit 1
     fi
     
@@ -475,15 +391,9 @@ install_asterisk() {
     
     cd "$ASTERISK_SRC_DIR"
     
-    log_info "make install..."
     make install >/dev/null 2>&1
-    
-    log_info "make samples..."
     make samples >/dev/null 2>&1
-    
-    log_info "make config..."
     make config >/dev/null 2>&1
-    
     make install-logrotate >/dev/null 2>&1 || true
     
     log_success "Asterisk установлен"
@@ -500,17 +410,8 @@ setup_permissions() {
         log_success "Пользователь asterisk создан"
     fi
     
-    chown -R asterisk:asterisk /etc/asterisk
-    chown -R asterisk:asterisk /var/lib/asterisk
-    chown -R asterisk:asterisk /var/log/asterisk
-    chown -R asterisk:asterisk /var/spool/asterisk
-    chown -R asterisk:asterisk /var/run/asterisk
-    chown -R asterisk:asterisk /usr/lib/asterisk
-    
-    chmod 755 /etc/asterisk
-    chmod 755 /var/lib/asterisk
-    chmod 755 /var/log/asterisk
-    chmod 755 /var/spool/asterisk
+    chown -R asterisk:asterisk /etc/asterisk /var/lib/asterisk /var/log/asterisk /var/spool/asterisk /var/run/asterisk /usr/lib/asterisk
+    chmod 755 /etc/asterisk /var/lib/asterisk /var/log/asterisk /var/spool/asterisk
     
     log_success "Права установлены"
 }
@@ -523,13 +424,9 @@ create_directories() {
     
     mkdir -p /var/lib/asterisk/sounds/tts/{models,campaigns}
     mkdir -p /var/spool/asterisk/monitor
-    mkdir -p /var/log/asterisk/cdr-csv
-    mkdir -p /var/log/asterisk/cdr-custom
+    mkdir -p /var/log/asterisk/cdr-csv /var/log/asterisk/cdr-custom
     
-    chown -R asterisk:asterisk /var/lib/asterisk/sounds
-    chown -R asterisk:asterisk /var/spool/asterisk/monitor
-    chown -R asterisk:asterisk /var/log/asterisk/cdr-csv
-    chown -R asterisk:asterisk /var/log/asterisk/cdr-custom
+    chown -R asterisk:asterisk /var/lib/asterisk/sounds /var/spool/asterisk/monitor /var/log/asterisk/cdr-csv /var/log/asterisk/cdr-custom
     
     log_success "Директории созданы"
 }
@@ -580,30 +477,12 @@ verify_installation() {
     
     log_info "Проверка ключевых модулей..."
     
-    if asterisk -rx "module show" 2>/dev/null | grep -q "chan_pjsip"; then
-        log_success "  ✓ chan_pjsip"
-    else
-        log_warn "  ✗ chan_pjsip не загружен"
-    fi
-    
-    if asterisk -rx "module show" 2>/dev/null | grep -q "res_rtp_asterisk"; then
-        log_success "  ✓ res_rtp_asterisk"
-    else
-        log_warn "  ✗ res_rtp_asterisk не загружен"
-    fi
-    
-    if asterisk -rx "module show" 2>/dev/null | grep -q "app_dial"; then
-        log_success "  ✓ app_dial"
-    else
-        log_warn "  ✗ app_dial не загружен"
-    fi
-    
-    if [ -f /etc/asterisk/asterisk.conf ]; then
-        log_success "  ✓ Конфигурация найдена"
-    fi
+    asterisk -rx "module show" 2>/dev/null | grep -q "chan_pjsip" && log_success "  ✓ chan_pjsip" || log_warn "  ✗ chan_pjsip"
+    asterisk -rx "module show" 2>/dev/null | grep -q "res_rtp_asterisk" && log_success "  ✓ res_rtp_asterisk" || log_warn "  ✗ res_rtp_asterisk"
+    asterisk -rx "module show" 2>/dev/null | grep -q "app_dial" && log_success "  ✓ app_dial" || log_warn "  ✗ app_dial"
+    [ -f /etc/asterisk/asterisk.conf ] && log_success "  ✓ Конфигурация найдена"
     
     log_success "Проверка установки завершена"
-    return 0
 }
 
 # =============================================
@@ -619,26 +498,12 @@ test_asterisk() {
         log_success "Asterisk запущен"
     else
         log_error "Asterisk не запустился"
-        log_error "Проверьте логи: journalctl -u asterisk -n 50"
-        
-        echo ""
         journalctl -u asterisk -n 20 --no-pager 2>/dev/null || true
         return 1
     fi
     
-    if asterisk -rx "pjsip show version" 2>/dev/null | grep -q "PJSIP"; then
-        log_success "PJSIP работает"
-    else
-        log_warn "PJSIP не отвечает"
-    fi
-    
-    if asterisk -rx "manager show status" 2>/dev/null | grep -q "Enabled"; then
-        log_success "AMI доступен"
-    else
-        log_warn "AMI не настроен"
-    fi
-    
-    return 0
+    asterisk -rx "pjsip show version" 2>/dev/null | grep -q "PJSIP" && log_success "PJSIP работает" || log_warn "PJSIP не отвечает"
+    asterisk -rx "manager show status" 2>/dev/null | grep -q "Enabled" && log_success "AMI доступен" || log_warn "AMI не настроен"
 }
 
 # =============================================
@@ -650,13 +515,11 @@ mark_installed() {
     cat > "$INSTALLED_MARKER" << EOF
 Asterisk installed at $(date)
 Version: $(asterisk -V 2>/dev/null | head -1)
-Source: $ASTERISK_SRC_DIR
 MAKE_JOBS: $MAKE_JOBS
 RAM: ${TOTAL_RAM}MB
 EOF
     
     chown autodialer:autodialer "$INSTALLED_MARKER" 2>/dev/null || true
-    
     log_success "Маркер установки создан: $INSTALLED_MARKER"
 }
 
@@ -669,9 +532,7 @@ print_summary() {
     echo -e "${GREEN}${BOLD}✅ Asterisk установлен успешно!${NC}"
     echo "=============================================="
     echo ""
-    
-    local asterisk_version=$(asterisk -V 2>/dev/null | head -1)
-    echo "Версия: $asterisk_version"
+    echo "Версия: $(asterisk -V 2>/dev/null | head -1)"
     echo ""
     echo "Директории:"
     echo "  • Конфиги:     /etc/asterisk"
@@ -683,15 +544,8 @@ print_summary() {
     echo "  • Запуск:      systemctl start asterisk"
     echo "  • Статус:      systemctl status asterisk"
     echo "  • Консоль:     asterisk -rvvv"
-    echo "  • Логи:        tail -f /var/log/asterisk/full"
     echo ""
-    echo "Полезные команды:"
-    echo "  • asterisk -rx 'core show version'"
-    echo "  • asterisk -rx 'module show'"
-    echo "  • asterisk -rx 'pjsip show endpoints'"
-    echo "  • asterisk -rx 'manager show status'"
-    echo ""
-    echo -e "${YELLOW}Следующий шаг: конфигурация Asterisk (03_asterisk_config.sh)${NC}"
+    echo -e "${YELLOW}Следующий шаг: конфигурация Asterisk${NC}"
     echo "=============================================="
 }
 
@@ -702,7 +556,7 @@ main() {
     echo ""
     echo "=============================================="
     echo -e "${BOLD}${BLUE}AutoDialer Ultimate - Asterisk Installation${NC}"
-    echo -e "${BOLD}${BLUE}Version: 3.0.3 (ENTERPRISE)${NC}"
+    echo -e "${BOLD}${BLUE}Version: 3.0.3${NC}"
     echo "=============================================="
     echo ""
     
@@ -718,10 +572,7 @@ main() {
     create_directories
     setup_systemd
     verify_installation
-    test_asterisk || {
-        log_error "Тестовый запуск не удался"
-        exit 1
-    }
+    test_asterisk || exit 1
     mark_installed
     print_summary
 }
