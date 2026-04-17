@@ -107,11 +107,13 @@ check_dependencies() {
 # =============================================
 load_env() {
     if [ -f "$PROJECT_ROOT/.env" ]; then
-        # Загружаем .env БЕЗ парсинга вручную
         set -a
         source "$PROJECT_ROOT/.env"
         set +a
         log_success "Конфигурация загружена из .env"
+    else
+        log_error "Файл .env не найден!"
+        exit 1
     fi
 }
 
@@ -157,14 +159,16 @@ generate_secrets() {
     
     local secrets_updated=false
     
+    # Проверяем АДМИН ПАРОЛЬ
     if [ -z "${ADMIN_PASSWORD:-}" ]; then
-        ADMIN_PASSWORD=$(openssl rand -base64 16 2>/dev/null || echo "Admin_$(date +%s)_${RANDOM}")
+        ADMIN_PASSWORD=$(openssl rand -base64 16 2>/dev/null || echo "Admin_$(date +%s)")
         echo "ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$PROJECT_ROOT/.env"
         export ADMIN_PASSWORD
         secrets_updated=true
         log_info "Сгенерирован пароль администратора"
     fi
     
+    # Проверяем МЕТРИКИ ПАРОЛЬ
     if [ -z "${METRICS_PASS:-}" ]; then
         METRICS_PASS=$(openssl rand -base64 12 2>/dev/null || echo "metrics_$(date +%s)")
         echo "METRICS_PASS=$METRICS_PASS" >> "$PROJECT_ROOT/.env"
@@ -173,7 +177,11 @@ generate_secrets() {
         log_info "Сгенерирован пароль для метрик"
     fi
     
-    [ "$secrets_updated" = true ] && log_success "Секреты сгенерированы"
+    if [ "$secrets_updated" = true ]; then
+        log_success "Секреты сгенерированы"
+    else
+        log_info "Все секреты уже заданы"
+    fi
 }
 
 # =============================================
