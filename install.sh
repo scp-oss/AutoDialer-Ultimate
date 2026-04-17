@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================
 # AutoDialer Ultimate - Промышленный установщик
-# Версия: 3.0.1 (FIXED)
+# Версия: 3.0.2 (ENTERPRISE)
 # GitHub: https://github.com/naumenis-code/AutoDialer-Ultimate
 # =============================================
 # ПОДДЕРЖИВАЕТ ТОЛЬКО: Debian 12 x86_64
@@ -62,6 +62,7 @@ SKIP_FIREWALL="${SKIP_FIREWALL:-false}"
 SKIP_TTS="${SKIP_TTS:-false}"
 SKIP_FAIL2BAN="${SKIP_FAIL2BAN:-false}"
 NON_INTERACTIVE="${NON_INTERACTIVE:-true}"
+AUTO_SWAP="${AUTO_SWAP:-true}"
 export NON_INTERACTIVE
 export DEBIAN_FRONTEND=noninteractive
 
@@ -122,6 +123,11 @@ while [[ $# -gt 0 ]]; do
             export SKIP_FAIL2BAN
             shift
             ;;
+        --no-auto-swap)
+            AUTO_SWAP=false
+            export AUTO_SWAP
+            shift
+            ;;
         --help|-h)
             cat << EOF
 Использование: sudo $0 [опции]
@@ -138,6 +144,7 @@ while [[ $# -gt 0 ]]; do
   --skip-firewall      Пропустить настройку файрвола
   --skip-tts           Пропустить установку TTS
   --skip-fail2ban      Пропустить настройку Fail2ban
+  --no-auto-swap       Не создавать swap автоматически
   --help, -h           Показать справку
 
 EOF
@@ -193,14 +200,12 @@ check_required_tools() {
         fi
     done
     
-    # nc может отсутствовать
     if ! command -v nc &>/dev/null; then
         log_warn "Утилита 'nc' не найдена, установка netcat-openbsd..."
         apt-get update -qq
         apt-get install -y -qq netcat-openbsd
     fi
     
-    # host может быть в dnsutils
     if ! command -v host &>/dev/null; then
         log_warn "Утилита 'host' не найдена, установка dnsutils..."
         apt-get update -qq
@@ -217,19 +222,117 @@ check_required_tools() {
 }
 
 # =============================================
+# 🔥 НАДЁЖНЫЙ APT С ПОВТОРНЫМИ ПОПЫТКАМИ
+# =============================================
+apt_update_with_retry() {
+    local max_attempts=5
+    local attempt=0
+    local wait_time=5
+    
+    while [ $attempt -lt $max_attempts ]; do
+        if apt-get update -y 2>/tmp/apt-error.log; then
+            log_success "apt update выполнен успешно"
+            return 0
+        fi
+        
+        attempt=$((attempt + 1))
+        
+        if [ $attempt -lt $max_attempts ]; then
+            log_warn "apt update не удался (попытка $attempt/$max_attempts)"
+            log_info "Ожидание ${wait_time}с перед повтором..."
+            
+            if [ -s /tmp/apt-error.log ]; then
+                tail -5 /tmp/apt-error.log
+            fi
+            
+            sleep $wait_time
+            wait_time=$((wait_time + 5))
+        fi
+    done
+    
+    log_error "apt update не удался после $max_attempts попыток"
+    return 1
+}
+
+apt_install_with_retry() {
+    local packages="$1"
+    local max_attempts=3
+    
+    for i in $(seq 1 $max_attempts); do
+        if apt-get install -y $packages 2>/tmp/apt-install-error.log; then
+            return 0
+        fi
+        
+        log_warn "apt install не удался (попытка $i/$max_attempts)"
+        
+        if [ $i -lt $max_attempts ]; then
+            sleep 5
+            apt_update_with_retry || true
+        fi
+    done
+    
+    log_error "Не удалось установить: $packages"
+    tail -20 /tmp/apt-install-error.log
+    return 1
+}
+
+# =============================================
+# 🔥 УМНОЕ СОЗДАНИЕ SWAP
+# =============================================
+setup_swap_if_needed() {
+    if [ "$AUTO_SWAP" != "true" ]; then
+        return 0
+    fi
+    
+    TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
+    SWAP_TOTAL=$(free -m | awk '/^Swap:/{print $2}')
+    
+    if [ "$TOTAL_RAM" -ge 4000 ] || [ "$SWAP_TOTAL" -ge 1024 ]; then
+        return 0
+    fi
+    
+    FREE_DISK=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
+    
+    if [ "${FREE_DISK:-0}" -lt 5 ]; then
+        log_warn "Недостаточно места для swap (свободно: ${FREE_DISK}GB)"
+        return 0
+    fi
+    
+    local swap_size=2
+    if [ "$FREE_DISK" -lt 10 ]; then
+        swap_size=1
+        log_info "Мало места, создаю swap 1GB"
+    fi
+    
+    if [ ! -f /swapfile ]; then
+        log_info "Создание swap файла ${swap_size}GB..."
+        fallocate -l ${swap_size}G /swapfile 2>/dev/null || \
+            dd if=/dev/zero of=/swapfile bs=1M count=$((swap_size * 1024)) 2>/dev/null
+        
+        chmod 600 /swapfile
+        mkswap /swapfile 2>/dev/null
+        swapon /swapfile 2>/dev/null
+        
+        if ! grep -q "/swapfile" /etc/fstab; then
+            echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        fi
+        
+        log_success "Swap ${swap_size}GB создан"
+    fi
+}
+
+# =============================================
 # ЖЁСТКАЯ ПРОВЕРКА ОКРУЖЕНИЯ
 # =============================================
 check_environment() {
     log_step "Проверка окружения..."
     
-    # 1. Права root
     if [ "$EUID" -ne 0 ]; then
         log_error "Требуются права root. Используйте: sudo $0"
         exit 1
     fi
     log_success "Права root"
     
-    # 2. Только Debian 12
     if [ ! -f /etc/os-release ]; then
         log_error "Не удалось определить ОС"
         exit 1
@@ -249,7 +352,6 @@ check_environment() {
     
     log_success "ОС: $PRETTY_NAME"
     
-    # 3. Только x86_64
     ARCH=$(uname -m)
     if [ "$ARCH" != "x86_64" ]; then
         log_error "Поддерживается только x86_64. Обнаружено: $ARCH"
@@ -262,23 +364,14 @@ check_environment() {
         return 0
     fi
     
-    # 4. Проверка ресурсов
     TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
     if [ "$TOTAL_RAM" -lt 2048 ]; then
         log_error "Недостаточно RAM. Требуется минимум 2GB. Обнаружено: ${TOTAL_RAM}MB"
-        log_info "Рекомендации:"
-        log_info "  1. Увеличьте RAM VPS до 4GB"
-        log_info "  2. Или создайте swap:"
-        log_info "     fallocate -l 2G /swapfile"
-        log_info "     chmod 600 /swapfile"
-        log_info "     mkswap /swapfile"
-        log_info "     swapon /swapfile"
         exit 1
     fi
     
     if [ "$TOTAL_RAM" -lt 4096 ]; then
-        log_warn "Мало RAM (${TOTAL_RAM}MB). Компиляция Asterisk будет в 1 поток."
-        log_warn "Это займёт больше времени, но предотвратит OOM."
+        log_warn "Мало RAM (${TOTAL_RAM}MB). MAKE_JOBS=1"
         export MAKE_JOBS=1
     else
         export MAKE_JOBS=$(nproc)
@@ -304,57 +397,16 @@ check_environment() {
 }
 
 # =============================================
-# 🔥 ПРОВЕРКА RAM ПЕРЕД КОМПИЛЯЦИЕЙ ASTERISK
-# =============================================
-check_asterisk_ram() {
-    if [ "$SKIP_ASTERISK" = true ]; then
-        return 0
-    fi
-    
-    TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
-    
-    if [ "$TOTAL_RAM" -lt 2048 ]; then
-        log_error "Недостаточно RAM для компиляции Asterisk"
-        log_error "Требуется минимум 2GB RAM. Обнаружено: ${TOTAL_RAM}MB"
-        log_error ""
-        log_info "Варианты:"
-        log_info "  1. Увеличьте RAM VPS до 4GB"
-        log_info "  2. Создайте swap файл (2GB):"
-        log_info "     fallocate -l 2G /swapfile"
-        log_info "     chmod 600 /swapfile"
-        log_info "     mkswap /swapfile"
-        log_info "     swapon /swapfile"
-        log_info "  3. Пропустите установку Asterisk: --skip-asterisk"
-        exit 1
-    fi
-    
-    log_info "RAM достаточно для компиляции Asterisk"
-}
+// ... продолжение ...
 
 # =============================================
-# НАДЁЖНАЯ УСТАНОВКА ПАКЕТОВ
+# Установка обязательных пакетов
 # =============================================
-apt_retry() {
-    local cmd="$1"
-    local max_attempts=3
-    
-    for i in $(seq 1 $max_attempts); do
-        if eval "$cmd" 2>/dev/null; then
-            return 0
-        fi
-        log_warn "Попытка $i не удалась, повтор через 5 секунд..."
-        sleep 5
-    done
-    
-    log_error "Ошибка выполнения после $max_attempts попыток: $cmd"
-    return 1
-}
-
 install_required_packages() {
     log_step "Установка обязательных пакетов..."
     
-    apt_retry "apt-get update -y"
-    apt_retry "apt-get install -y ca-certificates gnupg curl wget"
+    apt_update_with_retry
+    apt_install_with_retry "ca-certificates gnupg curl wget"
     
     REQUIRED_PACKAGES=(
         git curl wget unzip tar nano jq openssl sudo
@@ -372,7 +424,7 @@ install_required_packages() {
         certbot python3-certbot-nginx
     )
     
-    apt_retry "apt-get install -y ${REQUIRED_PACKAGES[*]}"
+    apt_install_with_retry "${REQUIRED_PACKAGES[*]}"
     log_success "Все пакеты установлены"
 }
 
@@ -395,12 +447,10 @@ load_env_safe() {
         fi
     fi
     
-    # Безопасная загрузка без source
     set -a
     grep -v '^#' "$SCRIPT_DIR/.env" | grep -v '^$' | xargs -d '\n' -L1 export 2>/dev/null || true
     set +a
     
-    # Установка значений по умолчанию
     export DB_NAME="${DB_NAME:-autodialer}"
     export DB_USER="${DB_USER:-autodialer}"
     export DB_HOST="${DB_HOST:-localhost}"
@@ -420,7 +470,6 @@ load_env_safe() {
     export MAX_RETRIES="${MAX_RETRIES:-3}"
     export TTS_VOICE="${TTS_VOICE:-denis}"
     
-    # Обязательные переменные
     REQUIRED_VARS=("FREEPBX_IP" "EXTENSION_PASSWORD")
     for var in "${REQUIRED_VARS[@]}"; do
         if [ -z "${!var:-}" ]; then
@@ -432,7 +481,6 @@ load_env_safe() {
     log_info "  FreePBX IP: ${FREEPBX_IP}"
     log_info "  Extension:   ${FREEPBX_EXTENSION}"
     
-    # Генерация секретов
     generate_secret() {
         local var_name="$1"
         if [ -z "${!var_name:-}" ]; then
@@ -492,6 +540,171 @@ create_user() {
 }
 
 # =============================================
+# 🔥 КОПИРОВАНИЕ ВСЕХ ФАЙЛОВ ПРОЕКТА
+# =============================================
+copy_project_files() {
+    log_step "Копирование файлов проекта..."
+    
+    # Создание директорий
+    mkdir -p /opt/autodialer
+    mkdir -p /opt/autodialer/logs
+    mkdir -p /opt/autodialer/data
+    mkdir -p /var/www/autodialer
+    mkdir -p /etc/asterisk
+    
+    # =============================================
+    # 1. КОПИРОВАНИЕ БЭКЕНДА
+    # =============================================
+    log_info "Копирование бэкенда..."
+    
+    if [ -d "$SCRIPT_DIR/app" ]; then
+        cp -r "$SCRIPT_DIR/app" /opt/autodialer/
+        log_success "  ✓ app/"
+    else
+        log_error "Директория app/ не найдена!"
+        return 1
+    fi
+    
+    if [ -d "$SCRIPT_DIR/utils" ]; then
+        cp -r "$SCRIPT_DIR/utils" /opt/autodialer/
+        log_success "  ✓ utils/"
+    fi
+    
+    if [ -d "$SCRIPT_DIR/migrations" ]; then
+        cp -r "$SCRIPT_DIR/migrations" /opt/autodialer/
+        log_success "  ✓ migrations/"
+    fi
+    
+    # Корневые файлы бэкенда
+    [ -f "$SCRIPT_DIR/main.py" ] && cp "$SCRIPT_DIR/main.py" /opt/autodialer/
+    [ -f "$SCRIPT_DIR/alembic.ini" ] && cp "$SCRIPT_DIR/alembic.ini" /opt/autodialer/
+    
+    # =============================================
+    # 2. КОПИРОВАНИЕ ФРОНТЕНДА
+    # =============================================
+    log_info "Копирование фронтенда..."
+    
+    if [ -d "$SCRIPT_DIR/frontend/dist" ]; then
+        cp -r "$SCRIPT_DIR/frontend/dist/"* /var/www/autodialer/
+        log_success "  ✓ frontend/dist/"
+    else
+        log_warn "  ⚠ frontend/dist/ не найден"
+    fi
+    
+    # =============================================
+    # 3. КОПИРОВАНИЕ КОНФИГОВ ASTERISK
+    # =============================================
+    if [ -d "$SCRIPT_DIR/asterisk" ]; then
+        cp -f "$SCRIPT_DIR/asterisk/"*.conf /etc/asterisk/ 2>/dev/null || true
+        log_success "  ✓ asterisk/*.conf"
+    fi
+    
+    # =============================================
+    // ... продолжение ...
+
+    # =============================================
+    # 4. КОПИРОВАНИЕ SQL
+    # =============================================
+    if [ -d "$SCRIPT_DIR/sql" ]; then
+        mkdir -p /opt/autodialer/sql
+        cp -r "$SCRIPT_DIR/sql/"* /opt/autodialer/sql/ 2>/dev/null || true
+        log_success "  ✓ sql/"
+    fi
+    
+    # =============================================
+    # 5. КОПИРОВАНИЕ REQUIREMENTS
+    # =============================================
+    mkdir -p /opt/autodialer/requirements
+    [ -f "$SCRIPT_DIR/requirements/base.txt" ] && cp "$SCRIPT_DIR/requirements/base.txt" /opt/autodialer/requirements/
+    [ -f "$SCRIPT_DIR/requirements/prod.txt" ] && cp "$SCRIPT_DIR/requirements/prod.txt" /opt/autodialer/requirements/
+    [ -f "$SCRIPT_DIR/requirements/dev.txt" ] && cp "$SCRIPT_DIR/requirements/dev.txt" /opt/autodialer/requirements/
+    [ -f "$SCRIPT_DIR/requirements/tts.txt" ] && cp "$SCRIPT_DIR/requirements/tts.txt" /opt/autodialer/requirements/
+    [ -f "$SCRIPT_DIR/requirements.txt" ] && cp "$SCRIPT_DIR/requirements.txt" /opt/autodialer/
+    log_success "  ✓ requirements/"
+    
+    # =============================================
+    # 6. КОПИРОВАНИЕ .env
+    # =============================================
+    if [ -f "$SCRIPT_DIR/.env" ]; then
+        cp "$SCRIPT_DIR/.env" /opt/autodialer/.env
+        chmod 600 /opt/autodialer/.env
+        log_success "  ✓ .env"
+    fi
+    
+    [ -f "$SCRIPT_DIR/.env.example" ] && cp "$SCRIPT_DIR/.env.example" /opt/autodialer/.env.example
+    
+    # =============================================
+    # 7. КОПИРОВАНИЕ СКРИПТОВ
+    # =============================================
+    if [ -d "$SCRIPT_DIR/scripts" ]; then
+        mkdir -p /opt/autodialer/scripts
+        cp -r "$SCRIPT_DIR/scripts/"*.sh /opt/autodialer/scripts/ 2>/dev/null || true
+        chmod +x /opt/autodialer/scripts/*.sh 2>/dev/null || true
+        log_success "  ✓ scripts/"
+    fi
+    
+    # =============================================
+    // ... продолжение ...
+
+    # =============================================
+    # 8. СОЗДАНИЕ ДИРЕКТОРИЙ ДЛЯ ДАННЫХ
+    # =============================================
+    mkdir -p /opt/autodialer/logs/{backend,nginx,asterisk}
+    mkdir -p /opt/autodialer/{data,uploads,recordings,backups}
+    
+    # =============================================
+    # 9. УСТАНОВКА ПРАВ
+    # =============================================
+    chown -R autodialer:autodialer /opt/autodialer
+    chown -R www-data:www-data /var/www/autodialer
+    chown -R asterisk:asterisk /etc/asterisk 2>/dev/null || true
+    
+    chmod 755 /opt/autodialer
+    chmod 755 /var/www/autodialer
+    chmod 600 /opt/autodialer/.env 2>/dev/null || true
+    
+    log_success "Копирование файлов завершено"
+}
+
+# =============================================
+# 🔥 ПРОВЕРКА ФРОНТЕНДА
+# =============================================
+verify_frontend() {
+    log_step "Проверка фронтенда..."
+    
+    local required_files=(
+        "/var/www/autodialer/index.html"
+        "/var/www/autodialer/css/style.css"
+        "/var/www/autodialer/js/app.js"
+        "/var/www/autodialer/js/utils.js"
+        "/var/www/autodialer/js/auth.js"
+        "/var/www/autodialer/js/dashboard.js"
+        "/var/www/autodialer/js/campaigns.js"
+        "/var/www/autodialer/js/contacts.js"
+        "/var/www/autodialer/js/history.js"
+        "/var/www/autodialer/js/audio.js"
+        "/var/www/autodialer/js/incoming.js"
+        "/var/www/autodialer/js/blacklist.js"
+    )
+    
+    local missing=()
+    for file in "${required_files[@]}"; do
+        if [ ! -f "$file" ]; then
+            missing+=("$file")
+        fi
+    done
+    
+    if [ ${#missing[@]} -gt 0 ]; then
+        log_warn "Отсутствуют файлы фронтенда:"
+        for f in "${missing[@]}"; do
+            echo "  - $f"
+        done
+    else
+        log_success "Фронтенд проверен (все основные файлы на месте)"
+    fi
+}
+
+# =============================================
 # ЗАПУСК СКРИПТОВ
 # =============================================
 CRITICAL_SCRIPTS=(
@@ -523,7 +736,6 @@ run_script() {
         return 0
     fi
     
-    # Проверка флагов пропуска
     if [[ "$script" == *"system"* ]] && [ "$SKIP_SYSTEM" = true ]; then
         log_warn "Пропуск $script (--skip-system)"
         return 0
@@ -603,6 +815,9 @@ run_script() {
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
                 exit 1
             fi
+        else
+            log_error "Установка прервана (неинтерактивный режим)"
+            exit 1
         fi
         
         return 1
@@ -693,17 +908,13 @@ verify_installation() {
     
     if [ "$all_ok" = true ]; then
         echo "$(date '+%Y-%m-%d %H:%M:%S')" > "$MARKER_FILE"
-        echo "Version: 3.0.1" >> "$MARKER_FILE"
+        echo "Version: 3.0.2" >> "$MARKER_FILE"
         log_success "Все проверки пройдены"
         return 0
     else
         return 1
     fi
 }
-
-# =============================================
-// ... previous code continues ...
-// Now adding the rest of the file from where it left off
 
 # =============================================
 # HTTPS (CERTBOT)
@@ -735,7 +946,75 @@ setup_https() {
 }
 
 # =============================================
-// ... continue with rest of the file ...
+# 🔥 POST-INSTALL ДИАГНОСТИКА
+# =============================================
+post_install_diagnostics() {
+    log_step "Постустановочная диагностика..."
+    
+    local report_file="/opt/autodialer/logs/post-install-$(date +%Y%m%d_%H%M%S).log"
+    mkdir -p "$(dirname "$report_file")"
+    
+    {
+        echo "=============================================="
+        echo "AutoDialer Ultimate - Post-Install Diagnostics"
+        echo "Date: $(date)"
+        echo "=============================================="
+        
+        echo ""
+        echo "=== SYSTEM INFO ==="
+        uname -a
+        cat /etc/os-release | head -3
+        
+        echo ""
+        echo "=== RESOURCES ==="
+        free -h
+        df -h
+        
+        echo ""
+        echo "=== SERVICES ==="
+        for svc in postgresql redis-server asterisk autodialer nginx; do
+            echo -n "$svc: "
+            systemctl is-active "$svc" 2>/dev/null || echo "inactive"
+        done
+        
+        echo ""
+        echo "=== API HEALTH ==="
+        curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | head -5 || echo "FAILED"
+        
+        echo ""
+        echo "=== REDIS ==="
+        redis-cli ping 2>/dev/null || echo "FAILED"
+        
+        echo ""
+        echo "=== POSTGRESQL ==="
+        pg_isready 2>/dev/null && echo "ready" || echo "FAILED"
+        
+        echo ""
+        echo "=== ASTERISK ==="
+        asterisk -rx "core show version" 2>/dev/null | head -1 || echo "FAILED"
+        
+        echo ""
+        echo "=== PJSIP REGISTRATION ==="
+        asterisk -rx "pjsip show registrations" 2>/dev/null | grep -E "Registered|No objects" || echo "No registrations"
+        
+        echo ""
+        echo "=== BACKEND LOGS (last 50) ==="
+        journalctl -u autodialer -n 50 --no-pager 2>/dev/null || echo "No logs"
+        
+    } > "$report_file"
+    
+    log_success "Диагностика сохранена: $report_file"
+    
+    echo ""
+    if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok"; then
+        log_success "✅ API работает корректно"
+    else
+        log_error "❌ API НЕ РАБОТАЕТ"
+        echo ""
+        echo "Последние ошибки бэкенда:"
+        journalctl -u autodialer -n 20 --no-pager 2>/dev/null | grep -i error || echo "Нет ошибок"
+    fi
+}
 
 # =============================================
 # СОЗДАНИЕ СКРИПТОВ УПРАВЛЕНИЯ
@@ -810,9 +1089,6 @@ EOF
 }
 
 # =============================================
-// ... continue ...
-
-# =============================================
 # ВЫВОД ИТОГОВОЙ ИНФОРМАЦИИ
 # =============================================
 print_summary() {
@@ -856,15 +1132,9 @@ print_summary() {
     echo "  • Удаление:       /opt/autodialer/uninstall.sh"
     echo ""
     echo "============================================================"
-    echo -e "${GREEN}${BOLD}✅ AutoDialer Ultimate v3.0.1 готов к работе!${NC}"
+    echo -e "${GREEN}${BOLD}✅ AutoDialer Ultimate v3.0.2 готов к работе!${NC}"
     echo "============================================================"
 }
-
-# =============================================
-// ... continue ...
-
-# =============================================
-// ... the file continues with main() function ...
 
 # =============================================
 # ГЛАВНАЯ ФУНКЦИЯ
@@ -872,25 +1142,23 @@ print_summary() {
 main() {
     echo ""
     echo "=========================================="
-    echo -e "${BOLD}${BLUE}AutoDialer Ultimate v3.0.1 - Установка${NC}"
+    echo -e "${BOLD}${BLUE}AutoDialer Ultimate v3.0.2 - Установка${NC}"
     echo "=========================================="
     echo ""
     
     check_required_tools
+    setup_swap_if_needed
     check_environment
     check_already_installed
-    
-    # 🔥 Проверка RAM перед Asterisk
-    check_asterisk_ram
-    
     install_required_packages
     load_env_safe
     create_user
     
-    # =============================================
-    // ... continue with script execution ...
+    # 🔥 1. КОПИРУЕМ ВСЕ ФАЙЛЫ
+    copy_project_files
+    verify_frontend
     
-    # Запуск скриптов установки
+    # 🔥 2. ЗАПУСКАЕМ СКРИПТЫ УСТАНОВКИ
     run_script "01_system_setup.sh" "Настройка системы и установка зависимостей"
     run_script "02_asterisk_install.sh" "Установка Asterisk 21"
     run_script "03_asterisk_config.sh" "Конфигурация Asterisk"
@@ -910,6 +1178,7 @@ main() {
     setup_https || true
     create_management_scripts
     verify_installation
+    post_install_diagnostics
     print_summary
     
     log_success "Установка завершена: $(date)"
