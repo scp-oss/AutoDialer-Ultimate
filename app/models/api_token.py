@@ -188,7 +188,7 @@ class ApiTokenListItem(BaseSchema):
     last_used_at: Optional[datetime] = Field(None, description="Последнее использование")
     last_used_ip: Optional[str] = Field(None, description="Последний IP")
     
-    usage_count: int = Field(0, description("Количество использований"))
+    usage_count: int = Field(0, description="Количество использований")
     
     created_by_name: Optional[str] = Field(None, description="Имя создателя")
     
@@ -243,7 +243,7 @@ class ApiTokenListResponse(BaseSchema):
     total: int = Field(..., description="Всего токенов")
     page: int = Field(..., description="Текущая страница")
     page_size: int = Field(..., description="Размер страницы")
-    total_pages: int = Field(..., description("Всего страниц"))
+    total_pages: int = Field(..., description="Всего страниц")
     
     summary: Dict[str, Any] = Field(default_factory=dict, description="Сводка")
 
@@ -257,7 +257,7 @@ class ApiTokenVerifyRequest(BaseSchema):
     """
     token: str = Field(..., description="API токен для проверки")
     path: Optional[str] = Field(None, description="Путь запроса")
-    method: Optional[str] = Field(None, description("HTTP метод"))
+    method: Optional[str] = Field(None, description="HTTP метод")
 
 
 class ApiTokenVerifyResponse(BaseSchema):
@@ -270,10 +270,10 @@ class ApiTokenVerifyResponse(BaseSchema):
     permissions: List[str] = Field(default_factory=list, description="Разрешения")
     
     expires_at: Optional[datetime] = Field(None, description="Дата истечения")
-    is_expired: bool = Field(False, description("Истёк"))
+    is_expired: bool = Field(False, description="Истёк")
     
     rate_limit_remaining: Optional[int] = Field(None, description="Осталось запросов")
-    rate_limit_reset: Optional[int] = Field(None, description("Сброс через (сек)"))
+    rate_limit_reset: Optional[int] = Field(None, description="Сброс через (сек)")
     
     errors: List[str] = Field(default_factory=list, description="Ошибки")
     
@@ -310,11 +310,11 @@ class ApiTokenUsageEntry(BaseSchema):
     
     method: str = Field(..., description="HTTP метод")
     path: str = Field(..., description="Путь запроса")
-    status_code: int = Field(..., description("Код ответа"))
+    status_code: int = Field(..., description="Код ответа")
     
-    duration_ms: int = Field(..., description("Длительность (мс)"))
+    duration_ms: int = Field(..., description="Длительность (мс)")
     
-    rate_limited: bool = Field(False, description("Был ли ограничен"))
+    rate_limited: bool = Field(False, description="Был ли ограничен")
 
 
 class ApiTokenUsageResponse(BaseSchema):
@@ -322,10 +322,10 @@ class ApiTokenUsageResponse(BaseSchema):
     Ответ с историей использования токена.
     """
     token_id: int = Field(..., description="ID токена")
-    items: List[ApiTokenUsageEntry] = Field(..., description("Записи использования"))
-    total: int = Field(..., description("Всего записей"))
-    page: int = Field(..., description("Текущая страница"))
-    page_size: int = Field(..., description("Размер страницы"))
+    items: List[ApiTokenUsageEntry] = Field(..., description="Записи использования")
+    total: int = Field(..., description="Всего записей")
+    page: int = Field(..., description="Текущая страница")
+    page_size: int = Field(..., description="Размер страницы")
     
     summary: Dict[str, Any] = Field(default_factory=dict, description="Сводка")
 
@@ -339,19 +339,19 @@ class ApiTokenStatsResponse(BaseSchema):
     """
     total_tokens: int = Field(0, description="Всего токенов")
     active_tokens: int = Field(0, description="Активных")
-    expired_tokens: int = Field(0, description("Истекших"))
-    revoked_tokens: int = Field(0, description("Отозванных"))
+    expired_tokens: int = Field(0, description="Истекших")
+    revoked_tokens: int = Field(0, description="Отозванных")
     
     total_requests: int = Field(0, description="Всего запросов")
-    requests_today: int = Field(0, description("Запросов сегодня"))
-    requests_this_hour: int = Field(0, description("Запросов за час"))
+    requests_today: int = Field(0, description="Запросов сегодня")
+    requests_this_hour: int = Field(0, description="Запросов за час")
     
-    avg_requests_per_token: float = Field(0.0, description("Среднее запросов на токен"))
+    avg_requests_per_token: float = Field(0.0, description="Среднее запросов на токен")
     
-    top_tokens: List[Dict[str, Any]] = Field(default_factory=list, description("Топ токенов по запросам"))
-    top_paths: List[Dict[str, Any]] = Field(default_factory=list, description("Топ путей"))
+    top_tokens: List[Dict[str, Any]] = Field(default_factory=list, description="Топ токенов по запросам")
+    top_paths: List[Dict[str, Any]] = Field(default_factory=list, description="Топ путей")
     
-    rate_limited_requests: int = Field(0, description("Ограниченных запросов"))
+    rate_limited_requests: int = Field(0, description="Ограниченных запросов")
 
 
 # =============================================
@@ -361,9 +361,9 @@ class ApiTokenRotateRequest(BaseSchema):
     """
     Запрос на ротацию API токена.
     """
-    rotate: bool = Field(True, description("Подтверждение ротации"))
-    keep_old_active: bool = Field(False, description("Оставить старый активным"))
-    old_token_expires_in: Optional[int] = Field(24, ge=1, le=168, description="Часов до истечения старого"))
+    rotate: bool = Field(True, description="Подтверждение ротации")
+    keep_old_active: bool = Field(False, description="Оставить старый активным")
+    old_token_expires_in: Optional[int] = Field(24, ge=1, le=168, description="Часов до истечения старого")
 
 
 class ApiTokenRotateResponse(BaseSchema):
@@ -415,12 +415,12 @@ class WebhookTokenCreateRequest(BaseSchema):
     name: str = Field(..., min_length=1, max_length=255, description="Название")
     description: Optional[str] = Field(None, max_length=500, description="Описание")
     
-    webhook_url: str = Field(..., description("URL вебхука"))
-    events: List[str] = Field(..., description("События для подписки"))
+    webhook_url: str = Field(..., description="URL вебхука")
+    events: List[str] = Field(..., description="События для подписки")
     
-    secret: Optional[str] = Field(None, description("Секрет для подписи"))
+    secret: Optional[str] = Field(None, description="Секрет для подписи")
     
-    expires_at: Optional[datetime] = Field(None, description("Дата истечения"))
+    expires_at: Optional[datetime] = Field(None, description="Дата истечения")
     
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Метаданные")
 
@@ -429,9 +429,9 @@ class WebhookTokenResponse(ApiTokenResponse):
     """
     Ответ с webhook токеном.
     """
-    webhook_url: str = Field(..., description("URL вебхука"))
-    events: List[str] = Field(..., description("Подписан на события"))
-    secret: Optional[str] = Field(None, description("Секрет для подписи (показывается только при создании!)"))
+    webhook_url: str = Field(..., description="URL вебхука")
+    events: List[str] = Field(..., description="Подписан на события")
+    secret: Optional[str] = Field(None, description="Секрет для подписи (показывается только при создании!)")
 
 
 # =============================================
