@@ -355,7 +355,7 @@ class UserProfileUpdateRequest(BaseSchema):
 # =============================================
 # Ответы
 # =============================================
-class UserResponse(BaseSchema, TimestampSchema):
+class UserResponse(TimestampSchema):
     """
     Ответ с информацией о пользователе.
     """
