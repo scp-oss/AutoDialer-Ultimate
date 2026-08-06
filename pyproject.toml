@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=69.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autodialer-ultimate"
+version = "3.0.0"
+description = "Enterprise-grade SIP auto dialer system with Asterisk integration"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11,<4.0"
+authors = [{ name = "AutoDialer Ultimate Contributors" }]
+keywords = [
+    "asterisk", "autodialer", "dialer", "telephony", "voip", "sip",
+    "fastapi", "call-center", "predictive-dialer", "tts", "speech-to-text",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Telecommunications Industry",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: FastAPI",
+    "Framework :: AsyncIO",
+    "Topic :: Communications :: Telephony",
+]
+
+[project.urls]
+Source = "https://github.com/scp-oss/AutoDialer-Ultimate"
+Issues = "https://github.com/scp-oss/AutoDialer-Ultimate/issues"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
