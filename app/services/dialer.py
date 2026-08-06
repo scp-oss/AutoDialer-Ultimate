@@ -32,16 +32,33 @@ from app.core.config import settings
 from app.core.logger import logger
 from app.core.database import ConnectionPool
 from app.core.redis import RedisClient, REDIS_KEYS
-from utils.rate_limiter import TokenBucket, GlobalRateLimiter, AdaptiveCPSLimiter
+from app.utils.rate_limiter import TokenBucket, GlobalRateLimiter, AdaptiveCPSLimiter
 from prometheus_client import Counter, Gauge, Histogram
+
+
+def ami_action(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Собрать AMI Action-сообщение как обычный dict.
+
+    panoramisk не предоставляет класс panoramisk.message.Action - его
+    Manager.send_action() принимает plain dict с ключом 'Action' (см.
+    panoramisk.manager.Manager.send_action). Использование несуществующего
+    panoramisk.message.Action(...) ранее приводило к AttributeError на
+    КАЖДЫЙ AMI-запрос (подписку на события, Originate, Hangup, Ping и т.д.),
+    что делало дозвон полностью нерабочим несмотря на успешное AMI-соединение.
+    """
+    action = {"Action": name}
+    if params:
+        action.update(params)
+    return action
 
 
 # =============================================
 # Метрики
 # =============================================
 active_calls_gauge = Gauge(
-    'autodialer_active_calls',
-    'Active calls count'
+    'autodialer_dialer_active_calls',
+    'Active calls count (tracked by DialerManager channel map)'
 )
 calls_initiated_counter = Counter(
     'autodialer_calls_initiated_total',
@@ -423,35 +440,49 @@ class DialerManager:
     # =============================================
     # Управление подключением
     # =============================================
-    async def connect(self) -> None:
-        """Подключиться к AMI"""
-        await self.ensure_connected()
-        
+    async def connect(self, quick: bool = False) -> None:
+        """
+        Подключиться к AMI.
+
+        Args:
+            quick: Одна попытка без ожидания вместо полного цикла из
+                max_reconnect_attempts попыток с exponential backoff
+                (до ~5.5 минут). Используется при старте приложения
+                (init_dialer), чтобы недоступный SIP/AMI-сервер не
+                блокировал запуск веб-интерфейса и REST API на несколько
+                минут - при неудаче вызывающий код уходит в фоновый
+                реконнект (см. _background_ami_reconnect).
+        """
+        await self.ensure_connected(max_attempts=1 if quick else None)
+
         # Запускаем фоновые задачи
         self._start_background_tasks()
-    
-    async def ensure_connected(self):
+
+    async def ensure_connected(self, max_attempts: Optional[int] = None):
         """Обеспечить подключение к AMI с повторными попытками"""
-        while not self.connected and self.reconnect_attempts < self.max_reconnect_attempts:
+        attempts_limit = max_attempts if max_attempts is not None else self.max_reconnect_attempts
+
+        while not self.connected and self.reconnect_attempts < attempts_limit:
             try:
                 await self.manager.connect()
                 self.connected = True
                 self.reconnect_attempts = 0
                 logger.info("✅ AMI подключён успешно")
-                
+
                 # Подписываемся на все события
                 await self.manager.send_action(
-                    panoramisk.message.Action('Events', {'EventMask': 'on'})
+                    ami_action('Events', {'EventMask': 'on'})
                 )
-                
+
             except Exception as e:
                 self.reconnect_attempts += 1
                 wait_time = min(2 ** self.reconnect_attempts, 60)
                 logger.warning(
-                    f"Ошибка подключения к AMI (попытка {self.reconnect_attempts}/{self.max_reconnect_attempts}): {e}"
+                    f"Ошибка подключения к AMI (попытка {self.reconnect_attempts}/{attempts_limit}): {e}"
                 )
-                await asyncio.sleep(wait_time)
-        
+                if self.reconnect_attempts < attempts_limit:
+                    await asyncio.sleep(wait_time)
+
         if not self.connected:
             raise AMIConnectionError("Не удалось подключиться к AMI")
     
@@ -517,7 +548,7 @@ class DialerManager:
                 continue
             
             try:
-                action = panoramisk.message.Action('Ping')
+                action = ami_action('Ping')
                 response = await asyncio.wait_for(
                     self.manager.send_action(action),
                     timeout=5.0
@@ -567,7 +598,7 @@ class DialerManager:
             return
         
         try:
-            action = panoramisk.message.Action('CoreShowChannels')
+            action = ami_action('CoreShowChannels')
             response = await asyncio.wait_for(
                 self.manager.send_action(action),
                 timeout=10.0
@@ -863,7 +894,7 @@ class DialerManager:
         slot_reserved = True
         await self._transition_state(action_id, CallState.RESERVED)
         
-        # Создаём контекст звонка
+        # Создаᑑм контекст звонка
         ctx = CallContext(
             action_id=action_id,
             campaign_id=campaign_id,
@@ -905,7 +936,7 @@ class DialerManager:
             
             channel = f'Local/{normalized}@dialer_bridge/n'
             
-            action = panoramisk.message.Action('Originate', {
+            action = ami_action('Originate', {
                 'Channel': channel,
                 'Async': 'true',
                 'Timeout': str(timeout_ms),
@@ -1475,7 +1506,7 @@ class DialerManager:
                     else:
                         try:
                             await self.manager.send_action(
-                                panoramisk.message.Action('Hangup', {'Channel': channel})
+                                ami_action('Hangup', {'Channel': channel})
                             )
                         except Exception as e:
                             logger.error(f"Ошибка Hangup: {e}")
@@ -1492,7 +1523,7 @@ class DialerManager:
             return False
         
         try:
-            action = panoramisk.message.Action('CoreShowChannel', {'Channel': channel})
+            action = ami_action('CoreShowChannel', {'Channel': channel})
             response = await asyncio.wait_for(
                 self.manager.send_action(action),
                 timeout=2.0
@@ -1635,7 +1666,7 @@ class DialerManager:
         for unique_id, channel in list(self.channel_map.items()):
             try:
                 if self.connected:
-                    action = panoramisk.message.Action('Hangup', {'Channel': channel})
+                    action = ami_action('Hangup', {'Channel': channel})
                     await self.manager.send_action(action)
                     killed += 1
                     logger.info(f"Принудительно завершён звонок: {unique_id} на {channel}")
@@ -1645,7 +1676,7 @@ class DialerManager:
         # Очистка состояния
         await self.redis.delete(self.active_channels_key)
         await self.redis.delete(self.active_channels_ts_key)
-        await self.redis.delete(self.channels_hash_key)
+        await self.redis.delete(self.call_state_key)
         await self.redis.set(REDIS_KEYS.ACTIVE_CALLS, "0")
         
         self.channel_map.clear()
@@ -1793,15 +1824,43 @@ async def init_dialer(
     redis_client: RedisClient,
     call_result_service=None
 ) -> DialerManager:
-    """Инициализировать DialerManager"""
+    """
+    Инициализировать DialerManager.
+
+    Недоступность SIP/AMI-сервера при старте приложения НЕ должна ронять
+    весь бэкенд (веб-интерфейс, REST API и настройки должны оставаться
+    доступны, чтобы оператор мог сконфигурировать/поменять SIP-подключение).
+    Поэтому при неудаче первого подключения DialerManager всё равно
+    возвращается (в отключённом состоянии), а переподключение продолжается
+    в фоне.
+    """
     global _dialer_manager, _dialer_service
-    
+
     _dialer_manager = DialerManager(db_pool, redis_client, call_result_service)
-    await _dialer_manager.connect()
-    
     _dialer_service = DialerService(_dialer_manager)
-    
+
+    try:
+        await _dialer_manager.connect(quick=True)
+    except AMIConnectionError as e:
+        logger.warning(
+            f"⚠️ AMI недоступен при старте ({e}), система продолжит работу в "
+            f"режиме Offline и будет переподключаться в фоне"
+        )
+        asyncio.create_task(_background_ami_reconnect(_dialer_manager))
+
     return _dialer_manager
+
+
+async def _background_ami_reconnect(dialer_manager: "DialerManager", interval: int = 30) -> None:
+    """Периодически пытается подключиться к AMI после неудачного старта"""
+    while not dialer_manager.connected:
+        await asyncio.sleep(interval)
+        try:
+            dialer_manager.reconnect_attempts = 0
+            await dialer_manager.connect()
+            logger.info("✅ AMI подключён (фоновое переподключение)")
+        except AMIConnectionError:
+            logger.debug(f"AMI всё ещё недоступен, следующая попытка через {interval}с")
 
 
 async def close_dialer():
