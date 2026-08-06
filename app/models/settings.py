@@ -363,7 +363,7 @@ class SettingsProfileUpdate(BaseSchema):
     is_default: Optional[bool] = Field(None, description="Профиль по умолчанию")
 
 
-class SettingsProfileResponse(BaseSchema, TimestampSchema):
+class SettingsProfileResponse(TimestampSchema):
     """
     Ответ с информацией о профиле настроек.
     """
