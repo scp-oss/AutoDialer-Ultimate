@@ -215,7 +215,7 @@ def create_app() -> FastAPI:
         error_log_file=str(settings.LOG_ERROR_FILE)
     )
     
-    # Создаём приложение
+    # Создаᑑм приложение
     _app = FastAPI(
         title="AutoDialer Ultimate API",
         version=__version__,
@@ -277,23 +277,10 @@ def create_app() -> FastAPI:
     if static_dir.exists():
         _app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
     
-    # Health check
-    @_app.get("/api/health", tags=["Health"])
-    async def health_check():
-        """Проверка здоровья приложения"""
-        from app.services import get_system_service
-        
-        try:
-            system_service = get_system_service()
-            return await system_service.health_check()
-        except RuntimeError:
-            # Сервисы ещё не инициализированы
-            return {
-                "status": "starting",
-                "version": __version__,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-    
+    # Health check реализован в app.api.health (роутер /api/health,
+    # /api/health/live, /api/health/ready) — единственный источник истины,
+    # чтобы не дублировать OpenAPI operation id.
+
     # Метрики Prometheus
     if settings.METRICS_ENABLED:
         @_app.get(settings.METRICS_PATH, tags=["Metrics"])
@@ -379,14 +366,27 @@ async def lifespan(app: FastAPI):
         # 6. Запуск системного сервиса
         system_service = get_system_service()
         await system_service.start()
-        
-        # 7. Регистрация обработчиков сигналов
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(
-                sig,
-                lambda s=sig: asyncio.create_task(shutdown_handler(s))
-            )
+
+        # 6.5 Запуск фоновых воркеров (retry queue, транскрибация, health
+        # monitor, очистка и т.д.) — без этого вызова app/workers/*.py
+        # никогда не выполняются несмотря на регистрацию в create_app()
+        from app.workers import start_all_workers
+        await start_all_workers()
+
+        # 7. Регистрация обработчиков сигналов (доп. к graceful shutdown,
+        # который uvicorn/gunicorn уже выполняют через ASGI lifespan).
+        # add_signal_handler требует основного потока основного интерпретатора
+        # и падает в тестовом окружении (Starlette TestClient гоняет lifespan
+        # в отдельном потоке) - это не должно ронять старт приложения.
+        try:
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(
+                    sig,
+                    lambda s=sig: asyncio.create_task(shutdown_handler(s))
+                )
+        except (NotImplementedError, RuntimeError) as e:
+            logger.debug(f"Регистрация обработчиков сигналов пропущена: {e}")
         
         _app_state['initialized'] = True
         
@@ -427,13 +427,20 @@ async def shutdown_handler(sig=None):
         logger.info(f"Получен сигнал: {sig.name}")
     
     try:
+        # 0. Останавливаем фоновые воркеры
+        try:
+            from app.workers import stop_all_workers
+            await stop_all_workers()
+        except Exception as e:
+            logger.warning(f"Ошибка остановки воркеров: {e}")
+
         # 1. Останавливаем системный сервис
         try:
             system_service = get_system_service()
             await system_service.stop()
         except Exception as e:
             logger.warning(f"Ошибка остановки SystemService: {e}")
-        
+
         # 2. Отключаем систему
         if _app_state.get('redis_client'):
             await _app_state['redis_client'].set(REDIS_KEYS.SYSTEM_ENABLED, "false")
@@ -478,7 +485,7 @@ async def shutdown_handler(sig=None):
 def get_app() -> FastAPI:
     """
     Получить экземпляр приложения.
-    Создаёт приложение если оно ещё не создано.
+    Создаᑑт приложение если оно ещё не создано.
     
     Returns:
         Экземпляр FastAPI

@@ -5,6 +5,8 @@
 Health check и метрики
 """
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
@@ -15,10 +17,14 @@ from app.models.system import HealthCheckResponse
 router = APIRouter()
 
 
-@router.get("/health", response_model=HealthCheckResponse)
+@router.get("/health", response_model=None)
 async def health_check():
     """Проверка здоровья системы"""
-    system_service = get_system_service()
+    try:
+        system_service = get_system_service()
+    except RuntimeError:
+        # Сервисы ещё не инициализированы (узкое окно во время старта)
+        return {"status": "starting", "timestamp": datetime.utcnow().isoformat()}
     return await system_service.health_check()
 
 
