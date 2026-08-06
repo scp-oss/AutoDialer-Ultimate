@@ -1,9 +1,0 @@
-# =============================================
-# AutoDialer Ultimate - Production Requirements
-# =============================================
-
-# Include base requirements
--r base.txt
-
-# Production-specific packages
-# (none currently, all in base)
