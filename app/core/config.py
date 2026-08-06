@@ -7,7 +7,7 @@
 Централизованное управление всеми настройками через Pydantic Settings.
 Поддерживает загрузку из .env файла и переменных окружения.
 
-ИСПОЛЬЗОВАНИЕ:
+ISPOL'ZOVANIE:
     from app.core.config import settings
     
     db_host = settings.DB_HOST
@@ -89,7 +89,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        env_prefix="AUTODIALER_",
+        # Без префикса: имена полей ниже (DB_HOST, REDIS_HOST, AMI_PASSWORD,
+        # JWT_SECRET и т.д.) - это и есть имена переменных окружения,
+        # как задокументировано в .env.example и используется в
+        # docker-compose.yml / install.sh / scripts/*.sh.
         case_sensitive=True,
         extra="ignore",
         validate_default=True,
@@ -279,7 +282,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str = Field(
         "change-me-in-production-please-use-strong-secret-key",
         description="Секретный ключ для JWT",
-        min_length=32
+        min_length=32,
+        validation_alias="JWT_SECRET",
     )
     ALGORITHM: Literal["HS256", "HS384", "HS512", "RS256"] = Field(
         "HS256", 
@@ -455,7 +459,7 @@ class Settings(BaseSettings):
             import warnings
             warnings.warn(
                 "⚠️ ВНИМАНИЕ: Используется SECRET_KEY по умолчанию в production! "
-                "Установите AUTODIALER_SECRET_KEY в .env файле.",
+                "Установите JWT_SECRET в .env файле.",
                 RuntimeWarning
             )
         return self
