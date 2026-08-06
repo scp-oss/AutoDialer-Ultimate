@@ -35,7 +35,7 @@ import bcrypt
 from jose import jwt, JWTError, ExpiredSignatureError
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from app.core.config import settings
 from app.core.logger import logger
@@ -268,7 +268,7 @@ def create_token(
         "aud": "autodialer-api",
     })
     
-    # Создаём токен
+    # Создаᑑм токен
     encoded_jwt = jwt.encode(
         to_encode,
         settings.SECRET_KEY,
@@ -308,6 +308,8 @@ def decode_token(token: str, verify_exp: bool = True) -> Dict[str, Any]:
             token,
             settings.SECRET_KEY,
             algorithms=[settings.ALGORITHM],
+            audience="autodialer-api",
+            issuer="autodialer",
             options={"verify_exp": verify_exp}
         )
         return payload
@@ -594,7 +596,7 @@ class DataEncryption:
     @staticmethod
     def _derive_key(secret: str) -> bytes:
         """Получить ключ шифрования из секрета"""
-        kdf = PBKDF2(
+        kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=b"autodialer_salt",
