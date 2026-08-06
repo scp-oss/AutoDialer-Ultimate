@@ -318,7 +318,7 @@ class ContactBulkImportRequest(BaseSchema):
 # =============================================
 # Ответы для контактов
 # =============================================
-class ContactResponse(BaseSchema, TimestampSchema):
+class ContactResponse(TimestampSchema):
     """
     Ответ с информацией о контакте.
     """
@@ -489,7 +489,7 @@ class ContactGroupUpdateRequest(BaseSchema):
     is_public: Optional[bool] = Field(None, description="Публичная группа")
 
 
-class ContactGroupResponse(BaseSchema, TimestampSchema):
+class ContactGroupResponse(TimestampSchema):
     """
     Ответ с информацией о группе контактов.
     """

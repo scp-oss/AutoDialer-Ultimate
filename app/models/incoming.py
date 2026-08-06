@@ -55,7 +55,7 @@ def normalize_phone(phone: str) -> str:
     """Нормализация номера телефона"""
     if not phone:
         return ""
-    digits = re.sub(r'[^\d]', phone)
+    digits = re.sub(r'[^\d]', '', phone)
     
     if len(digits) == 11 and digits.startswith('8'):
         digits = '7' + digits[1:]
@@ -179,7 +179,7 @@ class IncomingCallTranscribeRequest(BaseSchema):
 # =============================================
 # Ответы
 # =============================================
-class IncomingCallResponse(BaseSchema, TimestampSchema):
+class IncomingCallResponse(TimestampSchema):
     """
     Ответ с информацией о входящем звонке.
     """

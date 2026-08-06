@@ -353,7 +353,7 @@ class CampaignStopRequest(BaseSchema):
 # =============================================
 # Ответы
 # =============================================
-class CampaignResponse(BaseSchema, TimestampSchema):
+class CampaignResponse(TimestampSchema):
     """
     Ответ с информацией о кампании.
     """

@@ -11,10 +11,11 @@ AutoDialer Ultimate v3.0.0
 - Фильтрации истории
 """
 
+import datetime as dt
 from datetime import datetime, date
 from typing import Optional, List, Dict, Any
 from enum import Enum
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.models.common import BaseSchema, TimestampSchema
 
@@ -173,7 +174,7 @@ class CallHistoryFilterRequest(BaseSchema):
 # =============================================
 # Ответы
 # =============================================
-class CallResultResponse(BaseSchema, TimestampSchema):
+class CallResultResponse(TimestampSchema):
     """
     Ответ с информацией о результате звонка.
     """
@@ -359,7 +360,7 @@ class DailyCallStatsResponse(BaseSchema):
     """
     Дневная статистика звонков.
     """
-    date: date = Field(..., description="Дата")
+    date: dt.date = Field(..., description="Дата")
     total: int = Field(0, description="Всего звонков")
     agreed: int = Field(0, description="Согласились")
     declined: int = Field(0, description="Отказались")
