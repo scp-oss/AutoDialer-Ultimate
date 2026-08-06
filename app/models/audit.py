@@ -145,7 +145,7 @@ class AuditSeverity(str, Enum):
 # =============================================
 # Запись аудита
 # =============================================
-class AuditLogResponse(BaseSchema, TimestampSchema):
+class AuditLogResponse(TimestampSchema):
     """
     Ответ с записью аудита.
     """

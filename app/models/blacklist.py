@@ -170,7 +170,7 @@ class BlacklistBulkAddRequest(BaseSchema):
 # =============================================
 # Ответы
 # =============================================
-class BlacklistResponse(BaseSchema, TimestampSchema):
+class BlacklistResponse(TimestampSchema):
     """
     Ответ с информацией о записи в чёрном списке.
     """
