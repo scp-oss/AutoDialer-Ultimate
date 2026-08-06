@@ -97,7 +97,7 @@ from app.models.campaign import (
     # Запросы
     CampaignCreateRequest,
     CampaignUpdateRequest,
-    CampaignScheduleRequest,
+    CampaignScheduleSchema,
     
     # Стратегия повторных звонков
     RetryStrategySchema,
@@ -183,7 +183,7 @@ from app.models.audio import (
     
     # TTS
     TTSVoice,
-    TTSGenerateRequest,
+    TTSPreviewRequest,
 )
 
 # =============================================
@@ -317,12 +317,8 @@ from app.models.task import (
 # =============================================
 from typing import Union, TypeVar, Generic, Optional, List, Dict, Any
 
-# Дженерик для пагинированных ответов
-T = TypeVar('T')
-
-class PaginatedResponseOf(Generic[T], PaginatedResponse):
-    """Типизированный пагинированный ответ"""
-    items: List[T]
+# PaginatedResponse (app.models.common) уже является Generic[T] и
+# параметризуется напрямую: PaginatedResponse[ContactResponse] и т.д.
 
 
 # =============================================
@@ -373,7 +369,7 @@ __all__ = [
     "ScheduleType",
     "CampaignCreateRequest",
     "CampaignUpdateRequest",
-    "CampaignScheduleRequest",
+    "CampaignScheduleSchema",
     "RetryStrategySchema",
     "CampaignResponse",
     "CampaignDetailResponse",
@@ -420,8 +416,8 @@ __all__ = [
     "AudioListResponse",
     "AudioGenerateResponse",
     "TTSVoice",
-    "TTSGenerateRequest",
-    
+    "TTSPreviewRequest",
+
     # Чёрный список
     "BlacklistAddRequest",
     "BlacklistCheckRequest",
@@ -479,9 +475,6 @@ __all__ = [
     "TaskResponse",
     "TaskListResponse",
     "TaskStatsResponse",
-    
-    # Дженерики
-    "PaginatedResponseOf",
 ]
 
 
@@ -656,5 +649,4 @@ SECURE_MODEL_CONFIG = ConfigDict(
 API_RESPONSE_CONFIG = ConfigDict(
     **DEFAULT_MODEL_CONFIG,
     alias_generator=to_camel_case,
-    populate_by_name=True,
 )
