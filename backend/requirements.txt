@@ -1,8 +1,0 @@
-# =============================================
-# AutoDialer Ultimate - Requirements
-# =============================================
-# For production: pip install -r requirements.txt
-# For development: pip install -r requirements/dev.txt
-# For TTS support: pip install -r requirements/tts.txt
-
--r requirements/prod.txt
