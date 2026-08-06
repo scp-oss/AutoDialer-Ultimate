@@ -74,7 +74,7 @@ from app.api import users
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 
 # Настройки
-from app.api import settings_router
+from app.api import settings as settings_router
 api_router.include_router(settings_router.router, prefix="/settings", tags=["Settings"])
 
 # Аудит (admin only)
@@ -85,8 +85,9 @@ api_router.include_router(audit.router, prefix="/audit", tags=["Audit"])
 from app.api import incoming
 api_router.include_router(incoming.router, prefix="/incoming-calls", tags=["Incoming Calls"])
 
-# WebSocket (подключается отдельно в main.py)
-# from app.api import websocket
+# WebSocket (дашборд в реальном времени)
+from app.api import websocket
+api_router.include_router(websocket.router, prefix="/ws", tags=["WebSocket"])
 
 
 # =============================================

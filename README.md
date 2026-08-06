@@ -1,6 +1,6 @@
 # AutoDialer Ultimate v3.0
 
-Enterprise-grade автоматический обзвонщик на базе Asterisk + FastAPI + React.
+Enterprise-grade автоматический обзвонщик на базе Asterisk + FastAPI.
 
 ## 📋 Содержание
 
@@ -23,7 +23,7 @@ Enterprise-grade автоматический обзвонщик на базе A
 - **Интеллектуальные повторы** — настраиваемые стратегии для BUSY, NOANSWER, FAILED
 - **TTS (Text-to-Speech)** — генерация голосовых сообщений через Piper (русские голоса)
 - **IVR с DTMF** — обработка нажатий клавиш (1-согласие, 2-отказ, 3-повтор, 4-оператор)
-- **Web-интерфейс** — современная админ-панель на React
+- **Web-интерфейс** — админ-панель (vanilla JS/HTML/CSS, без сборки; миграция на React — см. ROADMAP.md)
 - **REST API** — полный доступ через FastAPI
 - **Мульти-пользовательский режим** — роли admin/operator/viewer
 - **Real-time мониторинг** — WebSocket для live-статистики
@@ -369,11 +369,13 @@ autodialer-ultimate/
 ├── .gitignore                      # Игнорируемые файлы
 ├── LICENSE                         # MIT License
 ├── README.md                       # Этот файл
+├── ROADMAP.md                      # Статус проекта и план дальнейшей разработки
 ├── install.sh                      # Главный установщик
 ├── uninstall.sh                    # Скрипт удаления
 ├── docker-compose.yml              # Docker Compose
-├── Dockerfile.backend              # Dockerfile бэкенда
-├── setup.py                        # Установка Python пакета
+├── Dockerfile                      # Dockerfile бэкенда
+├── pyproject.toml                  # Метаданные Python-пакета
+├── alembic.ini, alembic/           # Миграции БД
 ├── scripts/                        # Скрипты установки (14 шт)
 │   ├── 01_system_setup.sh
 │   ├── 02_asterisk_install.sh
@@ -389,24 +391,21 @@ autodialer-ultimate/
 │   ├── 12_start_services.sh
 │   ├── 13_fail2ban_setup.sh
 │   └── 14_logrotate_setup.sh
-├── backend/                        # Python бэкенд (13 файлов)
-│   ├── __init__.py
-│   ├── requirements.txt
-│   ├── main.py
-│   ├── logger.py
-│   ├── auth.py
-│   ├── models.py
-│   ├── schemas.py
-│   ├── database.py
-│   ├── circuit_breaker.py
-│   ├── rate_limiter.py
-│   ├── leader_election.py
-│   ├── task_registry.py
-│   └── ami_manager.py
-├── frontend/dist/                  # React фронтенд (собранный)
+├── app/                             # Python-бэкенд (FastAPI) — единственное ядро приложения
+│   ├── main.py                     # Точка входа (uvicorn app.main:app)
+│   ├── core/                       # config, logger, database, redis, security, dependencies
+│   ├── models/                     # Pydantic-схемы запросов/ответов
+│   ├── api/                        # REST-роутеры (по одному на домен) + WebSocket
+│   ├── services/                   # Бизнес-логика (кампании, дозвон, TTS, STT, ...)
+│   ├── workers/                    # Фоновые asyncio-задачи (retry, transcription, health)
+│   ├── utils/                      # AMI/rate limiter/circuit breaker/leader election
+│   └── requirements/                # base.txt, dev.txt, prod.txt, tts.txt, stt.txt
+├── docker/                          # Dockerfile + entrypoint для Asterisk-образа
+├── tests/                          # pytest набор (boot/security/health/websocket/dialer)
+├── frontend/dist/                  # Веб-интерфейс (vanilla JS, без сборки)
 │   ├── index.html
-│   ├── style.css
-│   └── app.js
+│   ├── css/style.css
+│   └── js/*.js
 ├── asterisk/                       # Конфиги Asterisk (9 файлов)
 │   ├── asterisk.conf
 │   ├── rtp.conf
@@ -425,13 +424,7 @@ autodialer-ultimate/
 │   └── autodialer.conf
 ├── sql/                            # База данных
 │   ├── schema.sql                  # Полная схема (23 таблицы)
-│   └── migrations/                 # Миграции (6 файлов)
-│       ├── 001_initial.sql
-│       ├── 002_add_indexes.sql
-│       ├── 003_add_triggers.sql
-│       ├── 004_add_webhooks.sql
-│       ├── 005_add_views.sql
-│       └── 006_add_versioning.sql
+│   └── migrations/                 # Историческая последовательность (уже в schema.sql)
 ├── fail2ban/                       # Fail2ban конфиги
 │   ├── jail.local
 │   └── filter.d/
@@ -439,14 +432,8 @@ autodialer-ultimate/
 ├── logrotate/                      # Logrotate конфиг
 │   └── autodialer
 ├── docs/                           # Документация
-│   ├── INSTALL.md
-│   ├── CONFIGURATION.md
-│   ├── API.md
-│   └── FAQ.md
-├── .github/workflows/              # GitHub Actions
-│   └── tests.yml
-└── requirements/                   # Dev зависимости
-    └── dev.txt
+└── .github/workflows/              # GitHub Actions
+    └── tests.yml
 ```
 🔧 Удаление
 ```bash
