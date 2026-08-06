@@ -51,6 +51,7 @@ from app.services.campaign import (
     CampaignService,
     CampaignError,
     get_campaign_service,
+    set_campaign_service,
 )
 
 
@@ -63,16 +64,19 @@ from app.services.contact import (
     ContactError,
     get_contact_service,
     get_contact_group_service,
+    set_contact_service,
+    set_contact_group_service,
 )
 
 
 # =============================================
 # Сервис звонков
 # =============================================
-from app.services.call import (
-    CallService,
+from app.services.call_result import (
+    CallResultService,
     CallError,
     get_call_service,
+    set_call_service,
 )
 
 
@@ -85,6 +89,8 @@ from app.services.audio import (
     AudioError,
     get_audio_service,
     get_tts_service,
+    set_audio_service,
+    set_tts_service,
 )
 
 
@@ -107,6 +113,7 @@ from app.services.system import (
     SystemService,
     SystemError,
     get_system_service,
+    set_system_service,
 )
 
 
@@ -117,6 +124,7 @@ from app.services.blacklist import (
     BlacklistService,
     BlacklistError,
     get_blacklist_service,
+    set_blacklist_service,
 )
 
 
@@ -129,6 +137,8 @@ from app.services.user import (
     UserError,
     get_user_service,
     get_auth_service,
+    set_user_service,
+    set_auth_service,
 )
 
 
@@ -139,6 +149,7 @@ from app.services.settings import (
     SettingsService,
     SettingsError,
     get_settings_service,
+    set_settings_service,
 )
 
 
@@ -149,6 +160,7 @@ from app.services.audit import (
     AuditService,
     AuditError,
     get_audit_service,
+    set_audit_service,
 )
 
 
@@ -159,6 +171,7 @@ from app.services.stats import (
     StatsService,
     StatsError,
     get_stats_service,
+    set_stats_service,
 )
 
 
@@ -169,6 +182,7 @@ from app.services.incoming import (
     IncomingCallService,
     IncomingCallError,
     get_incoming_call_service,
+    set_incoming_call_service,
 )
 
 
@@ -179,6 +193,7 @@ from app.services.websocket import (
     WebSocketService,
     WebSocketError,
     get_websocket_service,
+    set_websocket_service,
 )
 
 
@@ -189,6 +204,7 @@ from app.services.notification import (
     NotificationService,
     NotificationError,
     get_notification_service,
+    set_notification_service,
 )
 
 
@@ -302,50 +318,92 @@ async def init_services(
         ServiceRegistry с зарегистрированными сервисами
     """
     logger.info("Инициализация сервисов...")
-    
+
+    # Каждый сервис одновременно регистрируется в ServiceRegistry (для
+    # health_check/shutdown_all) и устанавливается как модульный singleton
+    # через set_X_service(), поскольку API-роутеры получают сервисы через
+    # свободные функции get_X_service(), а не через реестр напрямую.
+
     # Базовые сервисы
-    service_registry.register("system", SystemService(db_pool, redis_client))
-    service_registry.register("settings", SettingsService(db_pool, redis_client))
-    
+    system_service = SystemService(db_pool, redis_client, dialer_manager, transcription_service)
+    service_registry.register("system", system_service)
+    set_system_service(system_service)
+
+    settings_service = SettingsService(db_pool, redis_client)
+    service_registry.register("settings", settings_service)
+    set_settings_service(settings_service)
+
     # Сервисы пользователей и аутентификации
-    service_registry.register("user", UserService(db_pool, redis_client))
-    service_registry.register("auth", AuthService(db_pool, redis_client))
-    
+    user_service = UserService(db_pool, redis_client)
+    service_registry.register("user", user_service)
+    set_user_service(user_service)
+
+    auth_service = AuthService(db_pool, redis_client)
+    service_registry.register("auth", auth_service)
+    set_auth_service(auth_service)
+
     # Сервисы кампаний и контактов
-    service_registry.register("campaign", CampaignService(db_pool, redis_client, dialer_manager))
-    service_registry.register("contact", ContactService(db_pool, redis_client))
-    service_registry.register("contact_group", ContactGroupService(db_pool, redis_client))
-    
+    campaign_service = CampaignService(db_pool, redis_client, dialer_manager)
+    service_registry.register("campaign", campaign_service)
+    set_campaign_service(campaign_service)
+
+    contact_service = ContactService(db_pool, redis_client)
+    service_registry.register("contact", contact_service)
+    set_contact_service(contact_service)
+
+    contact_group_service = ContactGroupService(db_pool, redis_client)
+    service_registry.register("contact_group", contact_group_service)
+    set_contact_group_service(contact_group_service)
+
     # Сервисы звонков
-    service_registry.register("call", CallService(db_pool, redis_client))
-    
+    call_service = CallResultService(db_pool, redis_client)
+    service_registry.register("call", call_service)
+    set_call_service(call_service)
+
     # Сервисы аудио и TTS
-    service_registry.register("audio", AudioService(db_pool, redis_client))
-    service_registry.register("tts", TTSService(db_pool, redis_client))
-    
+    audio_service = AudioService(db_pool, redis_client)
+    service_registry.register("audio", audio_service)
+    set_audio_service(audio_service)
+
+    tts_service = TTSService(db_pool, redis_client)
+    service_registry.register("tts", tts_service)
+    set_tts_service(tts_service)
+
     # Сервис чёрного списка
-    service_registry.register("blacklist", BlacklistService(db_pool, redis_client))
-    
+    blacklist_service = BlacklistService(db_pool, redis_client)
+    service_registry.register("blacklist", blacklist_service)
+    set_blacklist_service(blacklist_service)
+
     # Сервис входящих звонков
-    service_registry.register(
-        "incoming_call",
-        IncomingCallService(db_pool, redis_client, transcription_service)
-    )
-    
+    incoming_call_service = IncomingCallService(db_pool, redis_client, transcription_service)
+    service_registry.register("incoming_call", incoming_call_service)
+    set_incoming_call_service(incoming_call_service)
+
     # Сервисы аудита и статистики
-    service_registry.register("audit", AuditService(db_pool))
-    service_registry.register("stats", StatsService(db_pool, redis_client))
-    
+    audit_service = AuditService(db_pool)
+    service_registry.register("audit", audit_service)
+    set_audit_service(audit_service)
+
+    stats_service = StatsService(db_pool, redis_client)
+    service_registry.register("stats", stats_service)
+    set_stats_service(stats_service)
+
     # Сервисы WebSocket и уведомлений
-    service_registry.register("websocket", WebSocketService(redis_client))
-    service_registry.register("notification", NotificationService(db_pool, redis_client))
-    
+    websocket_service = WebSocketService(redis_client)
+    await websocket_service.start()
+    service_registry.register("websocket", websocket_service)
+    set_websocket_service(websocket_service)
+
+    notification_service = NotificationService(db_pool, redis_client)
+    service_registry.register("notification", notification_service)
+    set_notification_service(notification_service)
+
     # Если есть dialer_manager, регистрируем DialerService
     if dialer_manager:
         service_registry.register("dialer", DialerService(dialer_manager))
-    
+
     logger.info(f"Инициализировано {len(service_registry.list_services())} сервисов")
-    
+
     return service_registry
 
 
@@ -398,7 +456,7 @@ __all__ = [
     "get_contact_group_service",
     
     # Call
-    "CallService",
+    "CallResultService",
     "CallError",
     "get_call_service",
     
