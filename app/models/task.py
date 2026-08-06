@@ -212,7 +212,7 @@ class TaskFilterRequest(BaseSchema):
 # =============================================
 # Ответы
 # =============================================
-class TaskResponse(BaseSchema, TimestampSchema):
+class TaskResponse(TimestampSchema):
     """
     Ответ с информацией о задаче.
     """
@@ -337,9 +337,9 @@ class QueueInfo(BaseSchema):
     size: int = Field(0, description="Размер очереди")
     active: int = Field(0, description="Активных задач")
     completed: int = Field(0, description="Завершено")
-    failed: int = Field(0, description("С ошибкой"))
+    failed: int = Field(0, description="С ошибкой")
     avg_wait_time: float = Field(0.0, description="Среднее ожидание (сек)")
-    throughput: float = Field(0.0, description("Пропускная способность (задач/мин)")
+    throughput: float = Field(0.0, description="Пропускная способность (задач/мин)")
 
 
 class QueuesStatusResponse(BaseSchema):
@@ -347,9 +347,9 @@ class QueuesStatusResponse(BaseSchema):
     Статус всех очередей задач.
     """
     queues: List[QueueInfo] = Field(..., description="Очереди")
-    total_pending: int = Field(0, description("Всего ожидает"))
-    total_active: int = Field(0, description("Всего активно"))
-    workers: int = Field(0, description("Количество воркеров"))
+    total_pending: int = Field(0, description="Всего ожидает")
+    total_active: int = Field(0, description="Всего активно")
+    workers: int = Field(0, description="Количество воркеров")
 
 
 class QueueTaskResponse(BaseSchema):
@@ -357,12 +357,12 @@ class QueueTaskResponse(BaseSchema):
     Задача в очереди.
     """
     task_id: str = Field(..., description="ID задачи")
-    task_name: str = Field(..., description("Название задачи"))
-    queue_name: str = Field(..., description("Имя очереди"))
-    position: int = Field(..., description("Позиция в очереди"))
-    priority: TaskPriority = Field(..., description("Приоритет"))
-    queued_at: datetime = Field(..., description("Время постановки"))
-    estimated_start: Optional[datetime] = Field(None, description="Примерное время старта"))
+    task_name: str = Field(..., description="Название задачи")
+    queue_name: str = Field(..., description="Имя очереди")
+    position: int = Field(..., description="Позиция в очереди")
+    priority: TaskPriority = Field(..., description="Приоритет")
+    queued_at: datetime = Field(..., description="Время постановки")
+    estimated_start: Optional[datetime] = Field(None, description="Примерное время старта")
 
 
 # =============================================
@@ -377,7 +377,7 @@ class TaskResultResponse(BaseSchema):
     result: Optional[Any] = Field(None, description="Результат")
     error: Optional[TaskError] = Field(None, description="Ошибка")
     duration: float = Field(..., description="Длительность (сек)")
-    completed_at: datetime = Field(..., description("Завершена"))
+    completed_at: datetime = Field(..., description="Завершена")
 
 
 # =============================================
@@ -390,7 +390,7 @@ class TaskCancelResponse(BaseSchema):
     task_id: str = Field(..., description="ID задачи")
     cancelled: bool = Field(..., description="Отменена")
     message: str = Field(..., description="Сообщение")
-    force: bool = Field(False, description("Принудительно"))
+    force: bool = Field(False, description="Принудительно")
 
 
 class TaskPauseResponse(BaseSchema):
@@ -430,7 +430,7 @@ class TaskBulkActionResponse(BaseSchema):
     """
     total: int = Field(..., description="Всего задач")
     successful: List[str] = Field(default_factory=list, description="Успешно обработаны")
-    failed: List[Dict[str, Any]] = Field(default_factory=list, description("Ошибки"))
+    failed: List[Dict[str, Any]] = Field(default_factory=list, description="Ошибки")
 
 
 # =============================================
