@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 from app.core.logger import logger
 from app.core.database import ConnectionPool
-from app.core.redis import RedisClient
+from app.core.redis import RedisClient, REDIS_KEYS
 from app.models.call import (
     CallResultStatus, CallDirection, HangupCause, DTMFResult,
     CallResultCreateRequest, CallHistoryFilterRequest,
@@ -41,8 +41,8 @@ call_result_counter = Counter(
     ['status', 'campaign_id']
 )
 call_duration_histogram = Histogram(
-    'autodialer_call_duration_seconds',
-    'Call duration in seconds',
+    'autodialer_call_result_duration_seconds',
+    'Call duration in seconds (from persisted call results)',
     buckets=[10, 30, 60, 120, 180, 300, 600, 1200, 1800]
 )
 call_recording_deleted_counter = Counter(
