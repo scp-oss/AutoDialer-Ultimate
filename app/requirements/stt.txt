@@ -1,0 +1,14 @@
+# =============================================
+# AutoDialer Ultimate - Speech-to-Text Requirements
+# =============================================
+# Optional: install only if TRANSCRIPTION_ENGINE is set to "whisper" or "vosk"
+# (default is "none" - transcription disabled until configured in Settings).
+#
+#   pip install -r app/requirements/stt.txt          # both engines
+#   pip install -r app/requirements/stt.txt --no-deps vosk   # vosk only, no torch
+
+# Vosk (lightweight, CPU-only, no torch dependency - recommended default)
+vosk>=0.3.45,<0.4.0
+
+# Whisper (higher accuracy, requires torch - larger image / more RAM)
+openai-whisper>=20231117

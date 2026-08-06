@@ -25,8 +25,9 @@ python-multipart>=0.0.9,<0.1.0
 # Asterisk AMI
 panoramisk>=1.4,<2.0.0
 
-# Task Queue
-celery[redis]>=5.3.6,<6.0.0
+# Фоновые задачи: собственные asyncio-воркеры (app/workers) с leader election
+# через Redis вместо Celery — единый процесс без отдельного брокера задач/
+# планировщика для дозвона с низкой задержкой. См. ROADMAP.md.
 
 # HTTP Clients
 httpx>=0.27.0,<0.28.0
@@ -35,10 +36,13 @@ aiohttp>=3.9.5,<4.0.0
 # Data Validation
 pydantic>=2.7.1,<3.0.0
 pydantic-settings>=2.2.1,<3.0.0
+email-validator>=2.1.1,<3.0.0
 
 # Utilities
 python-dotenv>=1.0.0,<2.0.0
 pyyaml>=6.0.1,<7.0.0
+cachetools>=5.3.3,<6.0.0
+psutil>=5.9.8,<6.0.0
 
 # Monitoring
 prometheus-client>=0.20.0,<0.21.0
