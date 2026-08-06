@@ -129,12 +129,13 @@ from app.core.redis import (
     init_redis,
     close_redis,
     get_redis_client,
-    
+    RedisClient,
+
     # Утилиты Redis
     RedisCache,
     RedisLock,
     RedisQueue,
-    
+
     # Ключи Redis (константы)
     REDIS_KEYS,
 )
@@ -196,7 +197,7 @@ from app.core.dependencies import (
 # =============================================
 # Circuit Breaker (интеграция)
 # =============================================
-from utils.circuit_breaker import (
+from app.utils.circuit_breaker import (
     CircuitBreaker,
     CircuitState,
     CircuitOpenError,
@@ -205,7 +206,7 @@ from utils.circuit_breaker import (
     circuit_registry,
 )
 
-# Создаём предварительно настроенные Circuit Breaker'ы
+# Создаᑑм предварительно настроенные Circuit Breaker'ы
 def get_db_breaker():
     """Circuit Breaker для базы данных"""
     return CircuitBreaker(
@@ -240,15 +241,16 @@ try:
     from prometheus_client import Counter, Gauge, Histogram, Summary
     
     # Метрики приложения
+    # Метрики конкретных доменов (кампании, контакты, аудио, входящие звонки)
+    # определяются в соответствующих сервисах (app/services/*.py) — здесь
+    # только общеприкладные метрики, чтобы избежать коллизий имён в
+    # prometheus_client.REGISTRY (Counter автоматически регистрирует и
+    # компаньон-серию `<base>_created`, которая должна быть уникальной).
     active_calls_gauge = Gauge('autodialer_active_calls', 'Active calls count')
     calls_total = Counter('autodialer_calls_total', 'Total calls', ['status', 'campaign_id'])
     http_requests = Counter('autodialer_http_requests', 'HTTP requests', ['method', 'endpoint', 'status'])
     http_request_duration = Histogram('autodialer_http_request_duration_seconds', 'HTTP request duration')
-    campaign_counter = Counter('autodialer_campaigns_total', 'Campaigns created')
-    contact_counter = Counter('autodialer_contacts_total', 'Contacts imported')
-    audio_generation_counter = Counter('autodialer_audio_generated', 'Audio files generated')
-    incoming_calls_counter = Counter('autodialer_incoming_calls_total', 'Incoming calls', ['status'])
-    
+
     METRICS_AVAILABLE = True
 except ImportError:
     METRICS_AVAILABLE = False
@@ -261,10 +263,6 @@ except ImportError:
     calls_total = _DummyMetric()
     http_requests = _DummyMetric()
     http_request_duration = _DummyMetric()
-    campaign_counter = _DummyMetric()
-    contact_counter = _DummyMetric()
-    audio_generation_counter = _DummyMetric()
-    incoming_calls_counter = _DummyMetric()
 
 # =============================================
 # Инициализация приложения
@@ -429,7 +427,7 @@ def with_circuit_breaker(service: str = "default"):
         async def db_query():
             ...
     """
-    from utils.circuit_breaker import circuit_breaker as cb_decorator
+    from app.utils.circuit_breaker import circuit_breaker as cb_decorator
     
     def decorator(func):
         breaker_name = f"{service}_{func.__name__}"
@@ -448,7 +446,7 @@ def rate_limited(limit: int = 100, window: int = 60):
             ...
     """
     from functools import wraps
-    from utils.rate_limiter import SlidingWindowRateLimiter
+    from app.utils.rate_limiter import SlidingWindowRateLimiter
     
     def decorator(func):
         @wraps(func)
@@ -459,7 +457,7 @@ def rate_limited(limit: int = 100, window: int = 60):
             
             result = await limiter.check(key, limit=limit, window=window)
             if not result.allowed:
-                from utils.rate_limiter import RateLimitExceeded
+                from app.utils.rate_limiter import RateLimitExceeded
                 raise RateLimitExceeded(
                     f"Rate limit exceeded for {func.__name__}",
                     retry_after=result.retry_after
@@ -627,10 +625,6 @@ __all__ = [
     "calls_total",
     "http_requests",
     "http_request_duration",
-    "campaign_counter",
-    "contact_counter",
-    "audio_generation_counter",
-    "incoming_calls_counter",
     "METRICS_AVAILABLE",
     
     # Ядро приложения
