@@ -188,7 +188,7 @@ class AudioConvertRequest(BaseSchema):
 # =============================================
 # Ответы
 # =============================================
-class AudioResponse(BaseSchema, TimestampSchema):
+class AudioResponse(TimestampSchema):
     """
     Ответ с информацией об аудиофайле.
     """
