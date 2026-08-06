@@ -15,7 +15,7 @@ AutoDialer Ultimate v3.0.0
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from enum import Enum
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.models.common import BaseSchema, TimestampSchema
 
