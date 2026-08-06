@@ -23,6 +23,8 @@ AutoDialer Ultimate v3.0.0
 - ✅ Pipeline для batch операций
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import time
