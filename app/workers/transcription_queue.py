@@ -16,8 +16,9 @@ async def process_transcription_queue():
     try:
         transcription_service = get_transcription_service()
         info = transcription_service.get_info()
-        
-        if info.get('queue_size', 0) > 0:
-            logger.debug(f"Очередь транскрибации: {info['queue_size']} задач, активно: {info.get('active_tasks', 0)}")
+        queue_size = await transcription_service.get_queue_size()
+
+        if queue_size > 0:
+            logger.debug(f"Очередь транскрибации: {queue_size} задач, активно: {info.get('active_tasks', 0)}")
     except Exception as e:
         logger.error(f"Ошибка проверки очереди транскрибации: {e}")

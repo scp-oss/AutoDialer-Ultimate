@@ -23,8 +23,8 @@ from app.core.config import settings
 from app.core.logger import logger
 from app.core.database import get_db_pool
 from app.core.redis import get_redis_client, REDIS_KEYS
-from utils.leader_election import LeaderElection
-from utils.task_registry import get_task_registry, TaskRegistry
+from app.utils.leader_election import LeaderElection
+from app.utils.task_registry import get_task_registry, TaskRegistry
 
 
 # =============================================
