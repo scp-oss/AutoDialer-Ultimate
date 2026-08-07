@@ -27,8 +27,8 @@ from app.models.campaign import (
     CampaignStatsResponse, CampaignProgressResponse,
     RetryStrategySchema, CampaignScheduleSchema, DialerSettingsSchema
 )
-from utils.rate_limiter import TokenBucket
-from utils.task_registry import TaskRegistry, get_task_registry
+from app.utils.rate_limiter import TokenBucket
+from app.utils.task_registry import TaskRegistry, get_task_registry
 from prometheus_client import Counter
 
 
