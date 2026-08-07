@@ -20,7 +20,6 @@ user_agent = AutoDialer-Ultimate/3.0.0
 keep_alive_interval = 90
 endpoint_identifier_order = ip,username,anonymous
 default_realm = ${FREEPBX_IP}
-max_initial_qualify = 5
 
 ; Отладочная информация (включить при проблемах)
 ; debug = yes
@@ -91,9 +90,6 @@ qualify_timeout = 5.0
 default_expiration = 120
 maximum_expiration = 3600
 minimum_expiration = 60
-
-; Поддержка outbound (RFC 5626)
-support_outbound = yes
 
 
 ; =============================================
@@ -242,9 +238,6 @@ expiration = 120
 
 ; Не считать отказ в аутентификации постоянным
 auth_rejection_permanent = no
-
-; Поддержка исходящей регистрации
-support_outbound = yes
 
 ; Используемый транспорт
 transport = transport-udp
