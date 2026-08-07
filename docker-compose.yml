@@ -1,18 +1,20 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15
     container_name: autodialer-postgres
     environment:
-      POSTGRES_DB: autodialer
-      POSTGRES_USER: autodialer
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-autodialer_pass}
+      POSTGRES_DB: ${DB_NAME:-autodialer}
+      POSTGRES_USER: ${DB_USER:-autodialer}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./sql/schema.sql:/docker-entrypoint-initdb.d/schema.sql
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-autodialer} -d ${DB_NAME:-autodialer}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
     networks:
       - autodialer-network
@@ -20,11 +22,38 @@ services:
   redis:
     image: redis:7-alpine
     container_name: autodialer-redis
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory ${REDIS_MAXMEMORY:-256mb} --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - autodialer-network
+
+  asterisk:
+    build:
+      context: .
+      dockerfile: docker/asterisk/Dockerfile
+    container_name: autodialer-asterisk
+    environment:
+      FREEPBX_IP: ${FREEPBX_IP:?FREEPBX_IP is required (IP of the existing SIP PBX)}
+      FREEPBX_EXTENSION: ${FREEPBX_EXTENSION:-291}
+      EXTENSION_PASSWORD: ${EXTENSION_PASSWORD:?EXTENSION_PASSWORD is required}
+      AMI_PASSWORD: ${AMI_PASSWORD:?AMI_PASSWORD is required}
+      ADMIN_AMI_PASSWORD: ${ADMIN_AMI_PASSWORD:-}
+      MONITOR_AMI_PASSWORD: ${MONITOR_AMI_PASSWORD:-}
+    volumes:
+      - tts_audio:/var/lib/asterisk/sounds/tts
+      - call_recordings:/var/spool/asterisk/monitor
+    ports:
+      - "5060:5060/udp"
+      - "10000-10100:10000-10100/udp"
     restart: unless-stopped
     networks:
       - autodialer-network
@@ -32,29 +61,43 @@ services:
   backend:
     build:
       context: .
-      dockerfile: Dockerfile.backend
+      dockerfile: Dockerfile
     container_name: autodialer-backend
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: autodialer
-      DB_USER: autodialer
-      DB_PASSWORD: ${DB_PASSWORD:-autodialer_pass}
+      DB_NAME: ${DB_NAME:-autodialer}
+      DB_USER: ${DB_USER:-autodialer}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      AMI_HOST: ${AMI_HOST:-asterisk}
-      AMI_PORT: ${AMI_PORT:-5038}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      AMI_HOST: asterisk
+      AMI_PORT: 5038
       AMI_USER: ${AMI_USER:-autodialer}
-      AMI_PASSWORD: ${AMI_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET}
+      AMI_PASSWORD: ${AMI_PASSWORD:?AMI_PASSWORD is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required (min 32 chars)}
+      TTS_DIR: /var/lib/asterisk/sounds/tts
+      RECORDINGS_DIR: /var/spool/asterisk/monitor
+      LOG_DIR: /opt/autodialer/logs
+      DATA_DIR: /opt/autodialer/data
+      STATIC_DIR: /srv/frontend
     volumes:
-      - ./backend:/app
-      - logs:/opt/autodialer/logs
+      - tts_audio:/var/lib/asterisk/sounds/tts
+      - call_recordings:/var/spool/asterisk/monitor
+      - backend_logs:/opt/autodialer/logs
+      - backend_data:/opt/autodialer/data
+      - ./frontend/dist:/srv/frontend:ro
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      asterisk:
+        condition: service_started
     restart: unless-stopped
     networks:
       - autodialer-network
@@ -63,8 +106,10 @@ services:
     image: nginx:alpine
     container_name: autodialer-nginx
     volumes:
-      - ./nginx/autodialer.conf:/etc/nginx/conf.d/default.conf
-      - ./frontend/dist:/usr/share/nginx/html
+      - ./nginx/autodialer.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - tts_audio:/var/lib/asterisk/sounds/tts:ro
+      - call_recordings:/var/spool/asterisk/monitor:ro
     ports:
       - "80:80"
       - "443:443"
@@ -81,4 +126,7 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  logs:
+  tts_audio:
+  call_recordings:
+  backend_logs:
+  backend_data:
