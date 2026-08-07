@@ -725,8 +725,11 @@ DROP TRIGGER IF EXISTS version_campaigns ON campaigns;
 CREATE TRIGGER version_campaigns AFTER INSERT OR UPDATE ON campaigns FOR EACH ROW EXECUTE FUNCTION create_record_version();
 DROP TRIGGER IF EXISTS version_contacts ON contacts;
 CREATE TRIGGER version_contacts AFTER INSERT OR UPDATE ON contacts FOR EACH ROW EXECUTE FUNCTION create_record_version();
+-- Примечание: settings НЕ версионируется через create_record_version(), т.к.
+-- у неё нет integer-колонки id (PK = key VARCHAR) - функция version-триггера
+-- обращается к NEW.id, что для settings ранее приводило к ошибке
+-- "record new has no field id" при каждой вставке/обновлении настройки.
 DROP TRIGGER IF EXISTS version_settings ON settings;
-CREATE TRIGGER version_settings AFTER INSERT OR UPDATE ON settings FOR EACH ROW EXECUTE FUNCTION create_record_version();
 DROP TRIGGER IF EXISTS version_users ON users;
 CREATE TRIGGER version_users AFTER INSERT OR UPDATE ON users FOR EACH ROW EXECUTE FUNCTION create_record_version();
 
@@ -816,7 +819,7 @@ INSERT INTO settings (key, value, description, category) VALUES
     ('retry_noanswer_delay', '300', 'Delay for no answer retry', 'dialer'),
     ('audio_retention_days', '30', 'Audio retention (days)', 'storage'),
     ('max_upload_size_mb', '10', 'Max upload size (MB)', 'storage'),
-    ('versioning_enabled', '80', 'Enable versioning', 'system'),
+    ('versioning_enabled', 'true', 'Enable versioning', 'system'),
     ('versioning_retention_days', '90', 'Version retention (days)', 'system'),
     ('session_timeout', '3600', 'Session timeout (seconds)', 'security'),
     ('rate_limit_enabled', 'true', 'Enable rate limiting', 'security'),
@@ -878,5 +881,5 @@ COMMENT ON TABLE webhook_deliveries IS 'История доставки webhook'
 COMMENT ON TABLE record_versions IS 'Версионирование записей';
 COMMENT ON TABLE notifications IS 'Уведомления пользователей';
 COMMENT ON TABLE system_events IS 'Системные события';
-COMMENT ON TABLE incoming_calls IS 'Входящие звонки с записью и транскрибацией';
-COMMENT ON TABLE schema_migrations IS 'История миграций';
+COMMENT ON TABLE incoming_calls IS 'Входящие звонки с записью и транскрибацией
+Система': COMMENT ON TABLE schema_migrations IS 'История миграций';

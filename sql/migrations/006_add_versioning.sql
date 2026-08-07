@@ -522,17 +522,11 @@ BEGIN
 END $$;
 
 -- -----------------------------------------------------------------
--- settings
+-- settings: NOT versioned via create_record_version() - its primary key
+-- is `key` (VARCHAR), not an integer `id`, and the trigger function
+-- reads NEW.id, which raises "record new has no field id" on every
+-- insert/update. See sql/schema.sql for the same note.
 -- -----------------------------------------------------------------
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'version_settings') THEN
-        CREATE TRIGGER version_settings
-            AFTER INSERT OR UPDATE ON settings
-            FOR EACH ROW
-            EXECUTE FUNCTION create_record_version();
-    END IF;
-END $$;
 
 -- -----------------------------------------------------------------
 -- users
