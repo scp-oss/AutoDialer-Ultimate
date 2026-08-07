@@ -718,8 +718,13 @@ class TranscriptionService:
                 "concurrent_limit": settings.TRANSCRIPTION_CONCURRENT
             },
             "stats": self._stats,
-            "queue_size": self.redis.llen(REDIS_KEYS.TRANSCRIPTION_QUEUE) if self.redis else 0
         }
+
+    async def get_queue_size(self) -> int:
+        """Получить размер очереди транскрибации (требует await, в отличие от get_info)"""
+        if not self.redis:
+            return 0
+        return await self.redis.llen(REDIS_KEYS.TRANSCRIPTION_QUEUE)
     
     async def get_task_status(self, call_id: int) -> Optional[Dict[str, Any]]:
         """Получить статус задачи транскрибации"""
