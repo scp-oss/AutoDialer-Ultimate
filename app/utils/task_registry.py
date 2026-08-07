@@ -26,8 +26,9 @@ from typing import Dict, Set, Optional, Any, Callable, Awaitable, List, Union, T
 from dataclasses import dataclass, field
 from enum import Enum
 from contextlib import asynccontextmanager
+from functools import wraps
 
-from logger import logger
+from app.core.logger import logger
 
 
 # =============================================

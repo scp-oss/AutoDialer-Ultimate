@@ -26,7 +26,7 @@ from typing import Optional, Callable, Any, Dict, Set, List
 from contextlib import asynccontextmanager
 from enum import Enum
 
-from logger import logger
+from app.core.logger import logger
 
 
 # =============================================
