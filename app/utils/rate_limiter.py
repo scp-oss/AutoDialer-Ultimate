@@ -31,7 +31,7 @@ from typing import Optional, Dict, Any, Tuple, List, Union
 from enum import Enum
 from dataclasses import dataclass, field
 
-from logger import logger
+from app.core.logger import logger
 
 
 # =============================================

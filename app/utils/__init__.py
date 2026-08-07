@@ -12,7 +12,7 @@ AutoDialer Ultimate v3.0.0
 - Task Registry
 
 ИСПОЛЬЗОВАНИЕ:
-    from utils import (
+    from app.utils import (
         CircuitBreaker, CircuitOpenError,
         TokenBucket, SlidingWindowRateLimiter, GlobalRateLimiter,
         LeaderElection, leader_context,
@@ -20,10 +20,12 @@ AutoDialer Ultimate v3.0.0
     )
 """
 
+from __future__ import annotations
+
 # =============================================
 # Circuit Breaker
 # =============================================
-from utils.circuit_breaker import (
+from app.utils.circuit_breaker import (
     # Основной класс
     CircuitBreaker,
     SyncCircuitBreaker,
@@ -58,7 +60,7 @@ from utils.circuit_breaker import (
 # =============================================
 # Rate Limiter
 # =============================================
-from utils.rate_limiter import (
+from app.utils.rate_limiter import (
     # Token Bucket (локальный)
     TokenBucket,
     
@@ -100,7 +102,7 @@ from utils.rate_limiter import (
 # =============================================
 # Leader Election
 # =============================================
-from utils.leader_election import (
+from app.utils.leader_election import (
     # Основной класс
     LeaderElection,
     HealthCheckingLeaderElection,
@@ -131,7 +133,7 @@ from utils.leader_election import (
 # =============================================
 # Task Registry
 # =============================================
-from utils.task_registry import (
+from app.utils.task_registry import (
     # Основной класс
     TaskRegistry,
     
@@ -164,23 +166,16 @@ from utils.task_registry import (
 
 
 # =============================================
-# AMI Manager (DialerManager)
+# AMI Manager
 # =============================================
+# Реализация DialerManager (AMI/Originate через panoramisk) находится в
+# app.services.dialer — это более высокоуровневый и единственный
+# используемый вариант; здесь оставлен только флаг доступности panoramisk.
 try:
-    from utils.ami_manager import (
-        DialerManager,
-        CallState,
-    )
+    import panoramisk  # noqa: F401
     AMI_AVAILABLE = True
 except ImportError:
     AMI_AVAILABLE = False
-    
-    class DialerManager:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("AMI Manager not available")
-    
-    class CallState:
-        pass
 
 
 # =============================================
@@ -435,9 +430,7 @@ __all__ = [
     "tracked_task",
     "task_group",
     
-    # AMI Manager
-    "DialerManager",
-    "CallState",
+    # AMI
     "AMI_AVAILABLE",
     
     # Дополнительные утилиты
