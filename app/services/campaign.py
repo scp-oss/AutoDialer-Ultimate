@@ -506,7 +506,8 @@ class CampaignService:
                 schedule = json.loads(row['schedule']) if row['schedule'] else {}
                 metadata = json.loads(row['metadata']) if row['metadata'] else {}
                 tags = await self._get_campaign_tags(conn, row['id'])
-                
+                stats = await self._get_campaign_stats(conn, row['id'])
+
                 items.append(CampaignResponse(
                     id=row['id'],
                     name=row['name'],
@@ -537,7 +538,8 @@ class CampaignService:
                     stopped_at=row['stopped_at'],
                     completed_at=row['completed_at'],
                     tags=tags,
-                    metadata=metadata
+                    metadata=metadata,
+                    stats=stats
                 ))
             
             return CampaignListResponse(
