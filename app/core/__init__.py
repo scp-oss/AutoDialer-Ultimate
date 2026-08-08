@@ -206,7 +206,7 @@ from app.utils.circuit_breaker import (
     circuit_registry,
 )
 
-# Создаᑑм предварительно настроенные Circuit Breaker'ы
+# Создаём предварительно настроенные Circuit Breaker'ы
 def get_db_breaker():
     """Circuit Breaker для базы данных"""
     return CircuitBreaker(

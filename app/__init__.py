@@ -215,7 +215,7 @@ def create_app() -> FastAPI:
         error_log_file=str(settings.LOG_ERROR_FILE)
     )
     
-    # Создаᑑм приложение
+    # Создаём приложение
     _app = FastAPI(
         title="AutoDialer Ultimate API",
         version=__version__,
@@ -485,7 +485,7 @@ async def shutdown_handler(sig=None):
 def get_app() -> FastAPI:
     """
     Получить экземпляр приложения.
-    Создаᑑт приложение если оно ещё не создано.
+    Создаёт приложение если оно ещё не создано.
     
     Returns:
         Экземпляр FastAPI
