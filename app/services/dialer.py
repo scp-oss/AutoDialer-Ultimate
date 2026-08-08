@@ -33,6 +33,7 @@ from app.core.logger import logger
 from app.core.database import ConnectionPool
 from app.core.redis import RedisClient, REDIS_KEYS
 from app.utils.rate_limiter import TokenBucket, GlobalRateLimiter, AdaptiveCPSLimiter
+from app.utils.phone import normalize_phone as _normalize_phone_digits
 from prometheus_client import Counter, Gauge, Histogram
 
 
@@ -757,23 +758,11 @@ class DialerManager:
     # Нормализация номера
     # =============================================
     def normalize_phone(self, phone: str) -> Optional[str]:
-        """Нормализация номера телефона"""
-        if not phone:
+        """Нормализация номера телефона (см. app.utils.phone)"""
+        digits = _normalize_phone_digits(phone)
+        if len(digits) < 10:
             return None
-        
-        phone = re.sub(r'[^\d]', '', phone)
-        
-        if len(phone) == 11 and phone.startswith('7'):
-            return phone
-        elif len(phone) == 11 and phone.startswith('8'):
-            return '7' + phone[1:]
-        elif len(phone) == 10 and phone.startswith('9'):
-            return '7' + phone
-        
-        if len(phone) >= 10:
-            return phone
-        
-        return None
+        return digits
     
     # =============================================
     # Инициирование звонка
@@ -1666,7 +1655,6 @@ class DialerManager:
                     pass
             
             logger.info(f"Восстановление {len(items)} звонков из degraded queue")
-            
             for item in items:
                 age = time.time() - item.get('timestamp', 0)
                 if age < 3600:

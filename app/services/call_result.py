@@ -28,6 +28,7 @@ from app.models.call import (
     CallAnalyticsResponse, ActiveCallResponse, ActiveCallsResponse,
     CallEventResponse
 )
+from app.utils.phone import format_phone_display as _format_phone_display_shared
 from app.models.common import PaginatedResponse
 from prometheus_client import Counter, Histogram
 
@@ -1100,15 +1101,8 @@ class CallResultService:
         return recommendations
     
     def _format_phone_display(self, phone: str) -> str:
-        """Форматирование номера для отображения"""
-        if not phone:
-            return ""
-        
-        if len(phone) == 11 and phone.startswith('7'):
-            return f"+7 ({phone[1:4]}) {phone[4:7]}-{phone[7:9]}-{phone[9:11]}"
-        elif len(phone) >= 10:
-            return f"+{phone}"
-        return phone
+        """Форматирование номера для отображения (см. app.utils.phone)"""
+        return _format_phone_display_shared(phone)
     
     def _format_duration(self, duration: Optional[int]) -> Optional[str]:
         """Форматирование длительности"""
