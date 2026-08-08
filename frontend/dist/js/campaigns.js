@@ -14,7 +14,10 @@ App.campaigns = {
         filterStatus: '',
         searchQuery: '',
         selectedCampaign: null,
-        audioFiles: []
+        audioFiles: [],
+        // ID кампании, чья модалка деталей сейчас открыта (для живых обновлений
+        // из WebSocket-канала campaign) — null, если модалка закрыта
+        viewingCampaignId: null
     },
 
     // =============================================
@@ -118,78 +121,85 @@ App.campaigns = {
             return;
         }
         
-        tbody.innerHTML = campaigns.map(c => {
-            const progress = c.stats?.progress_percent || 0;
-            const called = c.stats?.called_contacts || 0;
-            const total = c.stats?.total_contacts || 0;
-            const conversion = c.stats?.conversion_rate || 0;
-            
-            return `
-                <tr data-campaign-id="${c.id}" class="campaign-row ${c.status}">
-                    <td>${c.id}</td>
-                    <td>
-                        <strong>${this.escapeHtml(c.name)}</strong>
-                        ${c.description ? `<br><small>${this.escapeHtml(c.description)}</small>` : ''}
-                    </td>
-                    <td>
-                        <span class="status-badge status-${c.status}">${this.getStatusText(c.status)}</span>
-                    </td>
-                    <td>${c.max_calls || 10}</td>
-                    <td>${c.cps || 1}</td>
-                    <td>
-                        <div class="progress-container">
-                            <div class="progress-bar" style="width: 80px;">
-                                <div class="progress-fill" style="width: ${progress}%"></div>
-                            </div>
-                            <span class="progress-text">${called}/${total}</span>
+        tbody.innerHTML = campaigns.map(c => this.campaignRowHtml(c)).join('');
+
+        this.attachRowListeners();
+    },
+
+    // Рендер одной строки таблицы кампаний — используется и полным рендером
+    // таблицы, и точечным live-обновлением конкретной строки по WebSocket-событию
+    campaignRowHtml(c) {
+        const progress = c.stats?.progress_percent || 0;
+        const called = c.stats?.called_contacts || 0;
+        const total = c.stats?.total_contacts || 0;
+        const conversion = c.stats?.conversion_rate || 0;
+
+        return `
+            <tr data-campaign-id="${c.id}" class="campaign-row ${c.status}">
+                <td>${c.id}</td>
+                <td>
+                    <strong>${this.escapeHtml(c.name)}</strong>
+                    ${c.description ? `<br><small>${this.escapeHtml(c.description)}</small>` : ''}
+                </td>
+                <td>
+                    <span class="status-badge status-${c.status}">${this.getStatusText(c.status)}</span>
+                </td>
+                <td>${c.dialer_settings?.max_calls || 10}</td>
+                <td>${c.dialer_settings?.cps || 1}</td>
+                <td>
+                    <div class="progress-container">
+                        <div class="progress-bar" style="width: 80px;">
+                            <div class="progress-fill" style="width: ${progress}%"></div>
                         </div>
-                    </td>
-                    <td>
-                        <span class="${conversion > 0 ? 'text-success' : ''}">${conversion}%</span>
-                    </td>
-                    <td>${this.formatDate(c.created_at)}</td>
-                    <td class="actions-cell">
-                        <div class="action-buttons">
-                            <button class="btn btn-sm btn-outline" onclick="App.campaigns.viewCampaignDetail(${c.id})" title="Просмотр">
-                                👁️
+                        <span class="progress-text">${called}/${total}</span>
+                    </div>
+                </td>
+                <td>
+                    <span class="${conversion > 0 ? 'text-success' : ''}">${conversion}%</span>
+                </td>
+                <td>${this.formatDate(c.created_at)}</td>
+                <td class="actions-cell">
+                    <div class="action-buttons">
+                        <button class="btn btn-sm btn-outline" onclick="App.campaigns.viewCampaignDetail(${c.id})" title="Просмотр">
+                            👁️
+                        </button>
+                        ${c.status === 'draft' ? `
+                            <button class="btn btn-sm btn-success" onclick="App.campaigns.startCampaign(${c.id})" title="Запустить">
+                                ▶️
                             </button>
-                            ${c.status === 'draft' ? `
-                                <button class="btn btn-sm btn-success" onclick="App.campaigns.startCampaign(${c.id})" title="Запустить">
-                                    ▶️
+                        ` : ''}
+                        ${c.status === 'running' ? `
+                            <button class="btn btn-sm btn-warning" onclick="App.campaigns.pauseCampaign(${c.id})" title="Пауза">
+                                ⏸️
+                            </button>
+                            ${App.auth.isAdmin() ? `
+                                <button class="btn btn-sm btn-danger" onclick="App.campaigns.stopCampaign(${c.id})" title="Остановить">
+                                    ⏹️
                                 </button>
                             ` : ''}
-                            ${c.status === 'running' ? `
-                                <button class="btn btn-sm btn-warning" onclick="App.campaigns.pauseCampaign(${c.id})" title="Пауза">
-                                    ⏸️
-                                </button>
-                                ${App.auth.isAdmin() ? `
-                                    <button class="btn btn-sm btn-danger" onclick="App.campaigns.stopCampaign(${c.id})" title="Остановить">
-                                        ⏹️
-                                    </button>
-                                ` : ''}
-                            ` : ''}
-                            ${c.status === 'paused' ? `
-                                <button class="btn btn-sm btn-success" onclick="App.campaigns.resumeCampaign(${c.id})" title="Продолжить">
-                                    ▶️
-                                </button>
-                            ` : ''}
-                            ${App.auth.isOperator() && c.status !== 'running' ? `
-                                <button class="btn btn-sm btn-outline" onclick="App.campaigns.editCampaign(${c.id})" title="Редактировать">
-                                    ✏️
-                                </button>
-                            ` : ''}
-                            ${App.auth.isAdmin() && c.status !== 'running' ? `
-                                <button class="btn btn-sm btn-outline-danger" onclick="App.campaigns.deleteCampaign(${c.id})" title="Удалить">
-                                    🗑️
-                                </button>
-                            ` : ''}
-                        </div>
-                    </td>
-                </tr>
-            `;
-        }).join('');
-        
-        // Добавляем обработчики клика по строке
+                        ` : ''}
+                        ${c.status === 'paused' ? `
+                            <button class="btn btn-sm btn-success" onclick="App.campaigns.resumeCampaign(${c.id})" title="Продолжить">
+                                ▶️
+                            </button>
+                        ` : ''}
+                        ${App.auth.isOperator() && c.status !== 'running' ? `
+                            <button class="btn btn-sm btn-outline" onclick="App.campaigns.editCampaign(${c.id})" title="Редактировать">
+                                ✏️
+                            </button>
+                        ` : ''}
+                        ${App.auth.isAdmin() && c.status !== 'running' ? `
+                            <button class="btn btn-sm btn-outline-danger" onclick="App.campaigns.deleteCampaign(${c.id})" title="Удалить">
+                                🗑️
+                            </button>
+                        ` : ''}
+                    </div>
+                </td>
+            </tr>
+        `;
+    },
+
+    attachRowListeners() {
         document.querySelectorAll('.campaign-row').forEach(row => {
             row.addEventListener('click', (e) => {
                 if (!e.target.closest('button')) {
@@ -198,6 +208,55 @@ App.campaigns = {
                 }
             });
         });
+    },
+
+    // =============================================
+    // Живые обновления по WebSocket (канал "campaign")
+    // =============================================
+    // progress — CampaignProgressEvent из app/models/system.py, публикуется
+    // CampaignService._publish_campaign_event раз в 5 обработанных контактов
+    // и при завершении/остановке/ошибке кампании (см. ROADMAP §3.4)
+    handleCampaignEvent(progress) {
+        if (!progress || progress.campaign_id == null) return;
+
+        const campaignId = progress.campaign_id;
+        const idx = this.state.campaigns.findIndex(c => c.id === campaignId);
+
+        if (idx !== -1) {
+            const c = this.state.campaigns[idx];
+            if (progress.status) {
+                c.status = progress.status;
+            }
+            c.stats = {
+                ...(c.stats || {}),
+                progress_percent: progress.progress_percent,
+                called_contacts: progress.called_contacts,
+                total_contacts: progress.total_contacts,
+                agreed: progress.agreed,
+                declined: progress.declined
+            };
+
+            const row = document.querySelector(`.campaign-row[data-campaign-id="${campaignId}"]`);
+            if (row) {
+                row.outerHTML = this.campaignRowHtml(c);
+                const newRow = document.querySelector(`.campaign-row[data-campaign-id="${campaignId}"]`);
+                if (newRow) {
+                    newRow.addEventListener('click', (e) => {
+                        if (!e.target.closest('button')) {
+                            this.viewCampaignDetail(newRow.dataset.campaignId);
+                        }
+                    });
+                }
+            }
+        }
+
+        // Если открыта модалка деталей именно этой кампании — обновляем её тоже.
+        // Живое событие не содержит полного набора полей статистики (busy/noanswer/
+        // failed и т.п.), поэтому перезапрашиваем деталь через REST, а не собираем
+        // модалку из неполных данных события.
+        if (this.state.viewingCampaignId === campaignId) {
+            this.viewCampaignDetail(campaignId);
+        }
     },
 
     // =============================================
@@ -221,10 +280,10 @@ App.campaigns = {
             document.getElementById('campaignId').value = campaign.id;
             document.getElementById('campaignName').value = campaign.name || '';
             document.getElementById('campaignDescription').value = campaign.description || '';
-            document.getElementById('campaignMaxCalls').value = campaign.max_calls || 10;
-            document.getElementById('campaignCps').value = campaign.cps || 1;
-            document.getElementById('campaignCallerId').value = campaign.caller_id || '';
-            document.getElementById('campaignAudioSelect').value = campaign.audio_id || '';
+            document.getElementById('campaignMaxCalls').value = campaign.dialer_settings?.max_calls || 10;
+            document.getElementById('campaignCps').value = campaign.dialer_settings?.cps || 1;
+            document.getElementById('campaignCallerId').value = campaign.dialer_settings?.caller_id || '';
+            document.getElementById('campaignAudioSelect').value = campaign.dialer_settings?.audio_id || '';
             
             // Стратегия повторных звонков
             if (campaign.retry_strategy) {
@@ -322,8 +381,9 @@ App.campaigns = {
             failed_delay: parseInt(document.getElementById('retryFailedDelay')?.value) || 1800
         };
         
-        // Расписание
-        let schedule = null;
+        // Расписание (schedule не Optional на бэкенде — при выключенном чекбоксе
+        // отправляем {enabled: false} вместо null, иначе провалится валидация)
+        let schedule = { enabled: false };
         if (document.getElementById('campaignScheduleEnabled')?.checked) {
             schedule = {
                 enabled: true,
@@ -332,14 +392,22 @@ App.campaigns = {
                 schedule_type: document.getElementById('scheduleType')?.value || 'once'
             };
         }
-        
-        const data = {
-            name,
-            description: description || null,
+
+        // dialer_settings — вложенный объект на бэкенде (CampaignCreateRequest/
+        // CampaignUpdateRequest), а не плоские поля. При редактировании сохраняем
+        // остальные настройки (dial_mode, таймауты и т.п.), не выставляемые в этой форме.
+        const dialerSettings = {
+            ...(this.state.selectedCampaign?.dialer_settings || {}),
             max_calls: maxCalls,
             cps,
             caller_id: callerId || null,
-            audio_id: audioId || null,
+            audio_id: audioId || null
+        };
+
+        const data = {
+            name,
+            description: description || null,
+            dialer_settings: dialerSettings,
             retry_strategy: retryStrategy,
             schedule
         };
@@ -479,7 +547,9 @@ App.campaigns = {
             const data = await App.apiGet(`/campaigns/${id}`);
             const campaign = data.campaign || data;
             const stats = data.stats || {};
-            
+
+            this.state.viewingCampaignId = parseInt(id);
+
             const modal = document.getElementById('campaignDetailModal');
             const title = document.getElementById('campaignDetailTitle');
             const content = document.getElementById('campaignDetailContent');
@@ -496,9 +566,9 @@ App.campaigns = {
                             <tr><td>ID:</td><td>${campaign.id}</td></tr>
                             <tr><td>Статус:</td><td><span class="status-badge status-${campaign.status}">${this.getStatusText(campaign.status)}</span></td></tr>
                             <tr><td>Описание:</td><td>${this.escapeHtml(campaign.description || '—')}</td></tr>
-                            <tr><td>Макс. каналов:</td><td>${campaign.max_calls || 10}</td></tr>
-                            <tr><td>CPS:</td><td>${campaign.cps || 1}</td></tr>
-                            <tr><td>Caller ID:</td><td>${this.escapeHtml(campaign.caller_id || '—')}</td></tr>
+                            <tr><td>Макс. каналов:</td><td>${campaign.dialer_settings?.max_calls || 10}</td></tr>
+                            <tr><td>CPS:</td><td>${campaign.dialer_settings?.cps || 1}</td></tr>
+                            <tr><td>Caller ID:</td><td>${this.escapeHtml(campaign.dialer_settings?.caller_id || '—')}</td></tr>
                             <tr><td>Создана:</td><td>${App.formatDateTime(campaign.created_at)}</td></tr>
                         </table>
                     </div>
@@ -582,6 +652,7 @@ App.campaigns = {
         if (modal) {
             modal.style.display = 'none';
         }
+        this.state.viewingCampaignId = null;
     },
 
     // =============================================
@@ -757,6 +828,7 @@ App.campaigns = {
     destroy() {
         this.state.campaigns = [];
         this.state.selectedCampaign = null;
+        this.state.viewingCampaignId = null;
     }
 };
 

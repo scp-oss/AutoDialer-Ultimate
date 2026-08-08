@@ -211,8 +211,12 @@ App.system = {
                 break;
 
             case 'campaign':
-                // Прогресс кампаний обрабатывается модулем campaigns (если подписан);
+                // Живой прогресс кампании (CampaignProgressEvent) — точечно
+                // обновляет строку таблицы и открытую модалку деталей в campaigns.js;
                 // system.js только держит соединение и общий системный статус.
+                if (App.campaigns && typeof App.campaigns.handleCampaignEvent === 'function') {
+                    App.campaigns.handleCampaignEvent(data.data);
+                }
                 break;
         }
     },
