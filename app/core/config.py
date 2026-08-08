@@ -7,7 +7,7 @@
 Централизованное управление всеми настройками через Pydantic Settings.
 Поддерживает загрузку из .env файла и переменных окружения.
 
-ISPOL'ZOVANIE:
+ИСПОЛЬЗОВАНИЕ:
     from app.core.config import settings
     
     db_host = settings.DB_HOST
