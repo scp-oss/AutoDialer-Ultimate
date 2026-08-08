@@ -894,7 +894,7 @@ class DialerManager:
         slot_reserved = True
         await self._transition_state(action_id, CallState.RESERVED)
         
-        # Создаᑑм контекст звонка
+        # Создаём контекст звонка
         ctx = CallContext(
             action_id=action_id,
             campaign_id=campaign_id,
