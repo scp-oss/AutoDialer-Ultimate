@@ -114,7 +114,8 @@ Docker/Alembic/CI (г) добавить то, что было объявлено
     MRO, `TypeError` при импорте.
 11. `app/models/task.py`, `stats.py`, `api_token.py` — систематическая
     опечатка `description("текст")` вместо `description="текст"`
-    (226 строк), плюс несколько строк с несбалансированными скобками.
+    (226 строк), плюс несколько строк с несбалансированными
+    скобками.
 12. `app/services/dialer.py`/`call_result.py` — два Prometheus-метрики
     регистрировались под одинаковым именем (`autodialer_active_calls`,
     `autodialer_call_duration_seconds`) → `ValueError: Duplicated
@@ -133,10 +134,10 @@ Docker/Alembic/CI (г) добавить то, что было объявлено
 15. `app/__init__.py` регистрировал `loop.add_signal_handler(SIGTERM/
     SIGINT)` без обработки исключений — падает с `RuntimeError` вне
     главного потока главного интерпретатора (в частности, в тестах
-    через `Starlette TestClient`).
+    через Starlette TestClient).
 16. `app/services/dialer.py.stop_all_calls()` обращался к
     `self.channels_hash_key`, которого не существует (опечатка/пропущенная
-    инициализация) — `AttributeError` при остановке дозвона.
+    инициализация) — `AttributeError` при остановке обзвона.
 17. `start_all_workers()`/`stop_all_workers()` никогда не вызывались из
     `app/__init__.py` — все фоновые задачи (retry queue, транскрибация,
     health monitor, log cleanup) были определены, но не запускались.
@@ -356,13 +357,38 @@ AMI-события двигали только внутреннюю state machin
 возвращает `conn.execute()` (по аналогии с разбором `DELETE N` в
 `remove_contacts_from_campaign`).
 
-Не сделано (вне первоначального скоупа задачи): сама live-отрисовка
-канала `campaign` на фронтенде — `frontend/dist/js/campaigns.js`
-рендерит прогресс-бар кампании через периодический опрос REST, а не
-подписку на WebSocket; `system.js` сейчас просто игнорирует входящие
-`campaign`-события. Подключение потребует доработки рендеринга
-карточки/модалки кампании, чтобы обновлять её точечно, не перерисовывая
-целиком — отдельная фронтенд-задача.
+Живая отрисовка канала `campaign` на фронтенде также сделана:
+`system.js` больше не игнорирует `campaign`-события, а передаёт их в
+`App.campaigns.handleCampaignEvent()`; тот точечно обновляет строку
+таблицы (`campaignRowHtml()` вынесен в переиспользуемый метод) и, если
+открыта модалка деталей той же кампании (`state.viewingCampaignId`),
+перезапрашивает её через REST — `CampaignProgressEvent` не несёт полного
+набора статистики (busy/noanswer/failed и т.п.), поэтому модалка
+дорисовывается из полного `CampaignDetailResponse`, а не из неполных
+данных события.
+
+Заодно найдены и исправлены два смежных бага, из-за которых сама
+таблица кампаний показывала неверные данные независимо от WebSocket:
+
+1. `CampaignResponse` (и, соответственно, ответ `GET /campaigns`) вообще
+   не содержал `stats` — `campaigns.js` читал `c.stats?.progress_percent`
+   и т.п., что всегда было `undefined`. Добавлено поле `stats` в модель
+   и его заполнение в `CampaignService.list_campaigns()` (по аналогии с
+   уже существовавшим по-элементным вызовом `_get_campaign_tags()`).
+2. `campaigns.js` читал `c.max_calls`/`c.cps`/`campaign.caller_id`/
+   `campaign.audio_id` как плоские поля — в `CampaignResponse` они
+   вложены в `dialer_settings`. Хуже того, `saveCampaign()` при
+   создании/редактировании кампании отправлял их бэкенду тоже плоскими
+   полями верхнего уровня, а `CampaignCreateRequest`/
+   `CampaignUpdateRequest` ожидают вложенный `dialer_settings` — при
+   `extra="ignore"` в `BaseSchema` эти поля молча отбрасывались, и
+   кампания всегда создавалась/обновлялась с настройками дозвона по
+   умолчанию (max_calls=30, cps=5, без caller ID и аудио), что бы
+   пользователь ни ввёл в форме. Заодно там же нашёлся баг с `schedule`:
+   при выключенном чекбоксе расписания отправлялся `null`, а поле
+   `schedule` в моделях запроса не `Optional` — это гарантированно
+   валилось бы 422-й ошибкой валидации. Оба бага исправлены в
+   `saveCampaign()`.
 
 ### 3.5 Kubernetes-манифесты
 Не созданы. `docker-compose.yml` — хорошая основа: Deployment на backend
