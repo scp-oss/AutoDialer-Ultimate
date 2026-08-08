@@ -214,9 +214,9 @@ const Utils = {
             return `+${cleaned}`;
         }
         
-        // Простой формат
+        // Голый 10-значный российский номер без кода страны
         if (cleaned.length === 10) {
-            return `(${cleaned.slice(0, 3)}) ${cleaned.slice(3, 6)}-${cleaned.slice(6, 8)}-${cleaned.slice(8, 10)}`;
+            return `+7 (${cleaned.slice(0, 3)}) ${cleaned.slice(3, 6)}-${cleaned.slice(6, 8)}-${cleaned.slice(8, 10)}`;
         }
         
         return phone;
