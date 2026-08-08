@@ -13,6 +13,7 @@ AutoDialer Ultimate v3.0.0
 
 import asyncio
 import json
+import re
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
@@ -683,36 +684,45 @@ class CampaignService:
                         "processed",
                         str(processed)
                     )
-                
+
+                    # Транслируем прогресс в WebSocket-дашборд не на каждый
+                    # звонок (это могут быть сотни тысяч контактов), а раз в
+                    # 5 обработанных
+                    if processed % 5 == 0:
+                        await self._publish_campaign_event(campaign_id)
+
                 # Завершаем кампанию
                 async with self.db_pool.acquire() as conn:
                     await conn.execute("""
-                        UPDATE campaigns 
+                        UPDATE campaigns
                         SET status = $1, completed_at = NOW(), updated_at = NOW()
                         WHERE id = $2
                     """, CampaignStatus.COMPLETED.value, campaign_id)
-                
+
                 campaign_completed_counter.inc()
                 logger.info(f"Кампания {campaign_id} завершена, обработано {processed} контактов")
-                
+                await self._publish_campaign_event(campaign_id)
+
             except asyncio.CancelledError:
                 logger.info(f"Кампания {campaign_id} отменена")
                 async with self.db_pool.acquire() as conn:
                     await conn.execute("""
-                        UPDATE campaigns 
+                        UPDATE campaigns
                         SET status = $1, stopped_at = NOW(), updated_at = NOW()
                         WHERE id = $2
                     """, CampaignStatus.STOPPED.value, campaign_id)
+                await self._publish_campaign_event(campaign_id)
                 raise
             except Exception as e:
                 logger.error(f"Ошибка в кампании {campaign_id}: {e}")
                 campaign_failed_counter.inc()
                 async with self.db_pool.acquire() as conn:
                     await conn.execute("""
-                        UPDATE campaigns 
+                        UPDATE campaigns
                         SET status = $1, updated_at = NOW()
                         WHERE id = $2
                     """, CampaignStatus.FAILED.value, campaign_id)
+                await self._publish_campaign_event(campaign_id)
                 raise
             finally:
                 self._active_campaigns.pop(campaign_id, None)
@@ -928,6 +938,22 @@ class CampaignService:
                 timestamp=datetime.utcnow()
             )
     
+    async def _publish_campaign_event(self, campaign_id: int) -> None:
+        """
+        Опубликовать CampaignProgressEvent (см. app.models.system) в Redis Pub/Sub
+        для WebSocketService (best-effort — отсутствие подписчиков или сбой
+        Redis не должны прерывать обзвон кампании.
+        """
+        try:
+            progress = await self.get_campaign_progress(campaign_id)
+            if progress:
+                await self.redis.publish(f"{REDIS_KEYS.WS_CHANNELS}:campaign", {
+                    "type": "campaign",
+                    "data": progress.model_dump(mode="json"),
+                })
+        except Exception as e:
+            logger.debug(f"Не удалось опубликовать campaign-событие в WebSocket: {e}")
+
     async def get_active_campaigns(self) -> List[CampaignProgressResponse]:
         """Получить все активные кампании"""
         result = []
@@ -961,7 +987,7 @@ class CampaignService:
         
         # Добавляем из групп
         if group_ids:
-            await conn.execute("""
+            result = await conn.execute("""
                 INSERT INTO campaign_contacts (campaign_id, contact_id, status)
                 SELECT $1, c.id, 'pending'
                 FROM contacts c
@@ -973,7 +999,8 @@ class CampaignService:
                     WHERE cc.campaign_id = $1 AND cc.contact_id = c.id
                 )
             """, campaign_id, group_ids)
-            added += int(await conn.fetchval("SELECT COUNT(*) FROM ..."))  # Упрощённо
+            match = re.search(r'INSERT \d+ (\d+)', result)
+            added += int(match.group(1)) if match else 0
         
         # Добавляем конкретные контакты
         if contact_ids:
