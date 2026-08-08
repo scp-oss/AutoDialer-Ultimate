@@ -18,6 +18,7 @@ from enum import Enum
 from pydantic import Field, field_validator, model_validator
 
 from app.models.common import BaseSchema, TimestampSchema
+from app.utils.phone import normalize_phone, format_phone_display
 
 
 # =============================================
@@ -121,9 +122,13 @@ class CallResultCreateRequest(BaseSchema):
     @field_validator('phone')
     @classmethod
     def validate_phone(cls, v: str) -> str:
-        """Нормализация телефона"""
-        import re
-        return re.sub(r'[^\d]', '', v)
+        """
+        Нормализация телефона (см. app.utils.phone) — важно приводить
+        ведущую "8" к коду страны "7", иначе запись результата звонка
+        не совпадёт с contacts.phone (там всегда 7XXXXXXXXXX) и может
+        обойти проверку чёрного списка.
+        """
+        return normalize_phone(v)
     
     model_config = {
         "json_schema_extra": {
@@ -227,12 +232,7 @@ class CallResultResponse(TimestampSchema):
             self.duration_formatted = f"{minutes:02d}:{seconds:02d}"
         
         if self.phone:
-            # Форматирование номера для отображения
-            phone = self.phone
-            if len(phone) == 11 and phone.startswith('7'):
-                self.phone_display = f"+7 ({phone[1:4]}) {phone[4:7]}-{phone[7:9]}-{phone[9:11]}"
-            else:
-                self.phone_display = f"+{phone}"
+            self.phone_display = format_phone_display(self.phone)
         
         return self
     
