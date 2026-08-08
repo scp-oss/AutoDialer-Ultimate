@@ -243,7 +243,9 @@ class DialerManager:
         self.call_state_key = REDIS_KEYS.CALL_STATES
         self.active_phones_key = REDIS_KEYS.ACTIVE_PHONES
         self.reservations_ts_key = REDIS_KEYS.RESERVATIONS_TS
-        
+        self.ws_call_channel = f"{REDIS_KEYS.WS_CHANNELS}:call"
+        self.ws_system_channel = f"{REDIS_KEYS.WS_CHANNELS}:system"
+
         # =============================================
         # Состояние (локальные кэши)
         # =============================================
@@ -468,6 +470,7 @@ class DialerManager:
                 self.connected = True
                 self.reconnect_attempts = 0
                 logger.info("✅ AMI подключён успешно")
+                await self._publish_system_event("info", "SIP/AMI", "Подключение к Asterisk AMI установлено")
 
                 # Подписываемся на все события
                 await self.manager.send_action(
@@ -558,6 +561,7 @@ class DialerManager:
             except Exception as e:
                 logger.error(f"Проверка здоровья AMI не пройдена: {e}")
                 self.connected = False
+                await self._publish_system_event("error", "SIP/AMI", f"Соединение с Asterisk AMI потеряно: {e}")
                 await self.ensure_connected()
     
     async def _check_redis_health(self):
@@ -722,9 +726,33 @@ class DialerManager:
         
         if result == 1 and action_id in self.call_contexts:
             self.call_contexts[action_id].state = new_state
-        
+
         return result == 1
-    
+
+    # =============================================
+    # Публикация событий для WebSocket-дашборда
+    # =============================================
+    async def _publish_call_event(self, data: Dict[str, Any]) -> None:
+        """
+        Опубликовать LiveCallEvent (см. app.models.system) в Redis Pub/Sub
+        для WebSocketService (best-effort — отсутствие подписчиков или сбой
+        Redis не должны прерывать обработку AMI-события).
+        """
+        try:
+            await self.redis.publish(self.ws_call_channel, {"type": "call", "data": data})
+        except Exception as e:
+            logger.debug(f"Не удалось опубликовать call-событие в WebSocket: {e}")
+
+    async def _publish_system_event(self, level: str, title: str, message: str) -> None:
+        """Опубликовать SystemNotificationEvent (статус SIP/AMI) для WebSocket-дашборда (best-effort)"""
+        try:
+            await self.redis.publish(self.ws_system_channel, {
+                "type": "system",
+                "data": {"level": level, "title": title, "message": message},
+            })
+        except Exception as e:
+            logger.debug(f"Не удалось опубликовать system-событие в WebSocket: {e}")
+
     # =============================================
     # Нормализация номера
     # =============================================
@@ -1090,8 +1118,20 @@ class DialerManager:
         
         active = await self.redis.scard(self.active_channels_key)
         active_calls_gauge.set(active)
-        
+
         logger.debug(f"DialBegin: {action_id}, канал={channel}, активно={active}")
+
+        ctx = self.call_contexts.get(action_id)
+        await self._publish_call_event({
+            "event": "dial_begin",
+            "unique_id": unique_id,
+            "linked_id": None,
+            "campaign_id": ctx.campaign_id if ctx else None,
+            "phone": ctx.phone if ctx else None,
+            "status": None,
+            "dtmf": None,
+            "duration": None,
+        })
     
     async def _handle_dial_end(self, event, unique_id: str):
         """Обработка DialEnd"""
@@ -1108,9 +1148,20 @@ class DialerManager:
                 ctx = self.call_contexts[action_id]
                 ctx.answered_at = datetime.utcnow()
                 ctx.linked_id = linked_id
-                
+
                 calls_answered_counter.labels(campaign_id=str(ctx.campaign_id)).inc()
-            
+
+                await self._publish_call_event({
+                    "event": "answer",
+                    "unique_id": unique_id,
+                    "linked_id": linked_id,
+                    "campaign_id": ctx.campaign_id,
+                    "phone": ctx.phone,
+                    "status": None,
+                    "dtmf": None,
+                    "duration": None,
+                })
+
             if unique_id in self.call_start_times:
                 del self.call_start_times[unique_id]
             
@@ -1195,7 +1246,18 @@ class DialerManager:
             )
         
         logger.info(f"📴 Hangup: {action_id}, причина={cause_txt}, активно={active}")
-        
+
+        await self._publish_call_event({
+            "event": "hangup",
+            "unique_id": unique_id,
+            "linked_id": linked_id,
+            "campaign_id": ctx.campaign_id if ctx else None,
+            "phone": ctx.phone if ctx else None,
+            "status": cause_txt,
+            "dtmf": None,
+            "duration": ctx.duration if ctx else None,
+        })
+
         asyncio.create_task(self._cleanup_terminated(action_id))
     
     async def _handle_user_event(self, event, linked_id: str):
@@ -1231,6 +1293,17 @@ class DialerManager:
             ctx = self.call_contexts[action_id]
             ctx.dtmf_digits.append(digit)
             logger.debug(f"DTMF: {action_id} -> {digit}")
+
+            await self._publish_call_event({
+                "event": "dtmf",
+                "unique_id": unique_id,
+                "linked_id": ctx.linked_id,
+                "campaign_id": ctx.campaign_id,
+                "phone": ctx.phone,
+                "status": None,
+                "dtmf": digit,
+                "duration": None,
+            })
     
     def _map_hangup_cause_to_status(self, cause: str) -> str:
         """Преобразование причины Hangup в статус"""
