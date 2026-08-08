@@ -166,6 +166,16 @@ from app.utils.task_registry import (
 
 
 # =============================================
+# Телефонные номера (российский план нумерации)
+# =============================================
+from app.utils.phone import (
+    normalize_phone,
+    validate_phone_number,
+    format_phone_display,
+)
+
+
+# =============================================
 # AMI Manager
 # =============================================
 # Реализация DialerManager (AMI/Originate через panoramisk) находится в
@@ -430,6 +440,11 @@ __all__ = [
     "tracked_task",
     "task_group",
     
+    # Телефонные номера
+    "normalize_phone",
+    "validate_phone_number",
+    "format_phone_display",
+
     # AMI
     "AMI_AVAILABLE",
     
