@@ -14,9 +14,9 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 from enum import Enum
 from pydantic import Field, field_validator, model_validator
-import re
 
 from app.models.common import BaseSchema, TimestampSchema
+from app.utils.phone import normalize_phone, validate_phone_number, format_phone_display
 
 
 # =============================================
@@ -55,21 +55,9 @@ class BlacklistStatus(str, Enum):
 # =============================================
 # Валидаторы
 # =============================================
-def normalize_phone(phone: str) -> str:
-    """Нормализация номера телефона"""
-    if not phone:
-        return ""
-    digits = re.sub(r'[^\d]', '', phone)
-    
-    # Нормализация российских номеров
-    if len(digits) == 11 and digits.startswith('8'):
-        digits = '7' + digits[1:]
-    elif len(digits) == 11 and digits.startswith('7'):
-        pass
-    elif len(digits) == 10 and digits.startswith('9'):
-        digits = '7' + digits
-    
-    return digits
+# normalize_phone / validate_phone_number / format_phone_display — см.
+# app.utils.phone (единственный источник правил российского плана
+# нумерации, импортированы выше).
 
 
 # =============================================
@@ -98,9 +86,9 @@ class BlacklistAddRequest(BaseSchema):
             raise ValueError("Номер телефона обязателен")
         
         normalized = normalize_phone(v)
-        if len(normalized) < 10:
+        if not validate_phone_number(normalized):
             raise ValueError(f"Неверный формат номера: {v}")
-        
+
         return normalized
     
     model_config = {
@@ -205,13 +193,7 @@ class BlacklistResponse(TimestampSchema):
     def format_fields(self) -> 'BlacklistResponse':
         """Форматирование полей"""
         # Форматирование номера
-        phone = self.phone
-        if len(phone) == 11 and phone.startswith('7'):
-            self.phone_display = f"+7 ({phone[1:4]}) {phone[4:7]}-{phone[7:9]}-{phone[9:11]}"
-        elif len(phone) >= 10:
-            self.phone_display = f"+{phone}"
-        else:
-            self.phone_display = phone
+        self.phone_display = format_phone_display(self.phone)
         
         # Проверка истечения
         if self.expires_at and self.status == BlacklistStatus.ACTIVE:

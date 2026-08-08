@@ -14,10 +14,10 @@ AutoDialer Ultimate v3.0.0
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Union
 from enum import Enum
-import re
 from pydantic import Field, EmailStr, field_validator, model_validator
 
 from app.models.common import BaseSchema, TimestampSchema
+from app.utils.phone import normalize_phone, validate_phone_number, format_phone_display
 
 
 # =============================================
@@ -51,66 +51,9 @@ class ContactGender(str, Enum):
 # =============================================
 # Валидаторы
 # =============================================
-def normalize_phone(phone: str) -> str:
-    """
-    Нормализация номера телефона.
-    Приводит к международному формату.
-    """
-    if not phone:
-        return ""
-    
-    # Удаляем все не-цифры
-    digits = re.sub(r'[^\d]', '', phone)
-    
-    # Российские номера
-    if len(digits) == 11 and digits.startswith('8'):
-        digits = '7' + digits[1:]
-    elif len(digits) == 11 and digits.startswith('7'):
-        pass  # Уже в правильном формате
-    elif len(digits) == 10 and digits.startswith('9'):
-        digits = '7' + digits
-    
-    return digits
-
-
-def validate_phone_number(phone: str) -> bool:
-    """
-    Проверка корректности номера телефона.
-    """
-    digits = normalize_phone(phone)
-    
-    if len(digits) < 10:
-        return False
-    
-    # Проверка российских номеров
-    if digits.startswith('7'):
-        if len(digits) != 11:
-            return False
-        # Проверка кода оператора/региона
-        if digits[1] == '0' or digits[1] == '1':
-            return False
-    
-    # Международные номера (до 15 цифр)
-    if len(digits) > 15:
-        return False
-    
-    return True
-
-
-def format_phone_display(phone: str) -> str:
-    """
-    Форматирование номера для отображения.
-    """
-    digits = normalize_phone(phone)
-    
-    if len(digits) == 11 and digits.startswith('7'):
-        return f"+7 ({digits[1:4]}) {digits[4:7]}-{digits[7:9]}-{digits[9:11]}"
-    
-    if len(digits) == 10:
-        return f"+7 ({digits[0:3]}) {digits[3:6]}-{digits[6:8]}-{digits[8:10]}"
-    
-    # Для других форматов просто добавляем +
-    return f"+{digits}"
+# normalize_phone / validate_phone_number / format_phone_display — см.
+# app.utils.phone (единственный источник правил российского плана
+# нумерации, импортированы выше).
 
 
 # =============================================

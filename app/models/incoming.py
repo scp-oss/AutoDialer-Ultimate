@@ -15,9 +15,9 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 from enum import Enum
 from pydantic import Field, field_validator, model_validator
-import re
 
 from app.models.common import BaseSchema, TimestampSchema
+from app.utils.phone import normalize_phone, format_phone_display
 
 
 # =============================================
@@ -51,31 +51,9 @@ class TranscriptionEngine(str, Enum):
 # =============================================
 # Валидаторы
 # =============================================
-def normalize_phone(phone: str) -> str:
-    """Нормализация номера телефона"""
-    if not phone:
-        return ""
-    digits = re.sub(r'[^\d]', '', phone)
-    
-    if len(digits) == 11 and digits.startswith('8'):
-        digits = '7' + digits[1:]
-    elif len(digits) == 11 and digits.startswith('7'):
-        pass
-    elif len(digits) == 10 and digits.startswith('9'):
-        digits = '7' + digits
-    
-    return digits
-
-
-def format_phone_display(phone: str) -> str:
-    """Форматирование номера для отображения"""
-    digits = normalize_phone(phone)
-    
-    if len(digits) == 11 and digits.startswith('7'):
-        return f"+7 ({digits[1:4]}) {digits[4:7]}-{digits[7:9]}-{digits[9:11]}"
-    elif len(digits) >= 10:
-        return f"+{digits}"
-    return phone
+# normalize_phone / format_phone_display — см. app.utils.phone
+# (единственный источник правил российского плана нумерации,
+# импортированы выше).
 
 
 # =============================================
