@@ -305,7 +305,7 @@ class StructuredLogger:
 # LoggerFactory
 # =============================================
 class LoggerFactory:
-    """Создаᑑт и централизованно настраивает именованные логгеры приложения"""
+    """Создаёт и централизованно настраивает именованные логгеры приложения"""
 
     _loggers: Dict[str, StructuredLogger] = {}
     _configured = False

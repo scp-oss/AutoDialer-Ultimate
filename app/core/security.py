@@ -268,7 +268,7 @@ def create_token(
         "aud": "autodialer-api",
     })
     
-    # Создаᑑм токен
+    # Создаём токен
     encoded_jwt = jwt.encode(
         to_encode,
         settings.SECRET_KEY,
