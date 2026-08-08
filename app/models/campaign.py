@@ -385,7 +385,11 @@ class CampaignResponse(TimestampSchema):
     # Теги и метаданные
     tags: List[str] = Field(default_factory=list, description="Теги")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Метаданные")
-    
+
+    # Статистика (заполняется в списке кампаний; в CampaignDetailResponse
+    # переопределяется собственным полем ниже)
+    stats: Optional["CampaignStatsResponse"] = Field(None, description="Статистика кампании")
+
     model_config = {
         "json_schema_extra": {
             "example": {
