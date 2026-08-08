@@ -881,5 +881,5 @@ COMMENT ON TABLE webhook_deliveries IS 'История доставки webhook'
 COMMENT ON TABLE record_versions IS 'Версионирование записей';
 COMMENT ON TABLE notifications IS 'Уведомления пользователей';
 COMMENT ON TABLE system_events IS 'Системные события';
-COMMENT ON TABLE incoming_calls IS 'Входящие звонки с записью и транскрибацией
-Система': COMMENT ON TABLE schema_migrations IS 'История миграций';
+COMMENT ON TABLE incoming_calls IS 'Входящие звонки с записью и транскрибацией';
+COMMENT ON TABLE schema_migrations IS 'История миграций';
