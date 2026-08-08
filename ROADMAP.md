@@ -101,7 +101,7 @@ Docker/Alembic/CI (г) добавить то, что было объявлено
    `support_outbound` (в секции `aor`/`registration`) и
    `max_initial_qualify` (в `global`) не существуют как опции PJSIP;
    Asterisk отбрасывал объекты `aor`/`global` целиком при попытке их
-   создать, что в конечном счёте ломало исходящую регистрацию
+   создать, что в конечном итоге ломало исходящую регистрацию
    (`AOR '' not found`). Подтверждено и исправлено на **реальном**
    Asterisk 20.6 — после фикса SIP REGISTER проходит полный цикл и
    `pjsip show registrations` показывает `Registered`.
@@ -162,7 +162,7 @@ Docker/Alembic/CI (г) добавить то, что было объявлено
 - **Alembic** (`alembic/`) поверх существующей асинхронной asyncpg-модели
   доступа к данным: `alembic/env.py` использует
   `sqlalchemy.ext.asyncio` + `asyncpg` только для управления миграциями
-  (без ORM-моделей — рантайм по-прежнему работает через
+  (без ORM-моделей, рантайм по-прежнему работает через
   `app/core/database.py: ConnectionPool/QueryBuilder/BaseRepository`,
   см. §2.2 почему). Первая миграция `0001_initial_schema.py` применяет
   `sql/schema.sql` (23 таблицы, 90+ индексов, триггеры, функции,
@@ -214,8 +214,8 @@ Asterisk 20.6 (все три — через `apt`) с теми же самыми
 через тот же `envsubst`, что и в `docker/asterisk/entrypoint.sh`),
 только на `127.0.0.1` вместо DNS-имён сервисов compose. Это валидирует
 приложенческий код и конфигурацию с высокой достоверностью, но **сами
-Dockerfile/docker-compose.yml не собирались и не поднимались буквально**
-— рекомендуется первым делом прогнать `docker compose up --build` в
+Dockerfile/docker-compose.yml не собирались и не поднимались буквально** —
+рекомендуется первым делом прогнать `docker compose up --build` в
 среде с рабочим Docker перед продакшен-деплоем.
 
 ---
@@ -293,11 +293,9 @@ DialerManager` подключается к Asterisk по AMI (`panoramisk`), Ast
 (`pjsip.conf`, объект `type=registration`, параметры — `FREEPBX_IP`/
 `FREEPBX_EXTENSION`/`EXTENSION_PASSWORD` из веб-настроек/`.env`).
 Статус (Online/Offline/Registration failed) отдаётся через
-`/api/health` (поле `ami_connected` + `components.ami`) и должен также
-транслироваться через WebSocket (`system` канал) — на сегодня
-транслируется начальный снимок при подключении клиента; трансляция
-живых изменений статуса регистрации в фоне (а не только при коннекте) —
-задача §3.4.
+`/api/health` (поле `ami_connected` + `components.ami`) и теперь
+также транслируется через WebSocket (канал `system`) при каждом
+изменении статуса подключения/отключения AMI (см. §3.4).
 
 ---
 
@@ -325,14 +323,29 @@ ER-диаграмма (dbdiagram.io/Mermaid из `sql/schema.sql`), полное
 целям масштабирования из ТЗ (сотни одновременных звонков, сотни тысяч
 номеров).
 
-### 3.4 SIP/AMI: живые события в WebSocket
-`DialerManager` уже обрабатывает события AMI (`DialBegin`, `DialEnd`,
-`BridgeEnter`, `Hangup`) для внутреннего state machine — не хватает моста
-"AMI event → `WebSocketService.publish('call', LiveCallEvent(...))`",
-чтобы дашборд обновлялся в реальном времени, а не только по снимку при
-подключении. Также: транслировать смену статуса SIP-регистрации
-(Online/Offline/Registration failed) в канал `system` при каждом
-изменении, не только по запросу.
+### 3.4 SIP/AMI: живые события в WebSocket — сделано
+`DialerManager` теперь публикует `LiveCallEvent` (dial_begin/answer/
+hangup/dtmf) и `SystemNotificationEvent` (подключение/потеря AMI) в
+Redis-каналы `ws_channels:call`/`ws_channels:system`, которые уже
+рассылались `WebSocketService` подключённым клиентам — раньше эти
+AMI-события двигали только внутреннюю state machine, дашборд же видел
+лишь статичный снимок при подключении.
+
+Заодно исправлен фронтенд-клиент дашборда
+(`frontend/dist/js/system.js`): он стучался в несуществующий
+`/api/ws/system` с придуманным форматом сообщений, которого бэкенд
+никогда не отдавал. Переключён на реальный `/api/ws/dashboard` и
+разобранный по факту контракт `{"type": "call"|"campaign"|"system"|
+"notification", "data": {...}}` из `app/api/websocket.py`. Также
+исправлено чтение `data.asterisk_connected` в `refreshStatus()` —
+такого поля REST `/system/status` никогда не возвращал (реальное имя
+— `ami_connected`), из-за чего индикатор Asterisk всегда показывал
+"недоступен" независимо от реального статуса.
+
+Не сделано (вне первоначального скоупа задачи): периодическая
+трансляция `CampaignProgressEvent` в канал `campaign` при прогрессе
+кампании — сам канал и модель события уже существуют, но ничего в
+`CampaignService`/воркерах пока туда не публикует.
 
 ### 3.5 Kubernetes-манифесты
 Не созданы. `docker-compose.yml` — хорошая основа: Deployment на backend
