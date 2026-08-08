@@ -942,7 +942,7 @@ class CampaignService:
         """
         Опубликовать CampaignProgressEvent (см. app.models.system) в Redis Pub/Sub
         для WebSocketService (best-effort — отсутствие подписчиков или сбой
-        Redis не должны прерывать обзвон кампании.
+        Redis не должны прерывать обзвон кампании).
         """
         try:
             progress = await self.get_campaign_progress(campaign_id)
