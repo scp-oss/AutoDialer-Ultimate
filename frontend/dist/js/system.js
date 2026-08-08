@@ -43,7 +43,7 @@ App.system = {
             this.state.activeCalls = data.active_calls || 0;
             this.state.maxCalls = data.max_calls || 50;
             this.state.queueSize = data.queue_size || 0;
-            this.state.asteriskConnected = data.asterisk_connected || false;
+            this.state.asteriskConnected = data.ami_connected || false;
             this.state.redisConnected = data.redis_connected || false;
             this.state.databaseConnected = data.database_connected || false;
             this.state.cpuUsage = data.cpu_usage || 0;
@@ -144,7 +144,7 @@ App.system = {
     // =============================================
     connectWebSocket() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/api/ws/system?token=${App.state.accessToken}`;
+        const wsUrl = `${protocol}//${window.location.host}/api/ws/dashboard?token=${App.state.accessToken}`;
         
         try {
             this.ws = new WebSocket(wsUrl);
@@ -192,47 +192,81 @@ App.system = {
         }, 5000);
     },
 
+    // Формат сообщений сервера (см. app/api/websocket.py):
+    // {"type": "call"|"campaign"|"system"|"notification", "data": {...}}
     handleWebSocketMessage(data) {
         switch (data.type) {
-            case 'status_update':
-                Object.assign(this.state, data.status);
-                this.updateUI();
+            case 'call':
+                this.handleCallEvent(data.data);
                 break;
-                
-            case 'call_started':
-                this.state.activeCalls++;
-                this.updateUI();
+
+            case 'system':
+                this.handleSystemMessage(data.data);
                 break;
-                
-            case 'call_ended':
-                this.state.activeCalls = Math.max(0, this.state.activeCalls - 1);
-                this.updateUI();
+
+            case 'notification':
+                if (data.data && data.data.message) {
+                    App.showToast(data.data.message, 'info');
+                }
                 break;
-                
-            case 'queue_update':
-                this.state.queueSize = data.size;
-                this.updateUI();
-                break;
-                
-            case 'system_event':
-                this.handleSystemEvent(data.event);
+
+            case 'campaign':
+                // Прогресс кампаний обрабатывается модулем campaigns (если подписан);
+                // system.js только держит соединение и общий системный статус.
                 break;
         }
     },
 
+    handleCallEvent(call) {
+        if (!call) return;
+
+        switch (call.event) {
+            case 'dial_begin':
+                this.state.activeCalls++;
+                this.updateUI();
+                break;
+
+            case 'hangup':
+                this.state.activeCalls = Math.max(0, this.state.activeCalls - 1);
+                this.updateUI();
+                break;
+
+            // 'answer' и 'dtmf' не меняют счётчик активных звонков
+        }
+    },
+
+    // data либо полный снимок статуса (SystemStatusResponse — начальный снимок
+    // при подключении), либо SystemNotificationEvent {level, title, message}
+    // (публикуется при изменении статуса SIP/AMI и т.п.)
+    handleSystemMessage(data) {
+        if (!data) return;
+
+        if ('level' in data) {
+            this.handleSystemEvent(data);
+            return;
+        }
+
+        this.state.enabled = data.enabled;
+        this.state.activeCalls = data.active_calls || 0;
+        this.state.maxCalls = data.max_calls || 50;
+        this.state.queueSize = data.queue_size || 0;
+        this.state.asteriskConnected = data.ami_connected || false;
+        this.state.redisConnected = data.redis_connected || false;
+        this.state.databaseConnected = data.database_connected || false;
+        this.updateUI();
+    },
+
     handleSystemEvent(event) {
-        switch (event.severity) {
+        switch (event.level) {
             case 'warning':
                 App.showToast(event.message, 'warning');
                 break;
             case 'error':
+            case 'critical':
                 App.showToast(event.message, 'error');
                 break;
             case 'info':
-                // Инфо события показываем только если это важно
-                if (event.important) {
-                    App.showToast(event.message, 'info');
-                }
+                App.showToast(event.message, 'info');
                 break;
         }
     },
