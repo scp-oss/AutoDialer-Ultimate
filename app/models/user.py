@@ -265,28 +265,32 @@ class UserCreateRequest(BaseSchema):
         if not re.search(r'\d', v):
             errors.append("Пароль должен содержать хотя бы одну цифру")
         
-        # Проверка на совпадение с username (если уже задан)
-        # Будет выполнена в model_validator
-        
         if errors:
             raise ValueError("; ".join(errors))
-        
+
         return v
-    
+
     @field_validator('email')
     @classmethod
     def validate_email(cls, v: Optional[str]) -> Optional[str]:
         if v:
             return v.lower().strip()
         return v
-    
+
     @field_validator('full_name')
     @classmethod
     def validate_full_name(cls, v: Optional[str]) -> Optional[str]:
         if v:
             return v.strip()
         return v
-    
+
+    @model_validator(mode='after')
+    def validate_password_not_username(self) -> 'UserCreateRequest':
+        """Пароль не должен совпадать с именем пользователя или содержать его"""
+        if self.username and self.username.lower() in self.password.lower():
+            raise ValueError("Пароль не должен содержать имя пользователя")
+        return self
+
     model_config = {
         "json_schema_extra": {
             "example": {
