@@ -311,7 +311,7 @@ const HistoryModule = {
                 ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
             ].join('\n');
             
-            const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+            const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -512,12 +512,7 @@ const HistoryModule = {
     },
     
     formatPhoneNumber(phone) {
-        if (!phone) return '—';
-        const cleaned = phone.replace(/\D/g, '');
-        if (cleaned.length === 11) {
-            return `+${cleaned[0]} (${cleaned.slice(1, 4)}) ${cleaned.slice(4, 7)}-${cleaned.slice(7, 9)}-${cleaned.slice(9, 11)}`;
-        }
-        return phone;
+        return App.formatPhoneNumber(phone);
     },
     
     formatDuration(seconds) {
