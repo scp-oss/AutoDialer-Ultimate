@@ -241,7 +241,8 @@ sql/             schema.sql (эталон схемы), migrations/ (истори
 frontend/dist/   vanilla JS/HTML/CSS админ-панель (не React — см. §3.2)
 asterisk/        конфиги Asterisk + pjsip.conf.template (рендерится envsubst'ом)
 docker/          Dockerfile для Asterisk + entrypoint-скрипты
-tests/           pytest (12 тестов, DB/Redis обязательны, AMI опционален)
+tests/           pytest (54 теста; 49 — чистые unit-тесты без внешних зависимостей,
+                 5 — интеграционные, требуют Postgres+Redis; AMI опционален)
 install.sh, scripts/, systemd/, nginx/, fail2ban/, logrotate/  bare-metal путь развёртывания
 ```
 
@@ -316,13 +317,25 @@ ER-диаграмма (dbdiagram.io/Mermaid из `sql/schema.sql`), полное
 теряя функциональность в процессе.
 
 ### 3.3 Полное тестовое покрытие
-Сегодня — 12 тестов (boot/security/health/websocket/dialer-regression).
-Нужны: unit-тесты бизнес-логики каждого сервиса (кампании, контакты,
-чёрный список, TTS/STT), интеграционные тесты полного цикла обзвона
-(mock AMI), E2E (Playwright по vanilla JS UI или будущему React),
-нагрузочное тестирование (Locust/k6) на CPS/конкурентные звонки согласно
-целям масштабирования из ТЗ (сотни одновременных звонков, сотни тысяч
-номеров).
+Было 12 тестов (boot/security/health/websocket/dialer-regression). Добавлены
+`tests/test_phone.py` (21 тест на `app/utils/phone.py` — нормализация,
+валидация, форматирование российских номеров) и
+`tests/test_model_validators.py` (26 тестов на `field_validator`/
+`model_validator` в `UserCreateRequest`, `ContactCreateRequest`,
+`BlacklistAddRequest` — чистая валидация Pydantic-схем, без БД/Redis).
+Заодно найден и исправлен баг: `UserCreateRequest.validate_password_strength`
+обещал в докстринге проверку "пароль не совпадает с username" через
+`model_validator`, но такого валидатора нигде не было — пароль, равный
+имени пользователя или содержащий его, проходил валидацию. Добавлен
+недостающий `model_validator`. Сейчас — 54 теста, из них 49 не требуют
+БД/Redis и проходят в любом окружении.
+
+Ещё нужны: unit-тесты бизнес-логики сервисов (кампании, чёрный список,
+TTS/STT — с моками БД/Redis, а не только Pydantic-схем), интеграционные
+тесты полного цикла обзвона (mock AMI), E2E (Playwright по vanilla JS UI
+или будущему React), нагрузочное тестирование (Locust/k6) на CPS/
+конкурентные звонки согласно целям масштабирования из ТЗ (сотни
+одновременных звонков, сотни тысяч номеров).
 
 ### 3.4 SIP/AMI: живые события в WebSocket — сделано
 `DialerManager` теперь публикует `LiveCallEvent` (dial_begin/answer/
