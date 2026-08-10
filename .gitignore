@@ -13,6 +13,7 @@
 config/local.py
 config/secrets.yml
 secrets/
+k8s/02-secret.yaml
 *.secret
 *.key
 *.pem
