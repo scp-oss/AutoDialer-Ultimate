@@ -283,8 +283,8 @@ install.sh, scripts/, systemd/, nginx/, fail2ban/, logrotate/  bare-metal пут
 `webhook_events`, `webhook_subscriptions`, `webhook_deliveries`,
 `record_versions`, `notifications`, `system_events`, `incoming_calls`.
 5 представлений (`campaign_stats`, `daily_stats`, `active_campaigns`,
-`dial_queue_view`, `dashboard_summary`). ER-диаграмма — см. §3.1
-(не построена в этой фазе).
+`dial_queue_view`, `dashboard_summary`). ER-диаграмма — `docs/ER_DIAGRAM.md`
+(см. §3.1).
 
 ### 2.4 SIP / AMI
 
@@ -304,12 +304,18 @@ DialerManager` подключается к Asterisk по AMI (`panoramisk`), Ast
 ## 3. Что осталось (по фазам, в порядке приоритета)
 
 ### 3.1 Документация и диаграммы
-ER-диаграмма (dbdiagram.io/Mermaid из `sql/schema.sql`), полное описание
-каждого REST-эндпоинта сверх автосгенерированного `/docs` (Swagger уже
-работает "из коробки" через FastAPI — `/docs`, `/redoc`, `/openapi.json`),
-диаграммы последовательности для потока обзвона и обработки входящего
-звонка, описание всех WebSocket-событий (частично задокументированы в
-`app/models/system.py`, нужно свести в отдельный документ).
+ER-диаграмма — сделано: `docs/ER_DIAGRAM.md` (Mermaid, все 24 таблицы
+`sql/schema.sql`), с заметками о нетривиальных связях (двунаправленный FK
+`campaigns`↔`audio_files`, полиморфные `record_versions`/`audit_log` без
+прямого FK на версионируемую сущность, `settings` с непервичным `id`,
+двойная нормализация телефона на уровне API и SQL-триггера).
+
+Ещё нужны: полное описание каждого REST-эндпоинта сверх автосгенерированного
+`/docs` (Swagger уже работает "из коробки" через FastAPI — `/docs`, `/redoc`,
+`/openapi.json`), диаграммы последовательности для потока обзвона и
+обработки входящего звонка, описание всех WebSocket-событий (частично
+задокументированы в `app/models/system.py`, нужно свести в отдельный
+документ).
 
 ### 3.2 Frontend на React/TypeScript/Vite/Tailwind/shadcn
 Текущий `frontend/dist/js/*.js` рабочий и вызывает реальные эндпоинты —
