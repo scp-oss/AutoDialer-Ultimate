@@ -241,6 +241,7 @@ sql/             schema.sql (эталон схемы), migrations/ (истори
 frontend/dist/   vanilla JS/HTML/CSS админ-панель (не React — см. §3.2)
 asterisk/        конфиги Asterisk + pjsip.conf.template (рендерится envsubst'ом)
 docker/          Dockerfile для Asterisk + entrypoint-скрипты
+k8s/             Kubernetes-манифесты (черновик, не проверен на кластере — см. §3.5)
 tests/           pytest (54 теста; 49 — чистые unit-тесты без внешних зависимостей,
                  5 — интеграционные, требуют Postgres+Redis; AMI опционален)
 install.sh, scripts/, systemd/, nginx/, fail2ban/, logrotate/  bare-metal путь развёртывания
@@ -409,13 +410,27 @@ AMI-события двигали только внутреннюю state machin
    валилось бы 422-й ошибкой валидации. Оба бага исправлены в
    `saveCampaign()`.
 
-### 3.5 Kubernetes-манифесты
-Не созданы. `docker-compose.yml` — хорошая основа: Deployment на backend
-(с readinessProbe на `/api/health/ready`), StatefulSet или managed
-Postgres/Redis, DaemonSet/Deployment на Asterisk с hostNetwork (SIP/RTP
-плохо живут за обычным ClusterIP из-за диапазона портов RTP), PVC под
-`tts_audio`/`call_recordings`, Secret под `JWT_SECRET`/`DB_PASSWORD`/
-`AMI_PASSWORD`.
+### 3.5 Kubernetes-манифесты — сделано (черновик, не проверено на кластере)
+`k8s/` — Namespace, ConfigMap/Secret-шаблон (`02-secret.example.yaml`,
+реальный `02-secret.yaml` — в `.gitignore`), StatefulSet для Postgres/Redis,
+Deployment для Asterisk (`hostNetwork: true` — SIP/RTP не проходят через
+обычный ClusterIP из-за диапазона UDP-портов 10000-10100, плюс отдельный
+`Service` для AMI на порт 5038, чтобы backend доставал до него по
+кластерному DNS, а не по IP узла), Deployment backend (readinessProbe на
+`/api/health/ready`, livenessProbe на `/api/health/live`, init-контейнер
+`alembic upgrade head`), Deployment nginx, PVC под `tts_audio`/
+`call_recordings` (`ReadWriteMany` — том монтируют одновременно три
+ворклоада, большинство StorageClass по умолчанию это не поддерживают).
+
+Как и с Docker (см. §1.4), в среде этой сессии не было ни Kubernetes-
+кластера, ни его эмуляции — манифесты валидированы только на синтаксис
+YAML и сверены построчно с `docker-compose.yml`/`Dockerfile`/
+`.env.example`, но ни разу не применялись `kubectl apply`. `k8s/README.md`
+честно перечисляет, что нужно сделать перед реальным деплоем: собрать и
+запушить три образа (ни один пока не существует ни в каком реестре), вшить
+`frontend/dist` в образы на этапе сборки (в K8s нет host bind-mount, которым
+пользуется `docker-compose.yml`), выбрать RWX-совместимый StorageClass,
+закрепить под Asterisk конкретный узел.
 
 ### 3.6 SQLAlchemy ORM (если формально обязателен)
 См. §2.2 — оценка объёма: ~15 сервисов, ~25 моделей, нужен параллельный
