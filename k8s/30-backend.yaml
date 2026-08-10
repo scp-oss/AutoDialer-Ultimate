@@ -18,10 +18,13 @@ spec:
       labels:
         app: backend
     spec:
-      # retry_queue/transcription_queue/health_monitor workers are NOT
-      # leader-gated yet (see ROADMAP.md §3.8) — running >1 replica means
-      # they execute redundantly (wasteful, not incorrect) until that's
-      # fixed. Drop to replicas: 1 if that's not acceptable yet.
+      # retry_queue/transcription_queue/health_monitor/metrics are NOT
+      # leader-gated, and that's correct by design (see ROADMAP.md §3.8):
+      # retry_queue uses SELECT ... FOR UPDATE SKIP LOCKED, transcription
+      # actually runs via redis blpop() elsewhere, health/metrics reflect
+      # the local replica. Only cleanup_audio/log_cleanup/asterisk_
+      # reconciliation need a single leader, and they already have it.
+      # replicas: 2 below is safe as-is.
       initContainers:
         - name: migrate
           image: autodialer/backend:latest  # build from Dockerfile and push first

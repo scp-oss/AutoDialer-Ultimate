@@ -1,29 +1,29 @@
-# Kubernetes манифесты (ROADMAP.md §3.5)
+# Kubernetes manifests (ROADMAP.md §3.5)
 
-Стартовая точка для деплоя AutoDialer Ultimate в Kubernetes, зеркалирующая
-`docker-compose.yml` компонент за компонентом. **Не применялось к реальному
-кластеру в этой сессии** — то же ограничение, что и в остальной части проекта (см.
-ROADMAP.md §1.4: в песочнице, где это строилось, нет рабочего Docker-демона, тем
-более нет Kubernetes-кластера). Валидировано только на синтаксис YAML
-(`python3 -c "import yaml; yaml.safe_load_all(...)"` на каждом файле) и на
-соответствие портов/переменных окружения/томов из `docker-compose.yml`, `Dockerfile`
-и `.env.example`. Считайте это выверенным черновиком, а не доказанным деплоем —
-прогоните это полностью на реальном кластере, прежде чем полагаться на него в
-продакшене.
+Starting point for deploying AutoDialer Ultimate to Kubernetes, mirroring
+`docker-compose.yml` component-for-component. **Not applied against a real
+cluster in this session** — same constraint as the rest of the project (see
+ROADMAP.md §1.4: the sandbox this was built in has no working Docker
+daemon, let alone a Kubernetes cluster). Validated only for YAML syntax
+(`python3 -c "import yaml; yaml.safe_load_all(...)"` on every file) and for
+matching the ports/env vars/volumes actually declared in
+`docker-compose.yml`, `Dockerfile`, and `.env.example`. Treat this as a
+reviewed draft, not a proven deployment — run it end-to-end against a real
+cluster before relying on it in production.
 
-## Порядок применения
+## Apply order
 
-Файлы пронумерованы, чтобы `kubectl apply -f k8s/` применился чисто за один проход
-(namespace → config/secrets → stateful-хранилища → общее хранилище → прикладные слои),
-но здесь нет зависимостей через `Job`/хуки — порядок важен только потому, что
-Service `postgres` должен существовать до того, как init-контейнер `backend`
-попытается выполнить `alembic upgrade head` против него, что сам Kubernetes и
-обрабатывает через ретрай/`CrashLoopBackOff`, даже если применить всё одновременно.
+Files are numbered for `kubectl apply -f k8s/` to apply cleanly in one pass
+(namespace → config/secrets → stateful stores → shared storage → app
+tiers), but nothing here has a `Job`/hook dependency — order only matters
+because `postgres`'s Service must exist before `backend`'s init container
+tries `alembic upgrade head` against it, which Kubernetes' own retry/back-off
+on `CrashLoopBackOff` handles even if you apply everything simultaneously.
 
 ```bash
 kubectl apply -f k8s/00-namespace.yaml
 kubectl apply -f k8s/01-configmap.yaml
-cp k8s/02-secret.example.yaml k8s/02-secret.yaml   # заполните реальными значениями, в gitignore
+cp k8s/02-secret.example.yaml k8s/02-secret.yaml   # fill in real values, gitignored
 kubectl apply -f k8s/02-secret.yaml
 kubectl create configmap nginx-conf -n autodialer --from-file=default.conf=nginx/autodialer.conf
 kubectl apply -f k8s/10-postgres.yaml
@@ -34,59 +34,62 @@ kubectl apply -f k8s/30-backend.yaml
 kubectl apply -f k8s/40-nginx.yaml
 ```
 
-## Что нужно сделать перед тем, как это заработает
+## What you must do before this works
 
-1. **Собрать и запушить три образа** — ни `autodialer/backend`, ни
-   `autodialer/asterisk`, ни `autodialer/nginx` не существуют ни в каком реестре —
-   это имена-заглушки. Соберите из `Dockerfile`, `docker/asterisk/Dockerfile`
-   и нового однострочного `nginx:alpine` + `COPY frontend/dist` Dockerfile
-   соответственно (см. комментарий вверху `40-nginx.yaml`), затем
-   запушите в реестр, доступный вашему кластеру, и обновите поля
-   `image:`.
-2. **Вшить `frontend/dist` в образы при сборке.** `docker-compose.yml`
-   бинд-монтирует `./frontend/dist` с хоста в контейнеры `backend` и
-   `nginx` — у Kubernetes нет хостовой файловой системы для такого
-   монтирования. Добавьте `COPY frontend/dist /srv/frontend` в `Dockerfile`
-   (backend отдаёт его через `STATIC_DIR`) и соберите nginx-образ как
-   описано выше. Пропуск этого шага означает, что `STATIC_DIR` и кореньвой
-   каталог nginx будут пустыми в кластере.
-3. **Выбрать RWX-совместимый StorageClass** для `12-shared-storage.yaml`
-   (`tts-audio`, `call-recordings`) — оба PVC одновременно монтируются
-   asterisk, backend и nginx, что требует `ReadWriteMany`. Большинство
-   StorageClass по умолчанию (`gp2`/`gp3`, `standard`, `local-path`) поддерживают
-   только `ReadWriteOnce` и оставят эти PVC висеть в `Pending`. Используйте
-   NFS-провайдер, EFS (`efs-sc` на EKS), Azure Files (`azurefile` на AKS) или
-   аналог, и укажите `storageClassName` в этом файле.
-4. **Заполнить `02-secret.yaml`** реальными `DB_PASSWORD`, `JWT_SECRET`
-   (32+ символа), `AMI_PASSWORD`, `EXTENSION_PASSWORD`, `FREEPBX_IP` и остальными
-   ключами из `02-secret.example.yaml`. В продакшене лучше использовать
-   интеграцию с менеджером секретов, а не простой закоммиченный
-   `Secret` — см. комментарий в этом файле.
-5. **Закрепить под Asterisk конкретный узел** (`nodeSelector` или
-   отдельный нод-пул), если в вашем кластере больше одного узла — его
-   `hostNetwork: true` занимает `5060/udp` и `10000-10100/udp` напрямую на
-   том узле, куда он попадёт, и именно этот IP/правило файрвола нужно
-   вашему SIP-провайдеру, а не IP кластерного Service.
+1. **Build and push three images** — none of `autodialer/backend`,
+   `autodialer/asterisk`, `autodialer/nginx` exist in any registry; these
+   are placeholder names. Build from `Dockerfile`, `docker/asterisk/Dockerfile`,
+   and a new one-line `nginx:alpine` + `COPY frontend/dist` Dockerfile
+   respectively (see the comment atop `40-nginx.yaml`), then push to
+   whatever registry your cluster can pull from and update the `image:`
+   fields.
+2. **Bake `frontend/dist` into images at build time.** `docker-compose.yml`
+   bind-mounts `./frontend/dist` from the host into both `backend` and
+   `nginx` containers — Kubernetes has no host filesystem to bind-mount
+   from. Add `COPY frontend/dist /srv/frontend` to `Dockerfile` (backend
+   serves it via `STATIC_DIR`) and build the nginx image as described
+   above. Skipping this means `STATIC_DIR` and nginx's document root are
+   empty in the cluster.
+3. **Pick an RWX-capable StorageClass** for `12-shared-storage.yaml`
+   (`tts-audio`, `call-recordings`) — both PVCs are mounted by asterisk,
+   backend, *and* nginx simultaneously, which needs `ReadWriteMany`. Most
+   default StorageClasses (`gp2`/`gp3`, `standard`, `local-path`) are
+   `ReadWriteOnce` only and will leave these PVCs stuck `Pending`. Use an
+   NFS provisioner, EFS (`efs-sc` on EKS), Azure Files (`azurefile` on
+   AKS), or equivalent, and set `storageClassName` in that file.
+4. **Fill in `02-secret.yaml`** with real `DB_PASSWORD`, `JWT_SECRET`
+   (32+ chars), `AMI_PASSWORD`, `EXTENSION_PASSWORD`, `FREEPBX_IP`, and the
+   rest of `02-secret.example.yaml`'s keys. In production, prefer a secrets
+   manager integration over a plain committed `Secret` — see the comment
+   in that file.
+5. **Pin the Asterisk pod to a specific node** (`nodeSelector` or a
+   dedicated node pool) if your cluster has more than one node — its
+   `hostNetwork: true` binds `5060/udp` and `10000-10100/udp` directly on
+   whichever node it lands on, and that's the IP/firewall rule your SIP
+   trunk provider needs to reach, not a cluster-wide Service IP.
 
-## Известные пробелы относительно docker-compose.yml
+## Known gaps vs. docker-compose.yml
 
-- **Нет резервного копирования.** ROADMAP.md §3.7 всё ещё не реализован;
-  у `StatefulSet` Postgres есть PVC, но нет расписания `pg_dump`/WAL-archiving —
-  не считайте сам по себе PVC стратегией резервного копирования.
-- **Нет HorizontalPodAutoscaler.** `backend` и `nginx` выставлены в `replicas: 2`
-  как статичная отправная точка (нагрузочное тестирование из ROADMAP §3.3
-  ещё не сделано, поэтому нет данных по CPS/конкурентности, чтобы подобрать
-  пороги HPA, и угадывать их не имело смысла). См. также ROADMAP §3.8:
-  запуск `backend` с `replicas: 2` означает, что `retry_queue`/
-  `transcription_queue`/`health_monitor` выполняются избыточно, так как они не
-leader-gated. Не некорректно, просто расточительно — снизьте до
-  `replicas: 1`, пока это не исправлено, либо исправьте сначала.
-- **Нет NetworkPolicy / PodDisruptionBudget / квот ресурсов** на уровне
-  неймспейса — оставлено за рамками, чтобы это оставалось выверенной стартовой
-  точкой, а не полноценным набором security/ops-политик с нуля — это отдельная
-  задача.
-- **Ingress вместо LoadBalancer**: `40-nginx.yaml` использует Service типа
-  `LoadBalancer` (ближайший аналог публикации портов хоста в docker-compose.yml).
-  Если в вашем кластере уже есть ingress-контроллер, обычно лучше подходит
-  ресурс `Ingress` + `ClusterIP` Service — замените им вместо добавления
-  второго публичного балансировщика.
+- **No backups.** ROADMAP.md §3.7 is still unimplemented; the Postgres
+  `StatefulSet` here has a PVC but no scheduled `pg_dump`/WAL-archiving —
+  do not treat the PVC alone as a backup strategy.
+- **No HorizontalPodAutoscaler.** `backend` and `nginx` are both set to
+  `replicas: 2` as a static starting point (ROADMAP §3.3's load-testing
+  work isn't done yet, so there's no CPS/concurrency data to size an HPA
+  against). `replicas: 2` on `backend` is safe with respect to its
+  periodic workers — a prior draft of this README flagged
+  `retry_queue`/`transcription_queue`/`health_monitor` as unsafe to run
+  redundantly across replicas; ROADMAP §3.8 was audited and that turned
+  out to be wrong (they're either `SKIP LOCKED`-safe, `blpop()`-safe, or
+  purely per-replica local state). Only `cleanup_audio`/`log_cleanup`/
+  `asterisk_reconciliation` need single-leader execution, and they already
+  have it via leader election.
+- **No NetworkPolicy / PodDisruptionBudget / resource quotas** at the
+  namespace level — left out to keep this a reviewed starting point rather
+  than a from-scratch security/ops policy set, which is its own separate
+  piece of work.
+- **Ingress vs. LoadBalancer**: `40-nginx.yaml` uses a `LoadBalancer`
+  Service (closest 1:1 match to `docker-compose.yml`'s host port
+  publishing). If your cluster already runs an ingress controller, an
+  `Ingress` resource + `ClusterIP` Service is usually the better fit —
+  swap it in instead of adding a second public load balancer.
