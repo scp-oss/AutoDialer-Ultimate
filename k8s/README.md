@@ -15,7 +15,7 @@ cluster before relying on it in production.
 
 Files are numbered for `kubectl apply -f k8s/` to apply cleanly in one pass
 (namespace → config/secrets → stateful stores → shared storage → app
-tiers), but nothing here has a `Job`/hook dependency — order only matters
+tiers → backup CronJobs), but nothing here has a `Job`/hook dependency — order only matters
 because `postgres`'s Service must exist before `backend`'s init container
 tries `alembic upgrade head` against it, which Kubernetes' own retry/back-off
 on `CrashLoopBackOff` handles even if you apply everything simultaneously.
@@ -32,6 +32,7 @@ kubectl apply -f k8s/12-shared-storage.yaml
 kubectl apply -f k8s/20-asterisk.yaml
 kubectl apply -f k8s/30-backend.yaml
 kubectl apply -f k8s/40-nginx.yaml
+kubectl apply -f k8s/50-backup-cronjob.yaml
 ```
 
 ## What you must do before this works
@@ -70,9 +71,17 @@ kubectl apply -f k8s/40-nginx.yaml
 
 ## Known gaps vs. docker-compose.yml
 
-- **No backups.** ROADMAP.md §3.7 is still unimplemented; the Postgres
-  `StatefulSet` here has a PVC but no scheduled `pg_dump`/WAL-archiving —
-  do not treat the PVC alone as a backup strategy.
+- **Backups are on-cluster only.** `50-backup-cronjob.yaml` (ROADMAP.md
+  §3.7) adds two CronJobs — daily `pg_dump -Fc` and a `tar` of
+  `tts_audio`/`call_recordings` — onto a dedicated `backup-storage` PVC,
+  with mtime-based retention. That protects against accidental deletes and
+  bad migrations, but the backups live on the same cluster/storage as the
+  data itself, so it's not disaster recovery on its own — see the caveat
+  comment at the top of that file for how to add an off-cluster copy step
+  (not included). Restore is deliberately manual (`kubectl cp` +
+  `pg_restore`/`tar x` via a throwaway pod, documented in the same file's
+  comments), not a Job — same reasoning as `autodialer-restore` on bare
+  metal requiring interactive confirmation before overwriting data.
 - **No HorizontalPodAutoscaler.** `backend` and `nginx` are both set to
   `replicas: 2` as a static starting point (ROADMAP §3.3's load-testing
   work isn't done yet, so there's no CPS/concurrency data to size an HPA

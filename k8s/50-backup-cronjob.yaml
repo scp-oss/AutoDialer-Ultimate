@@ -1,0 +1,175 @@
+# Resident backup for AutoDialer Ultimate (ROADMAP.md §3.7). Two CronJobs
+# writing to a dedicated PVC on a schedule, mirroring what
+# scripts/15_backup_setup.sh does on bare metal (pg_dump -Fc + tar of
+# tts_audio/call_recordings + mtime-based retention).
+#
+# IMPORTANT — this backs up to a PVC on the SAME cluster/storage backend as
+# the data it's backing up. That protects against accidental deletes, bad
+# migrations, and DB corruption, but NOT against storage-level or
+# cluster-level disaster. For real disaster recovery, add an off-cluster
+# copy step (e.g. a sidecar/second CronJob running rclone/aws s3 sync
+# against backup-storage) — not included here, same "draft, not applied to
+# a real cluster" caveat as the rest of k8s/ (see k8s/README.md).
+#
+# Restore is intentionally NOT a CronJob/Job here — restoring is a manual,
+# high-stakes operation (same reasoning as autodialer-restore on bare metal
+# requiring an interactive confirmation). To restore in Kubernetes:
+#   1. kubectl cp autodialer/<backup-job-pod>:/backups/db_<TS>.dump ./db.dump
+#      (or exec into any pod with backup-storage mounted)
+#   2. kubectl exec -it -n autodialer postgres-0 -- pg_restore -U autodialer \
+#        -d autodialer --clean --if-exists --no-owner < db.dump
+#   3. For tts_audio/call_recordings: run a throwaway pod mounting the
+#      target PVC + backup-storage, `tar xzf` the relevant archive into place.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-storage
+  namespace: autodialer
+spec:
+  accessModes: ["ReadWriteOnce"]
+  # storageClassName: gp3   # any ReadWriteOnce class is fine — only the two
+  #                         # CronJobs below ever mount this, never in parallel
+  #                         # with each other by design (see schedules below).
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: autodialer
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: pg-dump
+              image: postgres:15   # match k8s/10-postgres.yaml's server version
+              env:
+                - name: PGHOST
+                  valueFrom:
+                    configMapKeyRef:
+                      name: autodialer-config
+                      key: DB_HOST
+                - name: PGDATABASE
+                  valueFrom:
+                    configMapKeyRef:
+                      name: autodialer-config
+                      key: DB_NAME
+                - name: PGUSER
+                  valueFrom:
+                    configMapKeyRef:
+                      name: autodialer-config
+                      key: DB_USER
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: autodialer-secrets
+                      key: DB_PASSWORD
+                - name: BACKUP_RETENTION_DAYS
+                  value: "30"   # keep in sync with BACKUP_RETENTION in .env.example if changed
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  TS=$(date +%Y%m%d_%H%M%S)
+                  echo "[postgres-backup $TS] dumping $PGDATABASE"
+                  pg_dump -Fc -f "/backups/db_${TS}.dump"
+                  echo "[postgres-backup $TS] $(du -h /backups/db_${TS}.dump | cut -f1) written"
+                  DELETED=$(find /backups -maxdepth 1 -name 'db_*.dump' -mtime "+${BACKUP_RETENTION_DAYS}" -print -delete | wc -l)
+                  [ "$DELETED" -gt 0 ] && echo "[postgres-backup $TS] rotated $DELETED old dump(s)"
+                  echo "[postgres-backup $TS] done"
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  memory: "512Mi"
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-storage
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: media-backup
+  namespace: autodialer
+spec:
+  schedule: "15 2 * * *"   # offset from postgres-backup so the two jobs don't
+                            # race for backup-storage (ReadWriteOnce)
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: tar-media
+              image: alpine:3.19
+              env:
+                - name: BACKUP_RETENTION_DAYS
+                  value: "30"
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  TS=$(date +%Y%m%d_%H%M%S)
+                  if [ -n "$(ls -A /source/tts-audio 2>/dev/null)" ]; then
+                    tar czf "/backups/tts_audio_${TS}.tar.gz" -C /source tts-audio
+                    echo "[media-backup $TS] tts_audio: $(du -h /backups/tts_audio_${TS}.tar.gz | cut -f1)"
+                  else
+                    echo "[media-backup $TS] tts-audio empty, skipping"
+                  fi
+                  if [ -n "$(ls -A /source/call-recordings 2>/dev/null)" ]; then
+                    tar czf "/backups/call_recordings_${TS}.tar.gz" -C /source call-recordings
+                    echo "[media-backup $TS] call_recordings: $(du -h /backups/call_recordings_${TS}.tar.gz | cut -f1)"
+                  else
+                    echo "[media-backup $TS] call-recordings empty, skipping"
+                  fi
+                  DELETED=$(find /backups -maxdepth 1 \( -name 'tts_audio_*.tar.gz' -o -name 'call_recordings_*.tar.gz' \) -mtime "+${BACKUP_RETENTION_DAYS}" -print -delete | wc -l)
+                  [ "$DELETED" -gt 0 ] && echo "[media-backup $TS] rotated $DELETED old archive(s)"
+                  echo "[media-backup $TS] done"
+              volumeMounts:
+                - name: tts-audio
+                  mountPath: /source/tts-audio
+                  readOnly: true
+                - name: call-recordings
+                  mountPath: /source/call-recordings
+                  readOnly: true
+                - name: backup-storage
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  memory: "256Mi"
+          volumes:
+            - name: tts-audio
+              persistentVolumeClaim:
+                claimName: tts-audio
+                readOnly: true
+            - name: call-recordings
+              persistentVolumeClaim:
+                claimName: call-recordings
+                readOnly: true
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-storage
