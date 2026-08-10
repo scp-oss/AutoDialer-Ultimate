@@ -1,0 +1,78 @@
+# Requires a custom nginx image with frontend/dist baked in (same reasoning
+# as the note in 30-backend.yaml — no host bind-mount in Kubernetes):
+#
+#   FROM nginx:alpine
+#   COPY frontend/dist /usr/share/nginx/html
+#
+# Also requires a ConfigMap generated from the existing nginx config, not
+# duplicated here (491 lines — pasting a copy into this file would drift
+# from nginx/autodialer.conf as soon as either one changes):
+#
+#   kubectl create configmap nginx-conf -n autodialer \
+#     --from-file=default.conf=nginx/autodialer.conf
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: autodialer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: autodialer/nginx:latest  # nginx:alpine + COPY frontend/dist, see note above
+          ports:
+            - containerPort: 80
+            - containerPort: 443
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+            - name: tts-audio
+              mountPath: /var/lib/asterisk/sounds/tts
+              readOnly: true
+            - name: call-recordings
+              mountPath: /var/spool/asterisk/monitor
+              readOnly: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              memory: "256Mi"
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: nginx-conf
+        - name: tts-audio
+          persistentVolumeClaim:
+            claimName: tts-audio
+            readOnly: true
+        - name: call-recordings
+          persistentVolumeClaim:
+            claimName: call-recordings
+            readOnly: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  namespace: autodialer
+spec:
+  type: LoadBalancer  # swap for an Ingress + ClusterIP if your cluster has an ingress controller
+  selector:
+    app: nginx
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+    - name: https
+      port: 443
+      targetPort: 443

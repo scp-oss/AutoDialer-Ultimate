@@ -1,0 +1,110 @@
+# hostNetwork is required for SIP/RTP: RTP uses a wide UDP port range
+# (10000-10100 here) that Kubernetes Services/ClusterIP cannot forward
+# efficiently — each channel would need its own Service otherwise. With
+# hostNetwork the pod binds the node's real network interface directly,
+# same as docker-compose's port mappings for 5060/udp and 10000-10100/udp.
+#
+# Trade-off: replicas must stay at 1 (two pods can't both bind 5060/udp on
+# the same node), and the pod is pinned to wherever it lands — pair this
+# with a nodeSelector/taint in real deployments so it's not rescheduled
+# onto a node without the SIP port open in your firewall/security group.
+#
+# AMI (port 5038, TCP) doesn't need hostNetwork — it's exposed separately
+# via the asterisk-ami Service below so the backend can reach it through
+# normal cluster DNS instead of a node IP.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asterisk
+  namespace: autodialer
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # avoid two pods racing for the same hostNetwork ports
+  selector:
+    matchLabels:
+      app: asterisk
+  template:
+    metadata:
+      labels:
+        app: asterisk
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet  # keep cluster DNS despite hostNetwork
+      containers:
+        - name: asterisk
+          image: autodialer/asterisk:latest  # build from docker/asterisk/Dockerfile and push first
+          env:
+            - name: FREEPBX_IP
+              valueFrom:
+                secretKeyRef:
+                  name: autodialer-secrets
+                  key: FREEPBX_IP
+            - name: FREEPBX_EXTENSION
+              valueFrom:
+                secretKeyRef:
+                  name: autodialer-secrets
+                  key: FREEPBX_EXTENSION
+            - name: EXTENSION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: autodialer-secrets
+                  key: EXTENSION_PASSWORD
+            - name: AMI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: autodialer-secrets
+                  key: AMI_PASSWORD
+            - name: ADMIN_AMI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: autodialer-secrets
+                  key: ADMIN_AMI_PASSWORD
+            - name: MONITOR_AMI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: autodialer-secrets
+                  key: MONITOR_AMI_PASSWORD
+          ports:
+            - containerPort: 5060
+              protocol: UDP
+            - containerPort: 5038
+              protocol: TCP
+            - containerPort: 10000
+              protocol: UDP
+            - containerPort: 10100
+              protocol: UDP
+          volumeMounts:
+            - name: tts-audio
+              mountPath: /var/lib/asterisk/sounds/tts
+            - name: call-recordings
+              mountPath: /var/spool/asterisk/monitor
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              memory: "512Mi"
+      volumes:
+        - name: tts-audio
+          persistentVolumeClaim:
+            claimName: tts-audio
+        - name: call-recordings
+          persistentVolumeClaim:
+            claimName: call-recordings
+---
+# Selects the (hostNetwork) asterisk pod by label so the backend can reach
+# AMI at asterisk-ami:5038 through normal cluster DNS/kube-proxy instead of
+# a hardcoded node IP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: asterisk-ami
+  namespace: autodialer
+spec:
+  selector:
+    app: asterisk
+  ports:
+    - name: ami
+      port: 5038
+      targetPort: 5038

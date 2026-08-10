@@ -1,0 +1,48 @@
+# Non-secret settings, mirrors .env.example. Split from Secret (10-secret.yaml)
+# so config changes don't require re-supplying credentials.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autodialer-config
+  namespace: autodialer
+data:
+  ENVIRONMENT: "production"
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+  DB_NAME: "autodialer"
+  DB_USER: "autodialer"
+  DB_POOL_MIN_SIZE: "5"
+  DB_POOL_MAX_SIZE: "50"
+  DB_COMMAND_TIMEOUT: "60"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  REDIS_MAXMEMORY: "256mb"
+  AMI_HOST: "asterisk-ami"
+  AMI_PORT: "5038"
+  AMI_USER: "autodialer"
+  JWT_ALGORITHM: "HS256"
+  ACCESS_TOKEN_EXPIRE: "3600"
+  REFRESH_TOKEN_EXPIRE: "604800"
+  MAX_CALLS: "50"
+  DEFAULT_CPS: "5"
+  CALL_TIMEOUT: "30"
+  MAX_RETRIES: "3"
+  CALLER_ID: "AutoDialer"
+  TTS_ENGINE: "piper"
+  TTS_VOICE: "denis"
+  TTS_MODEL_DIR: "/var/lib/asterisk/sounds/tts/models"
+  TTS_OUTPUT_DIR: "/var/lib/asterisk/sounds/tts"
+  TTS_DIR: "/var/lib/asterisk/sounds/tts"
+  RECORDINGS_DIR: "/var/spool/asterisk/monitor"
+  AUDIO_RETENTION_DAYS: "30"
+  MAX_UPLOAD_SIZE_MB: "10"
+  PROMETHEUS_ENABLED: "true"
+  CORS_ORIGINS: "*"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  LOG_DIR: "/opt/autodialer/logs"
+  DATA_DIR: "/opt/autodialer/data"
+  STATIC_DIR: "/srv/frontend"
+  TZ: "UTC"
+  LANG: "ru_RU.UTF-8"
+  LC_ALL: "ru_RU.UTF-8"

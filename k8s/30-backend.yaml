@@ -1,0 +1,107 @@
+# NOTE on frontend/dist: docker-compose.yml bind-mounts ./frontend/dist
+# into both backend and nginx read-only — there's no host filesystem to
+# bind-mount from in Kubernetes. Add `COPY frontend/dist /srv/frontend` to
+# Dockerfile (or a separate init step) before building the image referenced
+# below, otherwise STATIC_DIR will be empty in the container.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: autodialer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      # retry_queue/transcription_queue/health_monitor workers are NOT
+      # leader-gated yet (see ROADMAP.md §3.8) — running >1 replica means
+      # they execute redundantly (wasteful, not incorrect) until that's
+      # fixed. Drop to replicas: 1 if that's not acceptable yet.
+      initContainers:
+        - name: migrate
+          image: autodialer/backend:latest  # build from Dockerfile and push first
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: autodialer-config
+            - secretRef:
+                name: autodialer-secrets
+      containers:
+        - name: backend
+          image: autodialer/backend:latest
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: autodialer-config
+            - secretRef:
+                name: autodialer-secrets
+          readinessProbe:
+            httpGet:
+              path: /api/health/ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health/live
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          volumeMounts:
+            - name: tts-audio
+              mountPath: /var/lib/asterisk/sounds/tts
+            - name: call-recordings
+              mountPath: /var/spool/asterisk/monitor
+            - name: backend-logs
+              mountPath: /opt/autodialer/logs
+            - name: backend-data
+              mountPath: /opt/autodialer/data
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              memory: "768Mi"
+      volumes:
+        - name: tts-audio
+          persistentVolumeClaim:
+            claimName: tts-audio
+        - name: call-recordings
+          persistentVolumeClaim:
+            claimName: call-recordings
+        - name: backend-logs
+          emptyDir: {}
+        - name: backend-data
+          persistentVolumeClaim:
+            claimName: backend-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backend-data
+  namespace: autodialer
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: autodialer
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 8000
+      targetPort: 8000

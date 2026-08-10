@@ -1,0 +1,31 @@
+# tts_audio and call_recordings are mounted by THREE workloads at once
+# (asterisk writes, backend reads/writes, nginx reads — see
+# docker-compose.yml volumes) — this requires ReadWriteMany, which most
+# default StorageClasses (local-path, gp2/gp3, standard) do NOT support.
+# Set storageClassName below to an RWX-capable class for your cluster
+# (examples: "efs-sc" on EKS, "azurefile" on AKS, "nfs-client" for an
+# in-cluster NFS provisioner). Left unset here on purpose — applying this
+# file without picking one will get PVCs stuck Pending.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tts-audio
+  namespace: autodialer
+spec:
+  accessModes: ["ReadWriteMany"]
+  # storageClassName: efs-sc
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: call-recordings
+  namespace: autodialer
+spec:
+  accessModes: ["ReadWriteMany"]
+  # storageClassName: efs-sc
+  resources:
+    requests:
+      storage: 20Gi
