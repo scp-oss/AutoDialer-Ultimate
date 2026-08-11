@@ -174,7 +174,7 @@ class ContactService:
                 request.email,
                 phone2,
                 phone3,
-                request.gender.value if request.gender else None,
+                request.gender if request.gender else None,
                 request.birth_date,
                 request.company,
                 request.position,
@@ -183,7 +183,7 @@ class ContactService:
                 request.city,
                 request.address,
                 request.postal_code,
-                request.source.value if request.source else ContactSource.MANUAL.value,
+                request.source if request.source else ContactSource.MANUAL.value,
                 ContactStatus.ACTIVE.value,
                 json.dumps(request.custom_fields) if request.custom_fields else None,
                 request.notes,
@@ -294,7 +294,7 @@ class ContactService:
             
             if request.gender is not None:
                 updates.append(f"gender = ${param_idx}")
-                params.append(request.gender.value)
+                params.append(request.gender)
                 param_idx += 1
             
             if request.birth_date is not None:
@@ -349,7 +349,7 @@ class ContactService:
             
             if request.status is not None:
                 updates.append(f"status = ${param_idx}")
-                params.append(request.status.value)
+                params.append(request.status)
                 param_idx += 1
             
             if updates:
@@ -523,7 +523,7 @@ class ContactService:
                 if filter_params.status:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.status))])
                     where_conditions.append(f"c.status IN ({placeholders})")
-                    params.extend([s.value for s in filter_params.status])
+                    params.extend(list(filter_params.status))
                     param_idx += len(filter_params.status)
                 
                 if filter_params.tags:
@@ -979,7 +979,7 @@ class ContactService:
             data.get(name_field, '').strip() or None,
             data.get(email_field, '').strip() or None,
             data.get(company_field, '').strip() or None,
-            request.source.value,
+            request.source,
             ContactStatus.ACTIVE.value
         )
     
