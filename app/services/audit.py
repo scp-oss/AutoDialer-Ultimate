@@ -388,19 +388,19 @@ class AuditService:
                 if filter_params.action:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.action))])
                     where_conditions.append(f"action IN ({placeholders})")
-                    params.extend([a.value for a in filter_params.action])
+                    params.extend(list(filter_params.action))
                     param_idx += len(filter_params.action)
-                
+
                 if filter_params.severity:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.severity))])
                     where_conditions.append(f"severity IN ({placeholders})")
-                    params.extend([s.value for s in filter_params.severity])
+                    params.extend(list(filter_params.severity))
                     param_idx += len(filter_params.severity)
-                
+
                 if filter_params.entity_type:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.entity_type))])
                     where_conditions.append(f"entity_type IN ({placeholders})")
-                    params.extend([e.value for e in filter_params.entity_type])
+                    params.extend(list(filter_params.entity_type))
                     param_idx += len(filter_params.entity_type)
                 
                 if filter_params.entity_id is not None:
@@ -837,10 +837,10 @@ class AuditService:
                 item.user_id or '',
                 item.username or '',
                 item.user_role or '',
-                item.action.value if item.action else '',
-                item.severity.value if item.severity else '',
+                item.action if item.action else '',
+                item.severity if item.severity else '',
                 item.status,
-                item.entity_type.value if item.entity_type else '',
+                item.entity_type if item.entity_type else '',
                 item.entity_id or '',
                 item.entity_name or '',
                 item.ip_address or '',
@@ -885,10 +885,10 @@ class AuditService:
                     "user_id": item.user_id,
                     "username": item.username,
                     "user_role": item.user_role,
-                    "action": item.action.value if item.action else None,
-                    "severity": item.severity.value if item.severity else None,
+                    "action": item.action if item.action else None,
+                    "severity": item.severity if item.severity else None,
                     "status": item.status,
-                    "entity_type": item.entity_type.value if item.entity_type else None,
+                    "entity_type": item.entity_type if item.entity_type else None,
                     "entity_id": item.entity_id,
                     "entity_name": item.entity_name,
                     "ip_address": item.ip_address,
