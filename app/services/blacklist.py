@@ -153,10 +153,10 @@ class BlacklistService:
                         WHERE id = $7
                     """,
                         BlacklistStatus.ACTIVE.value,
-                        request.reason.value,
+                        request.reason,
                         request.reason_details,
                         request.expires_at,
-                        request.source.value,
+                        request.source,
                         request.notes,
                         existing['id']
                     )
@@ -172,10 +172,10 @@ class BlacklistService:
                     RETURNING id
                 """,
                     phone,
-                    request.reason.value,
+                    request.reason,
                     request.reason_details,
                     request.expires_at,
-                    request.source.value,
+                    request.source,
                     request.notes,
                     BlacklistStatus.ACTIVE.value,
                     user_id
@@ -192,27 +192,27 @@ class BlacklistService:
                     blacklist_reason = $1,
                     updated_at = NOW()
                 WHERE phone = $2
-            """, request.reason.value, phone)
-            
+            """, request.reason, phone)
+
             # Добавляем в Redis
             await self.redis.add_to_blacklist(phone)
-            
+
             # Логируем
             await self._log_audit(conn, user_id, 'blacklist_added', 'blacklist', blacklist_id, {
                 'phone': phone,
-                'reason': request.reason.value
+                'reason': request.reason
             })
-            
+
             # Получаем созданную запись
             entry = await self._get_blacklist_by_id(conn, blacklist_id)
-        
+
         blacklist_added_counter.labels(
-            source=request.source.value,
-            reason=request.reason.value
+            source=request.source,
+            reason=request.reason
         ).inc()
         blacklist_size_gauge.inc()
-        
-        logger.info(f"Номер добавлен в чёрный список: {phone} (причина: {request.reason.value})")
+
+        logger.info(f"Номер добавлен в чёрный список: {phone} (причина: {request.reason})")
         
         return entry
     
@@ -461,8 +461,8 @@ class BlacklistService:
                     result.errors.append({'phone': phone, 'error': str(e)})
         
         blacklist_added_counter.labels(
-            source=request.source.value,
-            reason=request.reason.value
+            source=request.source,
+            reason=request.reason
         ).inc(result.added)
         blacklist_size_gauge.set(await self.get_active_count())
         
@@ -582,19 +582,19 @@ class BlacklistService:
                 if filter_params.reason:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.reason))])
                     where_conditions.append(f"b.reason IN ({placeholders})")
-                    params.extend([r.value for r in filter_params.reason])
+                    params.extend(list(filter_params.reason))
                     param_idx += len(filter_params.reason)
-                
+
                 if filter_params.status:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.status))])
                     where_conditions.append(f"b.status IN ({placeholders})")
-                    params.extend([s.value for s in filter_params.status])
+                    params.extend(list(filter_params.status))
                     param_idx += len(filter_params.status)
-                
+
                 if filter_params.source:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.source))])
                     where_conditions.append(f"b.source IN ({placeholders})")
-                    params.extend([s.value for s in filter_params.source])
+                    params.extend(list(filter_params.source))
                     param_idx += len(filter_params.source)
                 
                 if filter_params.tags:
@@ -691,7 +691,7 @@ class BlacklistService:
                     reason_details=row['reason_details'],
                     status=BlacklistStatus(row['status']),
                     expires_at=row['expires_at'],
-                    is_expired=row['expires_at'] and row['expires_at'] < datetime.utcnow(),
+                    is_expired=bool(row['expires_at'] and row['expires_at'] < datetime.utcnow()),
                     source=BlacklistSource(row['source']) if row['source'] else BlacklistSource.MANUAL,
                     notes=row['notes'],
                     tags=tags,
@@ -890,10 +890,10 @@ class BlacklistService:
         for item in response.items:
             writer.writerow([
                 item.phone,
-                item.reason.value,
+                item.reason,
                 item.reason_details or '',
-                item.status.value,
-                item.source.value,
+                item.status,
+                item.source,
                 item.notes or '',
                 item.created_at.isoformat() if item.created_at else '',
                 item.expires_at.isoformat() if item.expires_at else ''
@@ -931,23 +931,23 @@ class BlacklistService:
             RETURNING id
         """,
             request.phone,
-            request.reason.value,
+            request.reason,
             request.reason_details,
             request.expires_at,
-            request.source.value,
+            request.source,
             request.notes,
             BlacklistStatus.ACTIVE.value,
             user_id
         )
-        
+
         # Обновляем контакт
         await conn.execute("""
-            UPDATE contacts 
-            SET blacklisted = TRUE, 
+            UPDATE contacts
+            SET blacklisted = TRUE,
                 blacklist_reason = $1,
                 updated_at = NOW()
             WHERE phone = $2
-        """, request.reason.value, request.phone)
+        """, request.reason, request.phone)
         
         # Добавляем в Redis
         await self.redis.add_to_blacklist(request.phone)
@@ -978,7 +978,7 @@ class BlacklistService:
             reason_details=row['reason_details'],
             status=BlacklistStatus(row['status']),
             expires_at=row['expires_at'],
-            is_expired=row['expires_at'] and row['expires_at'] < datetime.utcnow(),
+            is_expired=bool(row['expires_at'] and row['expires_at'] < datetime.utcnow()),
             source=BlacklistSource(row['source']) if row['source'] else BlacklistSource.MANUAL,
             notes=row['notes'],
             tags=tags,
