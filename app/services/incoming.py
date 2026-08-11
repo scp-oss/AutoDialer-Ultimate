@@ -443,13 +443,13 @@ class IncomingCallService:
                 if filter_params.status:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.status))])
                     where_conditions.append(f"ic.status IN ({placeholders})")
-                    params.extend([s.value for s in filter_params.status])
+                    params.extend(list(filter_params.status))
                     param_idx += len(filter_params.status)
-                
+
                 if filter_params.transcription_status:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.transcription_status))])
                     where_conditions.append(f"ic.transcription_status IN ({placeholders})")
-                    params.extend([s.value for s in filter_params.transcription_status])
+                    params.extend(list(filter_params.transcription_status))
                     param_idx += len(filter_params.transcription_status)
                 
                 if filter_params.listened is not None:
@@ -624,7 +624,7 @@ class IncomingCallService:
             
             if request.status is not None:
                 updates.append(f"status = ${param_idx}")
-                params.append(request.status.value)
+                params.append(request.status)
                 param_idx += 1
             
             if request.tags is not None:
