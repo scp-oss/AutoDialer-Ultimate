@@ -242,7 +242,7 @@ frontend/dist/   vanilla JS/HTML/CSS админ-панель (не React — с�
 asterisk/        конфиги Asterisk + pjsip.conf.template (рендерится envsubst'ом)
 docker/          Dockerfile для Asterisk + entrypoint-скрипты
 k8s/             Kubernetes-манифесты (черновик, не проверен на кластере — см. §3.5)
-tests/           pytest (54 теста; 49 — чистые unit-тесты без внешних зависимостей,
+tests/           pytest (76 тестов; 71 — чистые unit-тесты без внешних зависимостей,
                  5 — интеграционные, требуют Postgres+Redis; AMI опционален)
 install.sh, scripts/, systemd/, nginx/, fail2ban/, logrotate/  bare-metal путь развёртывания
 ```
@@ -357,15 +357,47 @@ Redis-очередь `dial_queue` и AMI `Originate` до `LiveCallEvent` на
 обещал в докстринге проверку "пароль не совпадает с username" через
 `model_validator`, но такого валидатора нигде не было — пароль, равный
 имени пользователя или содержащий его, проходил валидацию. Добавлен
-недостающий `model_validator`. Сейчас — 54 теста, из них 49 не требуют
-БД/Redis и проходят в любом окружении.
+недостающий `model_validator`.
 
-Ещё нужны: unit-тесты бизнес-логики сервисов (кампании, чёрный список,
-TTS/STT — с моками БД/Redis, а не только Pydantic-схем), интеграционные
-тесты полного цикла обзвона (mock AMI), E2E (Playwright по vanilla JS UI
-или будущему React), нагрузочное тестирование (Locust/k6) на CPS/
-конкурентные звонки согласно целям масштабирования из ТЗ (сотни
-одновременных звонков, сотни тысяч номеров).
+Добавлены `tests/test_circuit_breaker.py` (10 тестов) и
+`tests/test_rate_limiter.py` (12 тестов) — юнит-тесты на
+`app/utils/circuit_breaker.py: CircuitBreaker` и
+`app/utils/rate_limiter.py: TokenBucket`. Оба — чисто in-memory
+asyncio-примитивы без БД/Redis, но это как раз та бизнес-критичная логика,
+о которой просит эта секция: `CircuitBreaker` — единственная защита от
+каскадных сбоев при обращении к AMI/БД/Redis по всему проекту, `TokenBucket`
+— CPS-лимитер, которым буквально ограничивается скорость обзвона
+(`CampaignService.dial_task()`, см. `docs/EVENTS_AND_FLOWS.md` §2). У обоих
+до этого не было ни одного теста.
+
+Заодно найден и исправлен реальный баг в `CircuitBreaker._record_success()`:
+в состоянии CLOSED успешный вызов уменьшал поле `failure_count`, но не
+убирал соответствующую запись из `_failure_timestamps` (внутреннего
+скользящего окна, из которого `_record_failure()` всегда пересчитывает
+`failure_count = len(_failure_timestamps)`). В результате "восстановление"
+после успехов было косметическим: `get_status()`/`failure_count` могли
+показывать 0 после нескольких успешных вызовов, но следующий же провал
+пересчитывал `failure_count` из непочищенного списка и отбрасывал счётчик
+сразу к прежнему (до "восстановления") значению — вплоть до немедленного
+размыкания цепи там, где по показанному состоянию это выглядело бы
+неожиданным. Исправлено: успех в CLOSED теперь убирает и запись из
+`_failure_timestamps`, синхронизируя её с `failure_count`. Воспроизведено
+и проверено до/после фикса (`CircuitBreaker(failure_threshold=5)`: 3
+провала → `failure_count=3`; 3 успеха → `failure_count=0`,
+`len(_failure_timestamps)` тоже 0 после фикса, было 3 до; следующий провал
+→ `failure_count=1`, было 4). Регрессионный тест —
+`test_recovery_after_successes_is_not_undone_by_next_failure`.
+
+Сейчас — 76 тестов, из них 71 не требует БД/Redis и проходит в любом
+окружении.
+
+Ещё нужны: unit-тесты бизнес-логики сервисов, которым для проверки
+реально нужны БД/Redis (кампании, чёрный список, TTS/STT — с моками, а
+не только Pydantic-схем и in-memory примитивов), интеграционные тесты
+полного цикла обзвона (mock AMI), E2E (Playwright по vanilla JS UI или
+будущему React), нагрузочное тестирование (Locust/k6) на CPS/конкурентные
+звонки согласно целям масштабирования из ТЗ (сотни одновременных звонков,
+сотни тысяч номеров).
 
 ### 3.4 SIP/AMI: живые события в WebSocket — сделано
 `DialerManager` теперь публикует `LiveCallEvent` (dial_begin/answer/
