@@ -187,7 +187,7 @@ class UserService:
                 password_hash,
                 request.email,
                 request.full_name,
-                request.role.value,
+                request.role,
                 request.phone,
                 request.department,
                 request.position,
@@ -209,14 +209,14 @@ class UserService:
             # Логируем
             await self._log_audit(conn, created_by, 'user_created', 'user', user_id, {
                 'username': request.username,
-                'role': request.role.value
+                'role': request.role
             })
-            
+
             # Получаем созданного пользователя
             user = await self._get_user_by_id(conn, user_id)
-        
+
         users_total_gauge.labels(
-            role=request.role.value,
+            role=request.role,
             status=UserStatus.ACTIVE.value
         ).inc()
         
@@ -305,7 +305,7 @@ class UserService:
             
             if request.role is not None:
                 updates.append(f"role = ${param_idx}")
-                params.append(request.role.value)
+                params.append(request.role)
                 param_idx += 1
             
             if request.phone is not None:
@@ -325,9 +325,9 @@ class UserService:
             
             if request.status is not None:
                 updates.append(f"status = ${param_idx}")
-                params.append(request.status.value)
+                params.append(request.status)
                 param_idx += 1
-            
+
             if request.force_password_change is not None:
                 updates.append(f"force_password_change = ${param_idx}")
                 params.append(request.force_password_change)
@@ -570,13 +570,13 @@ class UserService:
                 if filter_params.role:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.role))])
                     where_conditions.append(f"role IN ({placeholders})")
-                    params.extend([r.value for r in filter_params.role])
+                    params.extend(list(filter_params.role))
                     param_idx += len(filter_params.role)
-                
+
                 if filter_params.status:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.status))])
                     where_conditions.append(f"status IN ({placeholders})")
-                    params.extend([s.value for s in filter_params.status])
+                    params.extend(list(filter_params.status))
                     param_idx += len(filter_params.status)
                 
                 if filter_params.department:
@@ -888,12 +888,16 @@ class UserService:
         return [Permission(row['permission']) for row in rows]
     
     async def _add_custom_permissions(self, conn, user_id: int, permissions: List[Permission]) -> None:
+        # permissions comes from a BaseSchema field (use_enum_values=True in
+        # app/models/common.py), so items are already the plain string values,
+        # not Permission instances - see app/services/blacklist.py for the
+        # same pattern documented in ROADMAP.md.
         for perm in permissions:
             await conn.execute("""
                 INSERT INTO user_permissions (user_id, permission)
                 VALUES ($1, $2)
                 ON CONFLICT DO NOTHING
-            """, user_id, perm.value)
+            """, user_id, perm)
     
     async def _update_custom_permissions(self, conn, user_id: int, permissions: List[Permission]) -> None:
         await conn.execute("DELETE FROM user_permissions WHERE user_id = $1", user_id)
@@ -1195,7 +1199,7 @@ class AuthService:
         if user_data.session_id:
             await self.redis.delete(f"session:{user_data.user_id}:{user_data.session_id}")
         
-        logger.info(f"Пользователь {user_data.username} вышел из системы")
+        logger.info(f"Пользователь {user_data.username} вышёл из системы")
         
         return True
     
