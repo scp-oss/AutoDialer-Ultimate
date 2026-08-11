@@ -177,11 +177,11 @@ class CampaignService:
             """,
                 request.name,
                 request.description,
-                request.priority.value,
+                request.priority,
                 CampaignStatus.DRAFT.value,
                 request.dialer_settings.max_calls,
                 request.dialer_settings.cps,
-                request.dialer_settings.dial_mode.value,
+                request.dialer_settings.dial_mode,
                 request.dialer_settings.call_timeout,
                 request.dialer_settings.answer_timeout,
                 request.dialer_settings.caller_id,
@@ -326,7 +326,7 @@ class CampaignService:
             
             if request.priority is not None:
                 updates.append(f"priority = ${param_idx}")
-                params.append(request.priority.value)
+                params.append(request.priority)
                 param_idx += 1
             
             if request.dialer_settings:
@@ -342,7 +342,7 @@ class CampaignService:
                     f"audio_id = ${param_idx + 7}"
                 ])
                 params.extend([
-                    ds.max_calls, ds.cps, ds.dial_mode.value,
+                    ds.max_calls, ds.cps, ds.dial_mode,
                     ds.call_timeout, ds.answer_timeout,
                     ds.caller_id, ds.caller_id_number, ds.audio_id
                 ])
