@@ -302,6 +302,36 @@ CREATE TABLE IF NOT EXISTS blacklist (
     id SERIAL PRIMARY KEY,
     phone VARCHAR(20) UNIQUE NOT NULL,
     reason TEXT,
+    reason_details TEXT,
+    status VARCHAR(20) DEFAULT 'active',
+    expires_at TIMESTAMP,
+    source VARCHAR(20) DEFAULT 'manual',
+    notes TEXT,
+    times_called_before INTEGER DEFAULT 0,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    removed_at TIMESTAMP,
+    removed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    removed_reason TEXT
+);
+
+-- Теги записей чёрного списка (app/services/blacklist.py: _add_blacklist_tags/_get_blacklist_tags)
+CREATE TABLE IF NOT EXISTS blacklist_tags (
+    blacklist_id INTEGER NOT NULL REFERENCES blacklist(id) ON DELETE CASCADE,
+    tag VARCHAR(100) NOT NULL,
+    PRIMARY KEY (blacklist_id, tag)
+);
+
+-- История изменений записи чёрного списка (app/services/blacklist.py:
+-- _get_entry_history читает эту таблицу; на сегодня ничего в неё не
+-- пишет - таблица существует, чтобы SELECT не падал, наполнение отдельной
+-- задачей не реализовано).
+CREATE TABLE IF NOT EXISTS blacklist_history (
+    id SERIAL PRIMARY KEY,
+    blacklist_id INTEGER NOT NULL REFERENCES blacklist(id) ON DELETE CASCADE,
+    action VARCHAR(50) NOT NULL,
+    details JSONB DEFAULT '{}',
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -536,6 +566,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_details ON audit_log USING gin(details)
 -- Blacklist
 CREATE INDEX IF NOT EXISTS idx_blacklist_phone ON blacklist(phone);
 CREATE INDEX IF NOT EXISTS idx_blacklist_created_at ON blacklist(created_at);
+CREATE INDEX IF NOT EXISTS idx_blacklist_status ON blacklist(status);
+CREATE INDEX IF NOT EXISTS idx_blacklist_tags_blacklist_id ON blacklist_tags(blacklist_id);
+CREATE INDEX IF NOT EXISTS idx_blacklist_history_blacklist_id ON blacklist_history(blacklist_id);
 
 -- API tokens
 CREATE INDEX IF NOT EXISTS idx_api_tokens_token ON api_tokens(token);
@@ -632,7 +665,7 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION check_blacklist()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM blacklist WHERE phone = NEW.phone) THEN
+    IF EXISTS (SELECT 1 FROM blacklist WHERE phone = NEW.phone AND status = 'active') THEN
         NEW.blacklisted = TRUE;
         NEW.blacklist_reason = COALESCE(NEW.blacklist_reason, 'Number in blacklist');
     END IF;
