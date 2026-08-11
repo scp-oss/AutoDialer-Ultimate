@@ -579,13 +579,13 @@ class AudioService:
                 if filter_params.format:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.format))])
                     where_conditions.append(f"a.format IN ({placeholders})")
-                    params.extend([f.value for f in filter_params.format])
+                    params.extend(list(filter_params.format))
                     param_idx += len(filter_params.format)
-                
+
                 if filter_params.status:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.status))])
                     where_conditions.append(f"a.status IN ({placeholders})")
-                    params.extend([s.value for s in filter_params.status])
+                    params.extend(list(filter_params.status))
                     param_idx += len(filter_params.status)
                 
                 if filter_params.campaign_id is not None:
@@ -1104,7 +1104,7 @@ class TTSService:
                         request.description,
                         str(final_path),
                         final_path.name,
-                        request.output_format.value,
+                        request.output_format,
                         AudioStatus.READY.value,
                         metadata.file_size,
                         metadata.duration,
@@ -1113,25 +1113,25 @@ class TTSService:
                         request.campaign_id,
                         request.is_public,
                         request.text,
-                        request.voice.value,
-                        request.model.value,
+                        request.voice,
+                        request.model,
                         request.speed,
                         user_id
                     )
-                    
+
                     if request.tags:
                         await audio_service._add_audio_tags(conn, audio_id, request.tags)
-                
+
                 generation_time = (datetime.utcnow() - start_time).total_seconds()
-                
+
                 # Метрики
                 audio_generated_counter.labels(
-                    voice=request.voice.value,
-                    format=request.output_format.value
+                    voice=request.voice,
+                    format=request.output_format
                 ).inc()
                 tts_generation_duration.labels(
-                    voice=request.voice.value,
-                    model=request.model.value
+                    voice=request.voice,
+                    model=request.model
                 ).observe(generation_time)
                 
                 self._stats['generated'] += 1
