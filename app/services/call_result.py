@@ -154,7 +154,7 @@ class CallResultService:
                 request.campaign_id,
                 contact_id,
                 request.phone,
-                request.status.value,
+                request.status,
                 CallDirection.OUTBOUND.value,
                 request.dtmf_result,
                 None,
@@ -175,12 +175,12 @@ class CallResultService:
             
             # Обновляем статистику контакта
             if contact_id:
-                await self._update_contact_stats(conn, contact_id, request.status.value, request.duration)
-            
+                await self._update_contact_stats(conn, contact_id, request.status, request.duration)
+
             # Обновляем прогресс кампании
             if request.campaign_id:
                 await self._update_campaign_progress(
-                    conn, request.campaign_id, request.status.value, request.duration
+                    conn, request.campaign_id, request.status, request.duration
                 )
             
             # Получаем полные данные
@@ -188,14 +188,14 @@ class CallResultService:
         
         # Метрики
         call_result_counter.labels(
-            status=request.status.value,
+            status=request.status,
             campaign_id=str(request.campaign_id or 'unknown')
         ).inc()
-        
+
         if request.duration:
             call_duration_histogram.observe(request.duration)
-        
-        logger.info(f"Результат звонка сохранён: {request.phone} -> {request.status.value} (ID: {call_id})")
+
+        logger.info(f"Результат звонка сохранён: {request.phone} -> {request.status} (ID: {call_id})")
         
         return result
     
@@ -307,12 +307,12 @@ class CallResultService:
                 if filter_params.status:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.status))])
                     where_conditions.append(f"cr.status IN ({placeholders})")
-                    params.extend([s.value for s in filter_params.status])
+                    params.extend(list(filter_params.status))
                     param_idx += len(filter_params.status)
-                
+
                 if filter_params.direction:
                     where_conditions.append(f"cr.direction = ${param_idx}")
-                    params.append(filter_params.direction.value)
+                    params.append(filter_params.direction)
                     param_idx += 1
                 
                 if filter_params.phone:
