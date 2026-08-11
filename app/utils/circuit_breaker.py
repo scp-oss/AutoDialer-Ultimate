@@ -523,9 +523,16 @@ class CircuitBreaker(Generic[T]):
                 await self._transition_to_closed()
         
         elif self.state == CircuitState.CLOSED:
-            # В closed состоянии уменьшаем счётчик ошибок при успехе
+            # В closed состоянии уменьшаем счётчик ошибок при успехе.
+            # _record_failure() всегда пересчитывает failure_count из
+            # _failure_timestamps (len(...)), поэтому просто уменьшать
+            # failure_count без удаления записи из _failure_timestamps
+            # бессмысленно - следующий же failure отбросит "восстановление"
+            # и пересчитает failure_count из непочищенного списка.
             if self.failure_count > 0:
                 self.failure_count = max(0, self.failure_count - 1)
+                if self._failure_timestamps:
+                    self._failure_timestamps.pop(0)
     
     async def _record_failure(self, error: str = None):
         """Запись неудачного вызова."""
