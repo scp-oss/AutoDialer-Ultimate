@@ -441,15 +441,66 @@ created_by, created_at`), а `app/services/blacklist.py` (~1100 строк)
   `export_contacts` (CSV+JSON) → `bulk_import_contacts` — ни одной
   ошибки.
 
+**Баг №5 (исправлен для `campaigns`/`call_results`, продолжение работы по
+Багу №3): та же схемная просадка + два новых класса живых багов,
+обнаруженных только при полном прогоне `CampaignService`/
+`CallResultService`.** `campaigns` не хватало `priority, dial_mode,
+call_timeout, answer_timeout, caller_id_number, paused_at, stopped_at,
+metadata` (все — часть `DialerSettingsSchema`/`CampaignPriority`,
+которые `CampaignService.create_campaign()`/`update_campaign()` пишут
+напрямую); таблицы `campaign_tags` не было вообще. `call_results` не
+хватало `direction, dtmf_digits, wait_time, recording_size, tags, notes`;
+таблиц `call_tags`/`call_events`/`call_transcriptions` не было вообще.
+`campaign_contacts` не хватало `last_call_status`. Вживую подтверждено:
+`CampaignService.get_campaign()` падал на `cr.wait_time does not exist`
+внутри JOIN на `call_results` при подсчёте статистики кампании — то есть
+баг в `call_results` ломал не только сам `call_result.py`, но и просмотр
+любой кампании. Исправлено (`sql/schema.sql` + новая идемпотентная
+миграция `alembic/versions/0004_campaigns_call_results_schema_fix.py`).
+
+При живом прогоне `CallResultService.save_call_result()`/`get_call_stats()`
+найдены и исправлены два независимых бага в самом `app/services/
+call_result.py`, не связанных со схемой:
+
+- `_update_contact_stats()`/`_update_campaign_progress()` переиспользовали
+  `$1` и как обычное присвоение колонке (`last_call_status = $1`), и
+  внутри `CASE WHEN $1 IN ('agreed', 'declined') THEN ...` — asyncpg
+  выводит для одного и того же `$1` два разных типа (`character varying`
+  из колонки, `text` из сравнения со строковыми литералами) и кидает
+  `AmbiguousParameterError: inconsistent types deduced for parameter $1`
+  на **каждый** вызов `save_call_result()`, у которого есть `contact_id`
+  или `campaign_id` (то есть почти всегда). Исправлено явным приведением
+  `$1::VARCHAR` в обеих `CASE`-ветках.
+- `_get_dtmf_stats()` безусловно приклеивал `{where_clause} AND
+  dtmf_result IS NOT NULL` — когда вызывающий код (`get_call_stats()` без
+  фильтров) не передаёт условий, `where_clause` — пустая строка, и запрос
+  превращается в `FROM call_results  AND dtmf_result IS NOT NULL` без
+  `WHERE`, что гарантированно `PostgresSyntaxError` на любом
+  вызове статистики без фильтра по кампании/периоду (самый частый
+  случай — дашборд без фильтров). Соседний `_get_hangup_causes()` этой
+  ошибки не содержит: там `where_conditions` всегда стартует с
+  обязательного условия по `days`, так что `where_clause` никогда не
+  пуст — сверено отдельно, чтобы не чинить то, что не сломано. Исправлено
+  условной сборкой `WHERE .../ AND ...` в зависимости от того, пуст ли
+  `where_clause`.
+
+**Проверено вживую**: `alembic upgrade head` с нуля (`0001→0002→0003→
+0004`), затем `CampaignService` — `create_campaign` (полный
+`dialer_settings` + `priority` + теги) → `get_campaign` → `update_campaign`
+→ `list_campaigns` (с фильтром по `priority`) → `delete_campaign`; и
+`CallResultService` — `save_call_result` → `get_call` →
+`get_call_by_unique_id` → `list_calls` (с фильтром по `direction`) →
+`get_call_stats` → `get_daily_stats`/`get_analytics` → `delete_call` — ни
+одной ошибки после фиксов. Регрессия проверена повторным прогоном
+`tests/test_blacklist_service.py` и смоук-теста `contacts` — 96/96
+`pytest` по-прежнему проходит.
+
 **Не исправлено, только задокументировано.** Та же проверка (сравнение
 колонок в `INSERT INTO` сервисов с реальным списком колонок в
 `sql/schema.sql`, статический скрипт по всем `app/services/*.py`) для
 оставшихся таблиц — колонки, которые сервис ожидает в `INSERT`, а
 `sql/schema.sql` их не определяет, плюс таблицы, которых нет вообще:
 
-- `campaigns` (`app/services/campaign.py`, живьём не проверено):
-  `priority, dial_mode, call_timeout, answer_timeout,
-  caller_id_number`; таблицы нет: `campaign_tags`
 - `users` (`app/services/user.py`): `phone, department, position,
   status, created_by, avatar_url, preferences, notifications,
   totp_secret, totp_enabled, totp_recovery_codes, totp_last_used,
@@ -462,28 +513,26 @@ created_by, created_at`), а `app/services/blacklist.py` (~1100 строк)
 - `audit_log` (`app/services/audit.py`): `user_role, severity,
   entity_name, changes, request_method, request_path, correlation_id,
   request_id, session_id, status, error_message, metadata`
-- `call_results` (`app/services/call_result.py`,
-  `app/services/dialer.py`): `direction, dtmf_digits, unique_id,
-  wait_time, tags`; таблиц нет: `call_tags`, `call_events`,
-  `call_transcriptions`
 - `incoming_calls` (`app/services/incoming.py`): `caller_name,
   called_number, recording_format, unique_id, linked_id, language,
   status, created_at, updated_at`; таблиц нет: `incoming_call_tags`,
   `incoming_call_events`
 - `settings` (`app/services/settings.py`): `created_at`
 
-Практически это значит: создание кампании (с приоритетом/режимом
-дозвона), пользователя (с телефоном/отделом/2FA/API-ключами), TTS-аудио,
-запись аудита, сохранение результата звонка и обработка входящего
-звонка, вероятно, всё ещё падают на любом окружении, где база создаётся
-из актуального `sql/schema.sql`. Статический список может быть неточным
+Практически это значит: создание пользователя (с телефоном/отделом/2FA/
+API-ключами), TTS-аудио, запись аудита и обработка входящего звонка,
+вероятно, всё ещё падают на любом окружении, где база создаётся из
+актуального `sql/schema.sql`. Статический список может быть неточным
 (проверялись только `INSERT INTO`, не `UPDATE`/`SELECT`/представления/
-триггеры) — перед исправлением каждой таблицы её нужно перепроверить так
-же, как `blacklist`/`contacts`: **fresh `alembic upgrade head` с нуля**
-(не просто `psql -f sql/schema.sql` — см. находку про `0001` выше) плюс
-живой прогон сервиса. **Это самая приоритетная задача проекта на
-сегодняшний день** — важнее React-фронтенда и SQLAlchemy ORM, потому что
-без неё часть REST API нерабочая независимо от остального прогресса.
+триггеры), а живой прогон, как показал Баг №5, иногда вскрывает
+дополнительные баги самого сервисного кода, не только схемы — перед
+исправлением каждой таблицы её нужно перепроверить так же, как
+`blacklist`/`contacts`/`campaigns`/`call_results`: **fresh `alembic
+upgrade head` с нуля** (не просто `psql -f sql/schema.sql` — см. находку
+про `0001` выше) плюс живой прогон сервиса. **Это самая приоритетная
+задача проекта на сегодняшний день** — важнее React-фронтенда и
+SQLAlchemy ORM, потому что без неё часть REST API нерабочая независимо
+от остального прогресса.
 
 ### 3.1 Документация и диаграммы
 ER-диаграмма — сделано: `docs/ER_DIAGRAM.md` (Mermaid, все 24 таблицы
