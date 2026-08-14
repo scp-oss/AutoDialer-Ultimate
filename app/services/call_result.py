@@ -889,12 +889,12 @@ class CallResultService:
     ) -> None:
         """Обновить статистику контакта"""
         await conn.execute("""
-            UPDATE contacts 
-            SET 
+            UPDATE contacts
+            SET
                 last_call_at = NOW(),
                 last_call_status = $1,
                 total_calls = total_calls + 1,
-                successful_calls = successful_calls + CASE WHEN $1 IN ('agreed', 'declined') THEN 1 ELSE 0 END,
+                successful_calls = successful_calls + CASE WHEN $1::VARCHAR IN ('agreed', 'declined') THEN 1 ELSE 0 END,
                 updated_at = NOW()
             WHERE id = $2
         """, status, contact_id)
@@ -908,13 +908,13 @@ class CallResultService:
     ) -> None:
         """Обновить прогресс кампании"""
         await conn.execute("""
-            UPDATE campaign_contacts 
-            SET 
+            UPDATE campaign_contacts
+            SET
                 last_call_at = NOW(),
                 last_call_status = $1,
                 retry_count = retry_count + 1,
-                status = CASE 
-                    WHEN $1 IN ('agreed', 'declined', 'busy', 'failed') THEN 'completed'
+                status = CASE
+                    WHEN $1::VARCHAR IN ('agreed', 'declined', 'busy', 'failed') THEN 'completed'
                     ELSE 'pending'
                 END
             WHERE campaign_id = $2 AND contact_id = (
@@ -926,10 +926,11 @@ class CallResultService:
         """, status, campaign_id)
     
     async def _get_dtmf_stats(self, conn, where_clause: str, params: List) -> Dict[str, int]:
+        dtmf_condition = f"{where_clause} AND dtmf_result IS NOT NULL" if where_clause else "WHERE dtmf_result IS NOT NULL"
         rows = await conn.fetch(f"""
             SELECT dtmf_result, COUNT(*) as count
             FROM call_results
-            {where_clause} AND dtmf_result IS NOT NULL
+            {dtmf_condition}
             GROUP BY dtmf_result
         """, *params)
         return {row['dtmf_result']: row['count'] for row in rows}
