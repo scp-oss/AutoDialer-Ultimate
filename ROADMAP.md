@@ -545,16 +545,60 @@ CHECK-просадка + один живой баг типа asyncpg↔Pydantic.
   Регрессия проверена повторным прогоном `pytest` — 96/96 по-прежнему
   проходит.
 
+**Баг №7 (исправлен для `audio_files`/`audio_tags`/`audio_usage`,
+продолжение работы по Багу №3): та же схемная просадка + тип-мисматч +
+рецидив Бага №1 в новом месте.** `sql/schema.sql` не хватало у
+`audio_files` колонок `file_name, status, sample_rate, channels,
+bitrate, converted_from_id, tts_text, tts_voice, tts_model, tts_speed,
+updated_at, view_count, usage_count, last_used_at, deleted_at` — все
+пишутся/читаются `AudioService`/`TTSService` (`upload_audio`,
+`convert_audio`, `generate_audio`, увеличение `view_count` в
+`get_audio()`, `usage_count`/`last_used_at` в `get_audio_file_path()`).
+Таблиц `audio_tags`/`audio_usage` не было вообще — любой вызов
+`_add_audio_tags()`/`_get_audio_tags()`/`_get_usage_history()` падал бы с
+`UndefinedTableError`. Отдельно найден тип-мисматч: `duration` был
+объявлен `INTEGER`, а `AudioMetadata.duration`/`AudioResponse.duration` —
+`float` (`soxi -D` возвращает дробные секунды, например `15.5`) —
+вставка нецелой длительности в `INTEGER`-колонку кидала бы asyncpg
+`DataError` почти на каждой загрузке/генерации TTS. Исправлено:
+- `sql/schema.sql`: `audio_files` дополнен перечисленными колонками,
+  `duration` расширен до `DOUBLE PRECISION`; добавлены `audio_tags`
+  (многие-ко-многим тег↔аудио) и `audio_usage` (сервис пока только
+  читает её через `_get_usage_history`, наполнение — будущая задача, как
+  и `blacklist_history`/`contact_notes_history` ранее).
+- Новая идемпотентная миграция `alembic/versions/
+  0006_audio_schema_fix.py`.
+- При живом прогоне `AudioService.upload_audio()` найден и исправлен
+  рецидив Бага №1 в новом месте, в двух независимых точках: `app/models/
+  audio.py: AudioUploadRequest.convert_to` типизирован как
+  `Optional[AudioFormat]` со значением по умолчанию `AudioFormat.SLN`, но
+  `use_enum_values=True` на `BaseSchema` нормализует **даже значение по
+  умолчанию** в голую строку `'sln'` при создании модели — то есть
+  `request.convert_to` никогда не является `AudioFormat`-объектом, даже
+  когда клиент вообще не передавал `convert_to`. `_convert_audio()`
+  падал на `target_format.value` (`AttributeError: 'str' object has no
+  attribute 'value'`) при построении пути результата; после фикса того
+  же вызова `upload_audio()` упал на том же `.value` уровнем выше — в
+  собственном `INSERT`, где брался `target_format.value` до нормализации.
+  Оба места теперь приводят значение через `AudioFormat(x)` перед
+  использованием `.value`.
+- **Проверено вживую**: `alembic upgrade head` с нуля (`0001→0002→0003→
+  0004→0005→0006`), затем `AudioService` — `upload_audio` (WAV→SLN
+  конвертация при загрузке) → `get_audio` (счётчик `view_count`) →
+  `update_audio` (теги) → `list_audio` → `convert_audio` (SLN→WAV) →
+  `get_audio_file_path` (`usage_count`/`last_used_at`) → `delete_audio` —
+  ни одной ошибки после фиксов. Смоук-тест ограничен путями, не
+  требующими `ffmpeg`/`piper` (недоступны в этой среде) — конвертация в
+  MP3 и генерация TTS не проверялись живьём в этом раунде, только
+  статически. Регрессия проверена повторным прогоном `pytest` — 96/96
+  по-прежнему проходит.
+
 **Не исправлено, только задокументировано.** Та же проверка (сравнение
 колонок в `INSERT INTO` сервисов с реальным списком колонок в
 `sql/schema.sql`, статический скрипт по всем `app/services/*.py`) для
 оставшихся таблиц — колонки, которые сервис ожидает в `INSERT`, а
 `sql/schema.sql` их не определяет, плюс таблицы, которых нет вообще:
 
-- `audio_files` (`app/services/audio.py`): `file_name, status,
-  sample_rate, channels, bitrate, converted_from_id, tts_text,
-  tts_voice, tts_model, tts_speed, updated_at`; таблиц нет: `audio_tags`,
-  `audio_usage`
 - `audit_log` (`app/services/audit.py`): `user_role, severity,
   entity_name, changes, request_method, request_path, correlation_id,
   request_id, session_id, status, error_message, metadata`
@@ -564,15 +608,16 @@ CHECK-просадка + один живой баг типа asyncpg↔Pydantic.
   `incoming_call_events`
 - `settings` (`app/services/settings.py`): `created_at`
 
-Практически это значит: TTS-аудио, запись аудита и обработка входящего
-звонка, вероятно, всё ещё падают на любом окружении, где база создаётся
-из актуального `sql/schema.sql` (создание пользователя, ранее в этом же
-списке, исправлено Багом №6 выше). Статический список может быть
-неточным (проверялись только `INSERT INTO`, не `UPDATE`/`SELECT`/
-представления/триггеры), а живой прогон, как показали Баги №5 и №6,
-иногда вскрывает дополнительные баги самого сервисного кода, не только
-схемы — перед исправлением каждой таблицы её нужно перепроверить так
-же, как `blacklist`/`contacts`/`campaigns`/`call_results`/`users`:
+Практически это значит: запись аудита и обработка входящего звонка,
+вероятно, всё ещё падают на любом окружении, где база создаётся
+из актуального `sql/schema.sql` (создание пользователя и TTS-аудио,
+ранее в этом же списке, исправлены Багами №6 и №7 выше). Статический
+список может быть неточным (проверялись только `INSERT INTO`, не
+`UPDATE`/`SELECT`/представления/триггеры), а живой прогон, как показали
+Баги №5-№7, иногда вскрывает дополнительные баги самого сервисного кода,
+не только схемы — перед исправлением каждой таблицы её нужно
+перепроверить так же, как
+`blacklist`/`contacts`/`campaigns`/`call_results`/`users`/`audio_files`:
 **fresh `alembic upgrade head` с нуля** (не просто `psql -f
 sql/schema.sql` — см. находку про `0001` выше) плюс живой прогон
 сервиса. **Это самая приоритетная задача проекта на сегодняшний день**
