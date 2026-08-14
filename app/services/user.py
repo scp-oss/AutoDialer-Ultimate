@@ -668,7 +668,7 @@ class UserService:
                     status=UserStatus(row['status']),
                     force_password_change=row['force_password_change'],
                     last_login=row['last_login'],
-                    last_ip=row['last_ip'],
+                    last_ip=str(row['last_ip']) if row['last_ip'] else None,
                     login_count=row['login_count'] or 0,
                     totp_enabled=row['totp_enabled'],
                     campaigns_created=campaigns_created,
@@ -837,7 +837,7 @@ class UserService:
             status=UserStatus(row['status']),
             force_password_change=row['force_password_change'],
             last_login=row['last_login'],
-            last_ip=row['last_ip'],
+            last_ip=str(row['last_ip']) if row['last_ip'] else None,
             login_count=row['login_count'] or 0,
             totp_enabled=row['totp_enabled'],
             campaigns_created=campaigns_created,
@@ -846,7 +846,7 @@ class UserService:
             created_at=row['created_at'],
             updated_at=row['updated_at']
         )
-    
+
     async def _get_user_profile_by_id(self, conn, user_id: int) -> Optional[UserProfileResponse]:
         """Получить профиль пользователя"""
         user = await self._get_user_by_id(conn, user_id)
