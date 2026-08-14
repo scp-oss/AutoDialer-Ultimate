@@ -654,15 +654,49 @@ CREATE TABLE IF NOT EXISTS system_events (
 CREATE TABLE IF NOT EXISTS incoming_calls (
     id SERIAL PRIMARY KEY,
     caller_number VARCHAR(20) NOT NULL,
+    caller_name VARCHAR(255),
+    called_number VARCHAR(20),
     recording_path TEXT NOT NULL,
+    recording_format VARCHAR(10) DEFAULT 'wav',
     transcription TEXT,
     transcription_status VARCHAR(20) DEFAULT 'pending' CHECK (transcription_status IN ('pending', 'processing', 'completed', 'failed')),
+    transcription_engine VARCHAR(20),
+    transcription_error TEXT,
+    transcription_segments JSONB,
     duration INTEGER,
     file_size INTEGER,
     call_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    unique_id VARCHAR(100) UNIQUE,
+    linked_id VARCHAR(100),
+    language VARCHAR(10) DEFAULT 'ru',
+    status VARCHAR(20) DEFAULT 'new' CHECK (status IN ('new', 'listened', 'archived', 'deleted')),
     listened BOOLEAN DEFAULT FALSE,
+    listened_at TIMESTAMP,
+    listened_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     notes TEXT,
-    metadata JSONB DEFAULT '{}'
+    contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Теги входящих звонков (app/services/incoming.py: _get_call_tags/_update_call_tags)
+CREATE TABLE IF NOT EXISTS incoming_call_tags (
+    incoming_call_id INTEGER NOT NULL REFERENCES incoming_calls(id) ON DELETE CASCADE,
+    tag VARCHAR(100) NOT NULL,
+    PRIMARY KEY (incoming_call_id, tag)
+);
+
+-- События входящих звонков (app/services/incoming.py: _get_listen_history
+-- читает эту таблицу; наполнение - будущая задача, как и audio_usage/
+-- blacklist_history/contact_notes_history)
+CREATE TABLE IF NOT EXISTS incoming_call_events (
+    id SERIAL PRIMARY KEY,
+    incoming_call_id INTEGER NOT NULL REFERENCES incoming_calls(id) ON DELETE CASCADE,
+    event_type VARCHAR(50) NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    details JSONB DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- =============================================
@@ -820,6 +854,11 @@ CREATE INDEX IF NOT EXISTS idx_system_events_created_at ON system_events(created
 CREATE INDEX IF NOT EXISTS idx_incoming_calls_caller ON incoming_calls(caller_number);
 CREATE INDEX IF NOT EXISTS idx_incoming_calls_date ON incoming_calls(call_date);
 CREATE INDEX IF NOT EXISTS idx_incoming_calls_status ON incoming_calls(transcription_status);
+CREATE INDEX IF NOT EXISTS idx_incoming_calls_call_status ON incoming_calls(status);
+CREATE INDEX IF NOT EXISTS idx_incoming_calls_contact ON incoming_calls(contact_id) WHERE contact_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_incoming_calls_called_number ON incoming_calls(called_number);
+CREATE INDEX IF NOT EXISTS idx_incoming_call_tags_call ON incoming_call_tags(incoming_call_id);
+CREATE INDEX IF NOT EXISTS idx_incoming_call_events_call ON incoming_call_events(incoming_call_id);
 
 -- =============================================
 -- ФУНКЦИИ
