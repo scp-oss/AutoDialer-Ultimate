@@ -388,17 +388,49 @@ CREATE TABLE IF NOT EXISTS audio_files (
     name VARCHAR(255) NOT NULL,
     description TEXT,
     file_path TEXT NOT NULL,
+    file_name VARCHAR(255),
     file_size INTEGER,
-    duration INTEGER,
+    duration DOUBLE PRECISION,
     format VARCHAR(10) DEFAULT 'sln',
+    status VARCHAR(20) DEFAULT 'ready' CHECK (status IN ('uploading', 'processing', 'ready', 'error', 'deleted')),
+    sample_rate INTEGER,
+    channels INTEGER,
+    bitrate INTEGER,
+    converted_from_id INTEGER REFERENCES audio_files(id) ON DELETE SET NULL,
+    tts_text TEXT,
+    tts_voice VARCHAR(20),
+    tts_model VARCHAR(20),
+    tts_speed REAL,
     campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL,
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     is_public BOOLEAN DEFAULT FALSE,
+    view_count INTEGER DEFAULT 0,
+    usage_count INTEGER DEFAULT 0,
+    last_used_at TIMESTAMP,
     metadata JSONB DEFAULT '{}',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
 );
 
-ALTER TABLE campaigns ADD CONSTRAINT fk_campaigns_audio 
+-- Теги аудиофайлов (app/services/audio.py: _add_audio_tags/_get_audio_tags)
+CREATE TABLE IF NOT EXISTS audio_tags (
+    audio_id INTEGER NOT NULL REFERENCES audio_files(id) ON DELETE CASCADE,
+    tag VARCHAR(100) NOT NULL,
+    PRIMARY KEY (audio_id, tag)
+);
+
+-- История использования аудио (app/services/audio.py: _get_usage_history
+-- читает эту таблицу; наполнение - будущая задача, как и blacklist_history).
+CREATE TABLE IF NOT EXISTS audio_usage (
+    id SERIAL PRIMARY KEY,
+    audio_id INTEGER NOT NULL REFERENCES audio_files(id) ON DELETE CASCADE,
+    campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL,
+    call_id INTEGER REFERENCES call_results(id) ON DELETE SET NULL,
+    used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE campaigns ADD CONSTRAINT fk_campaigns_audio
     FOREIGN KEY (audio_id) REFERENCES audio_files(id) ON DELETE SET NULL;
 
 -- =============================================
@@ -706,6 +738,10 @@ CREATE INDEX IF NOT EXISTS idx_audio_files_campaign ON audio_files(campaign_id) 
 CREATE INDEX IF NOT EXISTS idx_audio_files_created_by ON audio_files(created_by);
 CREATE INDEX IF NOT EXISTS idx_audio_files_is_public ON audio_files(is_public) WHERE is_public = TRUE;
 CREATE INDEX IF NOT EXISTS idx_audio_files_created_at ON audio_files(created_at);
+CREATE INDEX IF NOT EXISTS idx_audio_files_status ON audio_files(status);
+CREATE INDEX IF NOT EXISTS idx_audio_files_deleted_at ON audio_files(deleted_at) WHERE deleted_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_audio_tags_audio ON audio_tags(audio_id);
+CREATE INDEX IF NOT EXISTS idx_audio_usage_audio ON audio_usage(audio_id);
 
 -- TTS jobs
 CREATE INDEX IF NOT EXISTS idx_tts_jobs_status ON tts_jobs(status);
