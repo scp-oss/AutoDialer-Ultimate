@@ -39,14 +39,54 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     email VARCHAR(255),
     full_name VARCHAR(255),
-    role VARCHAR(20) NOT NULL DEFAULT 'operator' CHECK (role IN ('admin', 'operator', 'viewer')),
+    role VARCHAR(20) NOT NULL DEFAULT 'operator' CHECK (role IN ('admin', 'manager', 'operator', 'viewer', 'api', 'auditor')),
+    phone VARCHAR(20),
+    department VARCHAR(255),
+    position VARCHAR(255),
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'blocked', 'pending')),
     force_password_change BOOLEAN DEFAULT TRUE,
     is_active BOOLEAN DEFAULT TRUE,
     last_login TIMESTAMP,
     last_ip INET,
+    login_count INTEGER DEFAULT 0,
+    avatar_url TEXT,
+    preferences JSONB DEFAULT '{}',
+    notifications JSONB DEFAULT '{}',
+    totp_secret TEXT,
+    totp_enabled BOOLEAN DEFAULT FALSE,
+    totp_recovery_codes JSONB,
+    totp_last_used TIMESTAMP,
     settings JSONB DEFAULT '{}',
+    metadata JSONB DEFAULT '{}',
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
+);
+
+-- Кастомные разрешения пользователя (app/services/user.py:
+-- _add_custom_permissions/_get_custom_permissions, поверх базовых прав роли
+-- из ROLE_PERMISSIONS)
+CREATE TABLE IF NOT EXISTS user_permissions (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    permission VARCHAR(100) NOT NULL,
+    PRIMARY KEY (user_id, permission)
+);
+
+-- API-ключи (app/services/user.py: AuthService.create_api_key/
+-- list_api_keys/revoke_api_key/verify_api_key)
+CREATE TABLE IF NOT EXISTS api_keys (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(255),
+    key_hash VARCHAR(255) UNIQUE NOT NULL,
+    key_prefix VARCHAR(20),
+    permissions JSONB DEFAULT '[]',
+    ip_whitelist JSONB,
+    is_active BOOLEAN DEFAULT TRUE,
+    last_used_at TIMESTAMP,
+    expires_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- =============================================
@@ -591,6 +631,11 @@ CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
 CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);
 CREATE INDEX IF NOT EXISTS idx_users_last_login ON users(last_login) WHERE last_login IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at) WHERE deleted_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_user_permissions_user ON user_permissions(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
 
 -- Sessions
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
