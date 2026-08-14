@@ -277,21 +277,30 @@ install.sh, scripts/, systemd/, nginx/, fail2ban/, logrotate/  bare-metal пут
 
 ### 2.3 База данных
 
-29 таблиц (`sql/schema.sql`): `users`, `sessions`, `campaigns`,
-`campaign_schedules`, `contact_groups`, `contacts`, `contact_import_jobs`,
-`contact_group_members`, `contact_tags`, `contact_notes_history`,
-`campaign_contacts`, `call_results`, `call_recordings`, `settings`,
-`audio_files`, `tts_jobs`, `audit_log`, `blacklist`, `blacklist_tags`,
+37 таблиц (`sql/schema.sql`): `users`, `user_permissions`, `api_keys`,
+`sessions`, `campaigns`, `campaign_tags`, `campaign_schedules`,
+`contact_groups`, `contacts`, `contact_group_members`, `contact_tags`,
+`contact_notes_history`, `contact_import_jobs`, `campaign_contacts`,
+`call_results`, `call_tags`, `call_events`, `call_transcriptions`,
+`call_recordings`, `settings`, `audio_files`, `audio_tags`,
+`audio_usage`, `tts_jobs`, `audit_log`, `blacklist`, `blacklist_tags`,
 `blacklist_history`, `api_tokens`, `webhook_events`,
 `webhook_subscriptions`, `webhook_deliveries`, `record_versions`,
-`notifications`, `system_events`, `incoming_calls`. Было 24 —
-`blacklist_tags`/`blacklist_history` добавлены при фиксе `blacklist`,
-`contact_group_members`/`contact_tags`/`contact_notes_history` — при
-фиксе `contacts` (см. §3.0). 5 представлений (`campaign_stats`,
-`daily_stats`, `active_campaigns`, `dial_queue_view`, `dashboard_summary`).
-ER-диаграмма — `docs/ER_DIAGRAM.md` (см. §3.1) — **устарела после этого
-раунда**, не отражает новые колонки/таблицы `blacklist`/`contacts`, регенерация не
-входила в объём текущего раунда.
+`notifications`, `system_events`, `incoming_calls`,
+`incoming_call_tags`, `incoming_call_events`. Было 24 в начале раунда
+исправления схемной просадки (§3.0) — 13 таблиц добавлены по ходу
+Багов №3-№10: `blacklist_tags`/`blacklist_history` (`blacklist`),
+`contact_group_members`/`contact_tags`/`contact_notes_history`
+(`contacts`), `campaign_tags` (`campaigns`), `call_tags`/`call_events`/
+`call_transcriptions` (`call_results`), `user_permissions`/`api_keys`
+(`users`), `audio_tags`/`audio_usage` (`audio_files`),
+`incoming_call_tags`/`incoming_call_events` (`incoming_calls`).
+5 представлений (`campaign_stats`, `daily_stats`,
+`active_campaigns`, `dial_queue_view`, `dashboard_summary`).
+ER-диаграмма — `docs/ER_DIAGRAM.md` (см. §3.1) — **устарела после раунда
+исправления схемной просадки (Баги №3-№10)**, не отражает ни одно из
+перечисленных выше изменений; регенерация — отдельная задача, не входила
+в объём этого раунда.
 
 ### 2.4 SIP / AMI
 
@@ -676,22 +685,37 @@ unique_id, linked_id, language, status, created_at, updated_at` — все
   не найдено. Регрессия проверена повторным прогоном `pytest` — 96/96
   по-прежнему проходит.
 
-**Не исправлено, только задокументировано.** Та же проверка (сравнение
-колонок в `INSERT INTO`/`UPDATE` сервисов с реальным списком колонок в
-`sql/schema.sql`) для последней оставшейся таблицы:
+**Баг №10 (исправлен для `settings`, завершает работу по Багу №3): та же
+схемная просадка (одна колонка) + independent живой баг —
+`AmbiguousColumnError`.** `sql/schema.sql` не хватало у `settings`
+колонки `created_at` — `SettingsService.initialize_defaults()`
+(наполняет `SYSTEM_SETTINGS` при первом запуске приложения) вставляет её
+напрямую, то есть **любой** новый деплой падал бы на посеве дефолтных
+настроек с `UndefinedColumnError`. Исправлено:
+- `sql/schema.sql`: `settings` дополнен колонкой `created_at`.
+- Новая идемпотентная миграция `alembic/versions/
+  0009_settings_schema_fix.py`.
+- При живом прогоне найден и исправлен независимый от схемы баг в
+  `get_setting()`: запрос `SELECT updated_at, updated_by, u.username ...
+  FROM settings s LEFT JOIN users u ON s.updated_by = u.id` не
+  квалифицировал `updated_at` таблицей — у `settings` и `users` обеих
+  есть колонка `updated_at`, из-за чего Postgres не мог определить, какую
+  из них имели в виду: `asyncpg.exceptions.AmbiguousColumnError` на
+  **каждый** вызов `get_setting()`, независимо от фикса схемы. Исправлено
+  квалификацией `s.updated_at`/`s.updated_by`.
+- **Проверено вживую**: `alembic upgrade head` с нуля (`0001→...→0009`),
+  затем `SettingsService` — `initialize_defaults` (включая идемпотентность
+  — повторный вызов создаёт 0 новых записей) → `get_settings`/
+  `get_setting`/`get_setting_value` → `update_setting` →
+  `get_categories`/`get_settings_by_category` → `export_settings` →
+  `health_check` — ни одной ошибки после фиксов. Регрессия проверена
+  повторным прогоном `pytest` — 96/96 по-прежнему проходит.
 
-- `settings` (`app/services/settings.py`): `created_at`
-
-Статический список может быть неточным (проверялись только явные
-SQL-запросы, не представления/триггеры), а живой прогон, как показали
-Баги №5-№9, иногда вскрывает дополнительные баги самого сервисного кода,
-не только схемы — перед исправлением `settings` её стоит перепроверить
-так же, как остальные таблицы этого раздела: **fresh `alembic upgrade
-head` с нуля** (не просто `psql -f sql/schema.sql` — см. находку про
-`0001` выше) плюс живой прогон сервиса. Это последний оставшийся пункт
-критичного расхождения схемы БД и сервисного слоя (§3.0) — после него вся
-известная схемная просадка, задокументированная в этом разделе, будет
-устранена.
+Это закрывает последний пункт из списка "документировано, но не
+исправлено" в §3.0 — вся схемная просадка между `sql/schema.sql` и
+`app/services/*.py`, найденная этим аудитом (Баги №3-№10), теперь
+исправлена, покрыта идемпотентными миграциями (`0002`-`0009`) и проверена
+живым прогоном каждого затронутого сервиса против настоящего Postgres.
 
 ### 3.1 Документация и диаграммы
 ER-диаграмма — сделано: `docs/ER_DIAGRAM.md` (Mermaid, все 24 таблицы
