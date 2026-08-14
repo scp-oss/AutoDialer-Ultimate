@@ -71,18 +71,33 @@ CREATE TABLE IF NOT EXISTS campaigns (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
+    priority VARCHAR(20) DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'critical')),
     status VARCHAR(50) DEFAULT 'draft' CHECK (status IN ('draft', 'running', 'paused', 'stopped', 'completed', 'failed', 'scheduled')),
     max_calls INTEGER DEFAULT 30 CHECK (max_calls > 0 AND max_calls <= 200),
     cps INTEGER DEFAULT 5 CHECK (cps > 0 AND cps <= 100),
+    dial_mode VARCHAR(20) DEFAULT 'predictive' CHECK (dial_mode IN ('predictive', 'progressive', 'preview', 'power')),
+    call_timeout INTEGER DEFAULT 30,
+    answer_timeout INTEGER DEFAULT 30,
     audio_id INTEGER,
     caller_id VARCHAR(80),
+    caller_id_number VARCHAR(20),
     retry_strategy JSONB DEFAULT '{"busy": 2, "noanswer": 3, "failed": 1, "timeout": 1}',
     schedule JSONB,
+    metadata JSONB DEFAULT '{}',
     started_at TIMESTAMP,
+    paused_at TIMESTAMP,
+    stopped_at TIMESTAMP,
     completed_at TIMESTAMP,
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Теги кампаний (app/services/campaign.py: _add_campaign_tags/_get_campaign_tags)
+CREATE TABLE IF NOT EXISTS campaign_tags (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    tag VARCHAR(100) NOT NULL,
+    PRIMARY KEY (campaign_id, tag)
 );
 
 -- =============================================
@@ -227,6 +242,7 @@ CREATE TABLE IF NOT EXISTS campaign_contacts (
     contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
     retry_count INTEGER DEFAULT 0,
     last_call_at TIMESTAMP,
+    last_call_status VARCHAR(50),
     next_retry_at TIMESTAMP,
     status VARCHAR(50),
     priority INTEGER DEFAULT 0,
@@ -247,16 +263,51 @@ CREATE TABLE IF NOT EXISTS call_results (
     caller_id VARCHAR(255),
     phone VARCHAR(20) NOT NULL,
     status VARCHAR(50) NOT NULL,
+    direction VARCHAR(20) DEFAULT 'outbound' CHECK (direction IN ('outbound', 'inbound')),
     dtmf_result VARCHAR(10),
+    dtmf_digits VARCHAR(50),
     duration INTEGER DEFAULT 0,
     billable_seconds INTEGER DEFAULT 0,
+    wait_time INTEGER,
     hangup_cause VARCHAR(50),
     hangup_cause_code INTEGER,
     hangup_cause_txt TEXT,
     retry_count INTEGER DEFAULT 0,
     recording_path TEXT,
     recording_url TEXT,
+    recording_size INTEGER,
+    tags TEXT[] DEFAULT '{}',
+    notes TEXT,
     metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Теги отдельных звонков (app/services/call_result.py: _get_call_tags,
+-- отдельно от call_results.tags - используются в WHERE tag = ANY(...)
+-- поиске; call_results.tags хранит тот же список денормализованно для
+-- дешёвого чтения без JOIN).
+CREATE TABLE IF NOT EXISTS call_tags (
+    call_id INTEGER NOT NULL REFERENCES call_results(id) ON DELETE CASCADE,
+    tag VARCHAR(100) NOT NULL,
+    PRIMARY KEY (call_id, tag)
+);
+
+-- События звонка (app/services/call_result.py: _get_call_events читает эту
+-- таблицу; наполнение - будущая задача, как и blacklist_history).
+CREATE TABLE IF NOT EXISTS call_events (
+    id SERIAL PRIMARY KEY,
+    call_id INTEGER NOT NULL REFERENCES call_results(id) ON DELETE CASCADE,
+    event_type VARCHAR(50) NOT NULL,
+    details JSONB DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Транскрибация звонка (app/services/call_result.py: _get_transcription
+-- читает эту таблицу; наполнение - будущая задача).
+CREATE TABLE IF NOT EXISTS call_transcriptions (
+    id SERIAL PRIMARY KEY,
+    call_id INTEGER NOT NULL REFERENCES call_results(id) ON DELETE CASCADE,
+    transcription TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -551,6 +602,8 @@ CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status);
 CREATE INDEX IF NOT EXISTS idx_campaigns_created_by ON campaigns(created_by);
 CREATE INDEX IF NOT EXISTS idx_campaigns_created_at ON campaigns(created_at);
 CREATE INDEX IF NOT EXISTS idx_campaigns_started_at ON campaigns(started_at) WHERE started_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_campaigns_priority ON campaigns(priority);
+CREATE INDEX IF NOT EXISTS idx_campaign_tags_campaign ON campaign_tags(campaign_id);
 
 -- Campaign schedules
 CREATE INDEX IF NOT EXISTS idx_campaign_schedules_campaign ON campaign_schedules(campaign_id);
@@ -596,6 +649,9 @@ CREATE INDEX IF NOT EXISTS idx_call_results_linked_id ON call_results(linked_id)
 CREATE INDEX IF NOT EXISTS idx_call_results_unique_id ON call_results(unique_id) WHERE unique_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_call_results_campaign_status ON call_results(campaign_id, status);
 CREATE INDEX IF NOT EXISTS idx_call_results_created_date ON call_results((created_at::DATE));
+CREATE INDEX IF NOT EXISTS idx_call_tags_call ON call_tags(call_id);
+CREATE INDEX IF NOT EXISTS idx_call_events_call ON call_events(call_id);
+CREATE INDEX IF NOT EXISTS idx_call_transcriptions_call ON call_transcriptions(call_id);
 
 -- Call recordings
 CREATE INDEX IF NOT EXISTS idx_call_recordings_call_result ON call_recordings(call_result_id);
