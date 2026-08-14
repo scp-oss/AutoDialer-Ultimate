@@ -116,8 +116,10 @@ CREATE TABLE IF NOT EXISTS contact_groups (
     description TEXT,
     color VARCHAR(7) DEFAULT '#667eea',
     parent_id INTEGER REFERENCES contact_groups(id) ON DELETE SET NULL,
+    is_public BOOLEAN DEFAULT FALSE,
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- =============================================
@@ -126,25 +128,72 @@ CREATE TABLE IF NOT EXISTS contact_groups (
 CREATE TABLE IF NOT EXISTS contacts (
     id SERIAL PRIMARY KEY,
     phone VARCHAR(20) NOT NULL,
+    phone2 VARCHAR(20),
+    phone3 VARCHAR(20),
     name VARCHAR(255),
     email VARCHAR(255),
+    gender VARCHAR(10) DEFAULT 'unknown' CHECK (gender IN ('male', 'female', 'unknown')),
+    birth_date DATE,
+    company VARCHAR(255),
+    position VARCHAR(255),
+    country VARCHAR(100),
+    region VARCHAR(100),
+    city VARCHAR(100),
+    address TEXT,
+    postal_code VARCHAR(20),
+    source VARCHAR(20) DEFAULT 'manual' CHECK (source IN ('manual', 'import', 'api', 'webhook', 'incoming')),
     group_id INTEGER REFERENCES contact_groups(id) ON DELETE SET NULL,
     tags TEXT[],
     custom_fields JSONB DEFAULT '{}',
-    status VARCHAR(50) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'blocked')),
+    status VARCHAR(50) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'blocked', 'blacklisted', 'error')),
     blacklisted BOOLEAN DEFAULT FALSE,
     blacklist_reason TEXT,
     notes TEXT,
     last_call_at TIMESTAMP,
+    last_call_status VARCHAR(50),
     total_calls INTEGER DEFAULT 0,
+    successful_calls INTEGER DEFAULT 0,
     total_agreed INTEGER DEFAULT 0,
     total_declined INTEGER DEFAULT 0,
+    dnd BOOLEAN DEFAULT FALSE,
+    dnd_until TIMESTAMP,
+    view_count INTEGER DEFAULT 0,
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_phone_active ON contacts(phone) WHERE NOT blacklisted;
+
+-- Многие-ко-многим контакт-группа (app/services/contact.py:
+-- _add_contact_to_groups/_get_contact_groups/list_contacts) - отдельно от
+-- contacts.group_id (основная/primary группа для обратной совместимости).
+CREATE TABLE IF NOT EXISTS contact_group_members (
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    group_id INTEGER NOT NULL REFERENCES contact_groups(id) ON DELETE CASCADE,
+    is_primary BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (contact_id, group_id)
+);
+
+-- Теги контактов (app/services/contact.py: _add_contact_tags/_get_contact_tags)
+CREATE TABLE IF NOT EXISTS contact_tags (
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    tag VARCHAR(100) NOT NULL,
+    PRIMARY KEY (contact_id, tag)
+);
+
+-- История заметок по контакту (app/services/contact.py:
+-- _get_contact_notes_history читает эту таблицу; наполнение - будущая
+-- задача, таблица существует, чтобы SELECT не падал).
+CREATE TABLE IF NOT EXISTS contact_notes_history (
+    id SERIAL PRIMARY KEY,
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    note TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 -- =============================================
 -- 7. CONTACT_IMPORT_JOBS (ЗАДАЧИ ИМПОРТА)
@@ -518,6 +567,10 @@ CREATE INDEX IF NOT EXISTS idx_contacts_last_call ON contacts(last_call_at) WHER
 CREATE INDEX IF NOT EXISTS idx_contacts_tags ON contacts USING gin(tags);
 CREATE INDEX IF NOT EXISTS idx_contacts_custom_fields ON contacts USING gin(custom_fields);
 CREATE INDEX IF NOT EXISTS idx_contacts_name_trgm ON contacts USING gin(name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_contacts_deleted_at ON contacts(deleted_at) WHERE deleted_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_contact_group_members_group ON contact_group_members(group_id);
+CREATE INDEX IF NOT EXISTS idx_contact_tags_contact ON contact_tags(contact_id);
+CREATE INDEX IF NOT EXISTS idx_contact_notes_history_contact ON contact_notes_history(contact_id);
 
 -- Contact import jobs
 CREATE INDEX IF NOT EXISTS idx_contact_import_jobs_status ON contact_import_jobs(status);
