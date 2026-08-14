@@ -329,7 +329,7 @@ class AuditService:
                 entity_name=row['entity_name'],
                 details=json.loads(row['details']) if row['details'] else None,
                 changes=json.loads(row['changes']) if row['changes'] else None,
-                ip_address=row['ip_address'],
+                ip_address=str(row['ip_address']) if row['ip_address'] else None,
                 user_agent=row['user_agent'],
                 request_method=row['request_method'],
                 request_path=row['request_path'],
@@ -662,12 +662,16 @@ class AuditService:
             
             # Сессии
             session_stats = await conn.fetchrow("""
-                SELECT 
-                    COUNT(DISTINCT session_id) as total_sessions,
-                    AVG(EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at)))/60) as avg_duration
-                FROM audit_log
-                WHERE user_id = $1 AND created_at::date >= $2 AND session_id IS NOT NULL
-                GROUP BY session_id
+                SELECT
+                    COUNT(*) as total_sessions,
+                    AVG(session_duration) as avg_duration
+                FROM (
+                    SELECT
+                        EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at)))/60 as session_duration
+                    FROM audit_log
+                    WHERE user_id = $1 AND created_at::date >= $2 AND session_id IS NOT NULL
+                    GROUP BY session_id
+                ) sessions
             """, user_id, from_date)
             
             # Уникальные IP
@@ -1011,7 +1015,7 @@ class AuditService:
             entity_name=row['entity_name'],
             details=json.loads(row['details']) if row['details'] else None,
             changes=json.loads(row['changes']) if row['changes'] else None,
-            ip_address=row['ip_address'],
+            ip_address=str(row['ip_address']) if row['ip_address'] else None,
             user_agent=row['user_agent'],
             request_method=row['request_method'],
             request_path=row['request_path'],
