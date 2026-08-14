@@ -639,35 +639,59 @@ error_message, metadata` — все пишутся `AuditService.log()`/`log_bat
   фиксов. Регрессия проверена повторным прогоном `pytest` — 96/96
   по-прежнему проходит.
 
-**Не исправлено, только задокументировано.** Та же проверка (сравнение
-колонок в `INSERT INTO` сервисов с реальным списком колонок в
-`sql/schema.sql`, статический скрипт по всем `app/services/*.py`) для
-оставшихся таблиц — колонки, которые сервис ожидает в `INSERT`, а
-`sql/schema.sql` их не определяет, плюс таблицы, которых нет вообще:
+**Баг №9 (исправлен для `incoming_calls`/`incoming_call_tags`/
+`incoming_call_events`, продолжение работы по Багу №3): та же схемная
+просадка, шире статического списка.** `sql/schema.sql` не хватало у
+`incoming_calls` колонок `caller_name, called_number, recording_format,
+unique_id, linked_id, language, status, created_at, updated_at` — все
+пишутся `IncomingCallService.process_webhook()` напрямую в `INSERT`, то
+есть **любой** webhook о входящем звонке от Asterisk падал бы с
+`UndefinedColumnError`. Живой прогон (не только статический grep по
+`INSERT INTO`) вскрыл ещё три отсутствующие колонки, о которые
+статический список не спотыкался, потому что они пишутся через `UPDATE`,
+а не `INSERT`: `contact_id` (`process_webhook()` привязывает найденный/
+созданный контакт отдельным `UPDATE` сразу после вставки),
+`listened_at`/`listened_by` (`mark_listened()`), плюс `transcription_engine`/
+`transcription_error`/`transcription_segments` (`_transcribe_call()`).
+Таблиц `incoming_call_tags`/`incoming_call_events` не было вообще —
+`_get_call_tags()`/`_update_call_tags()`/`_get_listen_history()` падали бы
+с `UndefinedTableError`. Исправлено:
+- `sql/schema.sql`: `incoming_calls` дополнен всеми перечисленными
+  колонками (`status` — с CHECK по `IncomingCallStatus`, `unique_id` —
+  `UNIQUE`, `contact_id`/`listened_by` — FK на `contacts`/`users`).
+  Добавлены `incoming_call_tags` (активно используется) и
+  `incoming_call_events` (сервис пока только читает её через
+  `_get_listen_history`, наполнение — будущая задача, как и
+  `audio_usage`/`blacklist_history`/`contact_notes_history` ранее).
+- Новая идемпотентная миграция `alembic/versions/
+  0008_incoming_calls_schema_fix.py`.
+- **Проверено вживую**: `alembic upgrade head` с нуля (`0001→0002→0003→
+  0004→0005→0006→0007→0008`), затем `IncomingCallService` —
+  `process_webhook` (включая дедупликацию по `unique_id` и авто-привязку
+  контакта) → `get_incoming_call` → `update_incoming_call` (заметки, теги,
+  статус, метаданные) → `mark_listened` → `list_incoming_calls` (фильтр по
+  `called_number`/тегам) → `batch_action` (`archive`) →
+  `get_transcription_status` → `health_check` → `delete_incoming_call` —
+  ни одной ошибки после фиксов, дополнительных живых багов в этом раунде
+  не найдено. Регрессия проверена повторным прогоном `pytest` — 96/96
+  по-прежнему проходит.
 
-- `incoming_calls` (`app/services/incoming.py`): `caller_name,
-  called_number, recording_format, unique_id, linked_id, language,
-  status, created_at, updated_at`; таблиц нет: `incoming_call_tags`,
-  `incoming_call_events`
+**Не исправлено, только задокументировано.** Та же проверка (сравнение
+колонок в `INSERT INTO`/`UPDATE` сервисов с реальным списком колонок в
+`sql/schema.sql`) для последней оставшейся таблицы:
+
 - `settings` (`app/services/settings.py`): `created_at`
 
-Практически это значит: обработка входящего звонка, вероятно, всё ещё
-падает на любом окружении, где база создаётся из актуального
-`sql/schema.sql` (создание пользователя, TTS-аудио и запись аудита, ранее
-в этом же списке, исправлены Багами №6-№8 выше). Статический список
-может быть неточным (проверялись только `INSERT INTO`, не
-`UPDATE`/`SELECT`/представления/триггеры), а живой прогон, как показали
-Баги №5-№8, иногда вскрывает дополнительные баги самого сервисного кода,
-не только схемы — перед исправлением каждой таблицы её нужно
-перепроверить так же, как
-`blacklist`/`contacts`/`campaigns`/`call_results`/`users`/`audio_files`/
-`audit_log`:
-**fresh `alembic upgrade head` с нуля** (не просто `psql -f
-sql/schema.sql` — см. находку про `0001` выше) плюс живой прогон
-сервиса. **Это самая приоритетная задача проекта на сегодняшний день**
-— важнее React-фронтенда и SQLAlchemy ORM, потому что без неё часть
-REST API нерабочая независимо
-от остального прогресса.
+Статический список может быть неточным (проверялись только явные
+SQL-запросы, не представления/триггеры), а живой прогон, как показали
+Баги №5-№9, иногда вскрывает дополнительные баги самого сервисного кода,
+не только схемы — перед исправлением `settings` её стоит перепроверить
+так же, как остальные таблицы этого раздела: **fresh `alembic upgrade
+head` с нуля** (не просто `psql -f sql/schema.sql` — см. находку про
+`0001` выше) плюс живой прогон сервиса. Это последний оставшийся пункт
+критичного расхождения схемы БД и сервисного слоя (§3.0) — после него вся
+известная схемная просадка, задокументированная в этом разделе, будет
+устранена.
 
 ### 3.1 Документация и диаграммы
 ER-диаграмма — сделано: `docs/ER_DIAGRAM.md` (Mermaid, все 24 таблицы
