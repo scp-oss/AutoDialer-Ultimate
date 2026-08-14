@@ -277,18 +277,20 @@ install.sh, scripts/, systemd/, nginx/, fail2ban/, logrotate/  bare-metal пут
 
 ### 2.3 База данных
 
-26 таблиц (`sql/schema.sql`): `users`, `sessions`, `campaigns`,
+29 таблиц (`sql/schema.sql`): `users`, `sessions`, `campaigns`,
 `campaign_schedules`, `contact_groups`, `contacts`, `contact_import_jobs`,
+`contact_group_members`, `contact_tags`, `contact_notes_history`,
 `campaign_contacts`, `call_results`, `call_recordings`, `settings`,
 `audio_files`, `tts_jobs`, `audit_log`, `blacklist`, `blacklist_tags`,
 `blacklist_history`, `api_tokens`, `webhook_events`,
 `webhook_subscriptions`, `webhook_deliveries`, `record_versions`,
-`notifications`, `system_events`, `incoming_calls`. Было 24 — `blacklist_tags`/
-`blacklist_history` добавлены в этом раунде вместе с недостающими
-колонками `blacklist` (см. §3.0). 5 представлений (`campaign_stats`,
+`notifications`, `system_events`, `incoming_calls`. Было 24 —
+`blacklist_tags`/`blacklist_history` добавлены при фиксе `blacklist`,
+`contact_group_members`/`contact_tags`/`contact_notes_history` — при
+фиксе `contacts` (см. §3.0). 5 представлений (`campaign_stats`,
 `daily_stats`, `active_campaigns`, `dial_queue_view`, `dashboard_summary`).
 ER-диаграмма — `docs/ER_DIAGRAM.md` (см. §3.1) — **устарела после этого
-раунда**, не отражает новые колонки/таблицы `blacklist`, регенерация не
+раунда**, не отражает новые колонки/таблицы `blacklist`/`contacts`, регенерация не
 входила в объём текущего раунда.
 
 ### 2.4 SIP / AMI
@@ -383,50 +385,103 @@ created_by, created_at`), а `app/services/blacklist.py` (~1100 строк)
   `False` после удаления — это же подтверждает и фикс триггера) — ни
   одной ошибки на реальной БД.
 
-**Не исправлено, только задокументировано (та же проверка — сравнение
-колонок в `INSERT INTO` сервисов с реальным списком колонок в
-`sql/schema.sql`, прогнанная статическим скриптом по всем
-`app/services/*.py`, плюс живая проверка на `contacts`/`campaigns`,
-которая подтвердила именно такую же картину, как был `blacklist`).
-Расхождение системное, не только в `blacklist`. Колонки, которые сервис
-ожидает в `INSERT`, а `sql/schema.sql` их не определяет:
+**Баг №4 (исправлен для `contacts`/`contact_groups`, продолжение работы
+по Багу №3): та же схемная просадка на `contacts`.** `sql/schema.sql`
+знал только про 18 базовых колонок `contacts` и одиночный `group_id`
+(один-к-одному), а `app/services/contact.py` (`ContactService` +
+`ContactGroupService`, ~1400 строк) реализует расширенную анкету
+контакта, мягкое удаление, DND, счётчик просмотров и полноценное
+многие-ко-многим контакт↔группа с тегами и историей заметок — вживую
+подтверждено падением `create_contact()` на `INSERT` с
+`UndefinedColumnError: column "phone2" does not exist`. Исправлено:
+- `sql/schema.sql`: `contacts` дополнен колонками `phone2, phone3,
+  gender, birth_date, company, position, country, region, city, address,
+  postal_code, source, last_call_status, successful_calls, dnd,
+  dnd_until, view_count, deleted_at`; `status` CHECK расширен до всех 5
+  значений `ContactStatus` (было только 3 — `blacklisted`/`error`
+  раньше даже не проходили бы constraint); `contact_groups` дополнен
+  `is_public`/`updated_at`. Добавлены три таблицы, которых не было
+  вообще: `contact_group_members` (многие-ко-многим, с `is_primary` —
+  `contacts.group_id` остаётся для обратной совместимости как основная
+  группа), `contact_tags`, `contact_notes_history` (сервис пока только
+  читает её через `_get_contact_notes_history`, наполнение — будущая
+  задача, как и `blacklist_history`).
+- Новая идемпотентная миграция `alembic/versions/
+  0003_contacts_schema_fix.py`.
+- **Побочная находка при живой проверке через `alembic upgrade head` (а
+  не прямой прогон `sql/schema.sql` через `psql`, как раньше) — баг в
+  самом `0001_initial_schema.py`.** Его `_split_sql_statements()` бил
+  `sql/schema.sql` на отдельные операторы по каждому `;` вне `$$...$$`,
+  но не считал `-- ...`-комментарии и `'...'`-строковые литералы
+  непрозрачными зонами — а описательный комментарий перед
+  `blacklist_history` (добавленный в прошлом раунде) и мой новый перед
+  `contact_notes_history` оба содержат `;` внутри обычного русского
+  предложения ("... читает эту таблицу; наполнение — будущая задача").
+  Результат: `CREATE TABLE contact_notes_history (...)` резалось пополам
+  прямо на слове "наполнение", `alembic upgrade head` падал с
+  `PostgresSyntaxError`. Это относится и к уже существовавшему
+  комментарию перед `blacklist_history` — вероятно, `0002` в прошлом
+  раунде проверялась только через прямой `psql -f sql/schema.sql`
+  (не ломается — `psql` понимает SQL-комментарии нативно) и
+  инкрементальный путь `0001→0002` без предварительного fresh-`0001`,
+  либо этот текст комментария появился уже после последней живой
+  проверки `alembic upgrade head`; в любом случае сам факт, что баг был
+  тут и не пойман — напоминание, что "проверено вживую" должно всегда
+  включать **fresh `alembic upgrade head` с нуля**, а не только
+  прямой `psql -f schema.sql`. Исправлено: `_split_sql_statements()`
+  теперь также трактует `-- до конца строки` и `'...'` как
+  непрозрачные — проверено юнит-проверкой (186 операторов, ни один не
+  начинается с "хвоста" разрезанного комментария) и полным `alembic
+  upgrade head` с нуля (`0001→0002→0003`).
+- **Проверено вживую**: `alembic upgrade head` с нуля, затем полный цикл
+  через `ContactService`/`ContactGroupService` — `create_group` →
+  `create_contact` (все новые поля) → `get_contact` → `update_contact` →
+  `list_contacts` → `blacklist_contact`/`unblacklist_contact` →
+  `delete_contact`/`restore_contact` → `list_groups`/`get_group_tree` →
+  `export_contacts` (CSV+JSON) → `bulk_import_contacts` — ни одной
+  ошибки.
 
-- `contacts` (`app/services/contact.py`, живьём подтверждено падением на
-  `INSERT`): `phone2, phone3, gender, birth_date, company, position,
-  country, region, city, address, postal_code, source`
-- `campaigns` (`app/services/campaign.py`, колонки вычислены статически,
-  живьём не проверено — скрипт остановился на `contacts`): `priority,
-  dial_mode, call_timeout, answer_timeout, caller_id_number`
+**Не исправлено, только задокументировано.** Та же проверка (сравнение
+колонок в `INSERT INTO` сервисов с реальным списком колонок в
+`sql/schema.sql`, статический скрипт по всем `app/services/*.py`) для
+оставшихся таблиц — колонки, которые сервис ожидает в `INSERT`, а
+`sql/schema.sql` их не определяет, плюс таблицы, которых нет вообще:
+
+- `campaigns` (`app/services/campaign.py`, живьём не проверено):
+  `priority, dial_mode, call_timeout, answer_timeout,
+  caller_id_number`; таблицы нет: `campaign_tags`
 - `users` (`app/services/user.py`): `phone, department, position,
-  status, created_by`
+  status, created_by, avatar_url, preferences, notifications,
+  totp_secret, totp_enabled, totp_recovery_codes, totp_last_used,
+  force_password_change, deleted_at, last_ip, login_count, metadata`;
+  таблиц нет: `user_permissions`, `api_keys`
 - `audio_files` (`app/services/audio.py`): `file_name, status,
   sample_rate, channels, bitrate, converted_from_id, tts_text,
-  tts_voice, tts_model, tts_speed, updated_at`
+  tts_voice, tts_model, tts_speed, updated_at`; таблиц нет: `audio_tags`,
+  `audio_usage`
 - `audit_log` (`app/services/audit.py`): `user_role, severity,
   entity_name, changes, request_method, request_path, correlation_id,
   request_id, session_id, status, error_message, metadata`
 - `call_results` (`app/services/call_result.py`,
   `app/services/dialer.py`): `direction, dtmf_digits, unique_id,
-  wait_time, tags`
+  wait_time, tags`; таблиц нет: `call_tags`, `call_events`,
+  `call_transcriptions`
 - `incoming_calls` (`app/services/incoming.py`): `caller_name,
   called_number, recording_format, unique_id, linked_id, language,
-  status, created_at, updated_at`
-- `contact_groups` (`app/services/contact.py`): `is_public`
+  status, created_at, updated_at`; таблиц нет: `incoming_call_tags`,
+  `incoming_call_events`
 - `settings` (`app/services/settings.py`): `created_at`
 
-Практически это значит: создание кампании, контакта (с расширенными
-полями), пользователя (с телефоном/отделом), TTS-аудио, обработка
-входящего звонка и сохранение результата звонка, вероятно, падают на
-любом окружении, где база создаётся из актуального `sql/schema.sql` —
-то есть везде (Docker/Kubernetes/только что установленный bare-metal).
-В этой сессии до сегодняшнего дня ни один из этих сервисов не
-прогонялся вживую против реальной БД — только сборка приложения,
-health-эндпоинты и юнит-тесты бизнес-логики без БД, поэтому расхождение
-оставалось незамеченным. Статический список выше может быть неточным
+Практически это значит: создание кампании (с приоритетом/режимом
+дозвона), пользователя (с телефоном/отделом/2FA/API-ключами), TTS-аудио,
+запись аудита, сохранение результата звонка и обработка входящего
+звонка, вероятно, всё ещё падают на любом окружении, где база создаётся
+из актуального `sql/schema.sql`. Статический список может быть неточным
 (проверялись только `INSERT INTO`, не `UPDATE`/`SELECT`/представления/
 триггеры) — перед исправлением каждой таблицы её нужно перепроверить так
-же, как `blacklist`: живым прогоном сервиса против чистой БД, поднятой
-из `sql/schema.sql`. **Это самая приоритетная задача проекта на
+же, как `blacklist`/`contacts`: **fresh `alembic upgrade head` с нуля**
+(не просто `psql -f sql/schema.sql` — см. находку про `0001` выше) плюс
+живой прогон сервиса. **Это самая приоритетная задача проекта на
 сегодняшний день** — важнее React-фронтенда и SQLAlchemy ORM, потому что
 без неё часть REST API нерабочая независимо от остального прогресса.
 
