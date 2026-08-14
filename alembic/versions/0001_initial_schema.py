@@ -32,18 +32,49 @@ def _split_sql_statements(sql: str) -> list[str]:
     statement separators. asyncpg (via SQLAlchemy's async engine) does not
     support multi-statement execute() calls, so each statement must be
     sent individually.
+
+    Also treats `-- ...` line comments and `'...'` string literals as
+    opaque, since sql/schema.sql's descriptive comments are free-form
+    Russian prose that can legitimately contain a semicolon (e.g. "читает
+    эту таблицу; наполнение...") - without this, such a comment's `;` was
+    misread as a statement terminator, splitting the CREATE TABLE that
+    follows it into two syntactically invalid halves.
     """
     statements = []
     buf: list[str] = []
     in_dollar_quote = False
+    in_line_comment = False
+    in_string_literal = False
     i, n = 0, len(sql)
     while i < n:
+        ch = sql[i]
+        if in_line_comment:
+            buf.append(ch)
+            if ch == "\n":
+                in_line_comment = False
+            i += 1
+            continue
+        if in_string_literal:
+            buf.append(ch)
+            if ch == "'":
+                in_string_literal = False
+            i += 1
+            continue
+        if sql[i:i + 2] == "--":
+            in_line_comment = True
+            buf.append("--")
+            i += 2
+            continue
         if sql[i:i + 2] == "$$":
             in_dollar_quote = not in_dollar_quote
             buf.append("$$")
             i += 2
             continue
-        ch = sql[i]
+        if ch == "'" and not in_dollar_quote:
+            in_string_literal = True
+            buf.append(ch)
+            i += 1
+            continue
         if ch == ";" and not in_dollar_quote:
             stmt = "".join(buf).strip()
             if stmt:
