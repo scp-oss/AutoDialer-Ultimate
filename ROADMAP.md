@@ -495,17 +495,62 @@ call_result.py`, не связанных со схемой:
 `tests/test_blacklist_service.py` и смоук-теста `contacts` — 96/96
 `pytest` по-прежнему проходит.
 
+**Баг №6 (исправлен для `users`/`user_permissions`/`api_keys`, продолжение
+работы по Багу №3): та же схемная просадка + широкая роль/статус
+CHECK-просадка + один живой баг типа asyncpg↔Pydantic.** `sql/schema.sql`
+знал только про 13 базовых колонок `users` и не имел `user_permissions`/
+`api_keys` вообще — `UserService`/`AuthService` (~1840 строк) реализуют
+расширенный профиль (телефон/отдел/должность/аватар/настройки/
+уведомления), мягкое удаление, 2FA (TOTP), кастомные разрешения поверх
+роли и API-ключи. Вживую подтверждено падением `create_user()` на
+`INSERT` с `UndefinedColumnError: column "phone" does not exist`.
+Дополнительно: `role` CHECK-constraint допускал только 3 из 6 значений
+`UserRole` (`admin`/`operator`/`viewer`) — `manager`/`api`/`auditor`
+были бы отвергнуты Postgres на любом `create_user()`/`update_user()` с
+такой ролью. Исправлено:
+- `sql/schema.sql`: `users` дополнен колонками `phone, department,
+  position, status, created_by, avatar_url, preferences, notifications,
+  totp_secret, totp_enabled, totp_recovery_codes, totp_last_used,
+  deleted_at, login_count, metadata`; `role` CHECK расширен до всех 6
+  значений `UserRole`; добавлен `status` CHECK (`active`/`inactive`/
+  `blocked`/`pending`, по `UserStatus`). Добавлены две таблицы, которых
+  не было вообще: `user_permissions` (кастомные разрешения поверх
+  `ROLE_PERMISSIONS`), `api_keys` (API-ключи, `create_api_key`/
+  `list_api_keys`/`revoke_api_key`/`verify_api_key`).
+- Новая идемпотентная миграция `alembic/versions/
+  0005_users_schema_fix.py`.
+- При живом прогоне `UserService.disable_user()`/`enable_user()` (то есть
+  любой путь, перечитывающий пользователя после того, как в него хоть
+  раз писался `last_ip` через `login()`) найден и исправлен реальный баг
+  в `app/services/user.py`, не связанный со схемой: `users.last_ip` —
+  колонка типа `INET`, asyncpg возвращает такие колонки как
+  `ipaddress.IPv4Address`/`IPv6Address`, а не `str`; `UserResponse.last_ip`
+  типизирован как `Optional[str]` — прямая передача `row['last_ip']` в
+  конструктор кидала `pydantic.ValidationError: Input should be a valid
+  string`. Ломалось не при создании пользователя (там `last_ip` ещё
+  `NULL`), а на первом же перечитывании профиля после логина — то есть в
+  проде это проявилось бы на дашборде управления пользователями сразу
+  после первого входа любого пользователя. Исправлено в обоих местах,
+  строящих `UserResponse` из строки БД (`_get_user_by_id()`,
+  `list_users()`): `str(row['last_ip']) if row['last_ip'] else None`.
+- **Проверено вживую**: `alembic upgrade head` с нуля (`0001→0002→0003→
+  0004→0005`), затем полный цикл через `UserService`/`AuthService` —
+  `create_user` (роль `manager` + кастомное разрешение) → `get_user` →
+  `update_user` → `update_profile` → `list_users` → `login` →
+  `change_password` → `setup_totp`/`verify_totp` (реальный TOTP-код,
+  вычисленный вручную по тому же алгоритму, что и
+  `TOTPManager.verify_totp()`) → `create_api_key`/`list_api_keys`/
+  `verify_api_key`/`revoke_api_key` → `disable_user`/`enable_user` →
+  `delete_user`/`restore_user` — ни одной ошибки после фиксов.
+  Регрессия проверена повторным прогоном `pytest` — 96/96 по-прежнему
+  проходит.
+
 **Не исправлено, только задокументировано.** Та же проверка (сравнение
 колонок в `INSERT INTO` сервисов с реальным списком колонок в
 `sql/schema.sql`, статический скрипт по всем `app/services/*.py`) для
 оставшихся таблиц — колонки, которые сервис ожидает в `INSERT`, а
 `sql/schema.sql` их не определяет, плюс таблицы, которых нет вообще:
 
-- `users` (`app/services/user.py`): `phone, department, position,
-  status, created_by, avatar_url, preferences, notifications,
-  totp_secret, totp_enabled, totp_recovery_codes, totp_last_used,
-  force_password_change, deleted_at, last_ip, login_count, metadata`;
-  таблиц нет: `user_permissions`, `api_keys`
 - `audio_files` (`app/services/audio.py`): `file_name, status,
   sample_rate, channels, bitrate, converted_from_id, tts_text,
   tts_voice, tts_model, tts_speed, updated_at`; таблиц нет: `audio_tags`,
@@ -519,19 +564,20 @@ call_result.py`, не связанных со схемой:
   `incoming_call_events`
 - `settings` (`app/services/settings.py`): `created_at`
 
-Практически это значит: создание пользователя (с телефоном/отделом/2FA/
-API-ключами), TTS-аудио, запись аудита и обработка входящего звонка,
-вероятно, всё ещё падают на любом окружении, где база создаётся из
-актуального `sql/schema.sql`. Статический список может быть неточным
-(проверялись только `INSERT INTO`, не `UPDATE`/`SELECT`/представления/
-триггеры), а живой прогон, как показал Баг №5, иногда вскрывает
-дополнительные баги самого сервисного кода, не только схемы — перед
-исправлением каждой таблицы её нужно перепроверить так же, как
-`blacklist`/`contacts`/`campaigns`/`call_results`: **fresh `alembic
-upgrade head` с нуля** (не просто `psql -f sql/schema.sql` — см. находку
-про `0001` выше) плюс живой прогон сервиса. **Это самая приоритетная
-задача проекта на сегодняшний день** — важнее React-фронтенда и
-SQLAlchemy ORM, потому что без неё часть REST API нерабочая независимо
+Практически это значит: TTS-аудио, запись аудита и обработка входящего
+звонка, вероятно, всё ещё падают на любом окружении, где база создаётся
+из актуального `sql/schema.sql` (создание пользователя, ранее в этом же
+списке, исправлено Багом №6 выше). Статический список может быть
+неточным (проверялись только `INSERT INTO`, не `UPDATE`/`SELECT`/
+представления/триггеры), а живой прогон, как показали Баги №5 и №6,
+иногда вскрывает дополнительные баги самого сервисного кода, не только
+схемы — перед исправлением каждой таблицы её нужно перепроверить так
+же, как `blacklist`/`contacts`/`campaigns`/`call_results`/`users`:
+**fresh `alembic upgrade head` с нуля** (не просто `psql -f
+sql/schema.sql` — см. находку про `0001` выше) плюс живой прогон
+сервиса. **Это самая приоритетная задача проекта на сегодняшний день**
+— важнее React-фронтенда и SQLAlchemy ORM, потому что без неё часть
+REST API нерабочая независимо
 от остального прогресса.
 
 ### 3.1 Документация и диаграммы
