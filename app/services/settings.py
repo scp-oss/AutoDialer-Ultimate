@@ -544,7 +544,7 @@ class SettingsService:
         
         async with self.db_pool.acquire() as conn:
             row = await conn.fetchrow("""
-                SELECT updated_at, updated_by, u.username as updated_by_name
+                SELECT s.updated_at, s.updated_by, u.username as updated_by_name
                 FROM settings s
                 LEFT JOIN users u ON s.updated_by = u.id
                 WHERE s.key = $1
