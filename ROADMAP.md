@@ -593,31 +593,75 @@ updated_at, view_count, usage_count, last_used_at, deleted_at` — все
   статически. Регрессия проверена повторным прогоном `pytest` — 96/96
   по-прежнему проходит.
 
+**Баг №8 (исправлен для `audit_log`, продолжение работы по Багу №3): та
+же схемная просадка + рецидив Бага №6 (INET→str) в новом месте + сломанный
+SQL-запрос статистики.** `sql/schema.sql` не хватало у `audit_log`
+колонок `user_role, severity, entity_name, changes, request_method,
+request_path, correlation_id, request_id, session_id, status,
+error_message, metadata` — все пишутся `AuditService.log()`/`log_batch()`
+напрямую в `INSERT`, то есть **любое** аудируемое действие в системе
+падало бы с `UndefinedColumnError`. Исправлено:
+- `sql/schema.sql`: `audit_log` дополнен перечисленными колонками
+  (`severity` — с CHECK по `AuditSeverity`); добавлены индексы по
+  `correlation_id`, `severity`, `(entity_type, entity_id)`, `session_id`
+  под соответствующие запросы (`get_audit_log`'s related-events lookup,
+  фильтрация по важности, `get_entity_stats`, подсчёт уникальных сессий).
+- Новая идемпотентная миграция `alembic/versions/
+  0007_audit_log_schema_fix.py`.
+- При живом прогоне найден и исправлен рецидив Бага №6 в новом месте:
+  `audit_log.ip_address` — тоже `INET`, asyncpg возвращает
+  `ipaddress.IPv4Address`/`IPv6Address`, а не `str`;
+  `AuditLogResponse.ip_address: Optional[str]` кидал бы
+  `pydantic.ValidationError` на первой же записи с непустым IP (то есть
+  почти всегда — контекст запроса обычно включает IP). Исправлено в
+  `get_audit_log()` и `_row_to_response()` тем же паттерном:
+  `str(row['ip_address']) if row['ip_address'] else None`.
+- Отдельно найден и исправлен настоящий баг в `get_user_stats()`, не
+  связанный со схемой: запрос длительности сессий одновременно делал
+  `GROUP BY session_id` и вычислял `AVG(EXTRACT(...MAX(created_at) -
+  MIN(created_at)...))` — вложенные агрегатные функции внутри `AVG()` при
+  активном `GROUP BY` того же уровня, что Postgres прямо запрещает:
+  `GroupingError: aggregate function calls cannot be nested`. Падало на
+  **каждый** вызов `get_user_stats()` (просмотр статистики пользователя),
+  а не только когда у пользователя были сессии — ошибка возникает на
+  этапе planning запроса, до выполнения. Исправлено переписыванием на
+  подзапрос: сперва длительность на сессию через `GROUP BY session_id`,
+  затем `COUNT(*)`/`AVG(...)` уже над результатом подзапроса без
+  вложенности.
+- **Проверено вживую**: `alembic upgrade head` с нуля (`0001→0002→0003→
+  0004→0005→0006→0007`), затем `AuditService` — `log`/`log_batch` (с
+  общим `correlation_id`/`session_id`) → `get_audit_log` (проверка типа
+  `ip_address` после конверсии, связанные события по `correlation_id`) →
+  `list_audit_logs` (фильтр по `severity`/`status`/`correlation_id`) →
+  `get_audit_by_entity`/`get_audit_by_user` → `get_stats`/
+  `get_user_stats`/`get_entity_stats` → `export_to_csv`/`export_to_json`
+  → `cleanup_old_logs` (dry run) → `health_check` — ни одной ошибки после
+  фиксов. Регрессия проверена повторным прогоном `pytest` — 96/96
+  по-прежнему проходит.
+
 **Не исправлено, только задокументировано.** Та же проверка (сравнение
 колонок в `INSERT INTO` сервисов с реальным списком колонок в
 `sql/schema.sql`, статический скрипт по всем `app/services/*.py`) для
 оставшихся таблиц — колонки, которые сервис ожидает в `INSERT`, а
 `sql/schema.sql` их не определяет, плюс таблицы, которых нет вообще:
 
-- `audit_log` (`app/services/audit.py`): `user_role, severity,
-  entity_name, changes, request_method, request_path, correlation_id,
-  request_id, session_id, status, error_message, metadata`
 - `incoming_calls` (`app/services/incoming.py`): `caller_name,
   called_number, recording_format, unique_id, linked_id, language,
   status, created_at, updated_at`; таблиц нет: `incoming_call_tags`,
   `incoming_call_events`
 - `settings` (`app/services/settings.py`): `created_at`
 
-Практически это значит: запись аудита и обработка входящего звонка,
-вероятно, всё ещё падают на любом окружении, где база создаётся
-из актуального `sql/schema.sql` (создание пользователя и TTS-аудио,
-ранее в этом же списке, исправлены Багами №6 и №7 выше). Статический
-список может быть неточным (проверялись только `INSERT INTO`, не
+Практически это значит: обработка входящего звонка, вероятно, всё ещё
+падает на любом окружении, где база создаётся из актуального
+`sql/schema.sql` (создание пользователя, TTS-аудио и запись аудита, ранее
+в этом же списке, исправлены Багами №6-№8 выше). Статический список
+может быть неточным (проверялись только `INSERT INTO`, не
 `UPDATE`/`SELECT`/представления/триггеры), а живой прогон, как показали
-Баги №5-№7, иногда вскрывает дополнительные баги самого сервисного кода,
+Баги №5-№8, иногда вскрывает дополнительные баги самого сервисного кода,
 не только схемы — перед исправлением каждой таблицы её нужно
 перепроверить так же, как
-`blacklist`/`contacts`/`campaigns`/`call_results`/`users`/`audio_files`:
+`blacklist`/`contacts`/`campaigns`/`call_results`/`users`/`audio_files`/
+`audit_log`:
 **fresh `alembic upgrade head` с нуля** (не просто `psql -f
 sql/schema.sql` — см. находку про `0001` выше) плюс живой прогон
 сервиса. **Это самая приоритетная задача проекта на сегодняшний день**
