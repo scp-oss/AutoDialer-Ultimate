@@ -195,8 +195,12 @@ class AudioService:
         
         logger.info(f"Файл сохранён: {original_path}")
         
-        # Определяем целевой формат
-        target_format = request.convert_to or AudioFormat.SLN
+        # Определяем целевой формат. request.convert_to comes from a
+        # BaseSchema field (use_enum_values=True in app/models/common.py),
+        # so even its enum default (AudioFormat.SLN) is stored as the
+        # plain string 'sln', not an AudioFormat instance - normalize here
+        # so every `.value` access below/downstream is safe.
+        target_format = AudioFormat(request.convert_to or AudioFormat.SLN)
         converted = False
         final_path = original_path
         
@@ -370,6 +374,13 @@ class AudioService:
         target_format: AudioFormat
     ) -> Path:
         """Внутренний метод конвертации аудио"""
+        # target_format may already be a plain string here: callers like
+        # upload_audio() derive it from AudioUploadRequest.convert_to, a
+        # BaseSchema field (use_enum_values=True in app/models/common.py),
+        # so its default value AudioFormat.SLN is stored as the string
+        # 'sln', not an AudioFormat instance - see ROADMAP.md Баг №1 for
+        # the same pattern elsewhere. AudioFormat(x) normalizes either case.
+        target_format = AudioFormat(target_format)
         target_path = source_path.with_suffix(f".{target_format.value}")
         
         # Настройки для разных форматов
