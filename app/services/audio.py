@@ -1248,6 +1248,15 @@ class TTSService:
     
     def _get_model_path(self, voice: TTSVoice, model: TTSModel) -> Path:
         """Получить путь к модели Piper"""
+        # voice/model may already be plain strings here: callers like
+        # generate_audio() derive them from AudioGenerateRequest fields,
+        # a BaseSchema with use_enum_values=True (app/models/common.py),
+        # so they're not TTSVoice/TTSModel instances - see ROADMAP.md
+        # Баг №1 for the same pattern elsewhere. Normalizing makes
+        # `model.value` below safe regardless of caller.
+        voice = TTSVoice(voice)
+        model = TTSModel(model)
+
         # Формат имени модели: ru_RU-{voice}-{model}.onnx
         voice_map = {
             TTSVoice.DENIS: 'denis',
