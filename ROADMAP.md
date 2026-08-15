@@ -242,7 +242,7 @@ frontend/dist/   vanilla JS/HTML/CSS админ-панель (не React — с�
 asterisk/        конфиги Asterisk + pjsip.conf.template (рендерится envsubst'ом)
 docker/          Dockerfile для Asterisk + entrypoint-скрипты
 k8s/             Kubernetes-манифесты (черновик, не проверен на кластере — см. §3.5)
-tests/           pytest (91 тест; 86 — чистые unit-тесты без внешних зависимостей,
+tests/           pytest (118 тестов; 113 — чистые unit-тесты без внешних зависимостей,
                  5 — интеграционные, требуют Postgres+Redis; AMI опционален)
 install.sh, scripts/, systemd/, nginx/, fail2ban/, logrotate/  bare-metal путь развёртывания
 ```
@@ -821,12 +821,28 @@ is_blacklisted`) — так что тесты быстрые и не требу�
 исправлены, покрыты регрессионными тестами и/или новой Alembic-миграцией
 `0002_blacklist_schema_fix.py`.
 
-Сейчас — 91 тест, из них 86 не требует БД/Redis и проходит в любом
-окружении (было 76/71 до этого раунда).
+Добавлен `tests/test_settings_service.py` (22 теста, тот же паттерн
+FakeConnection/FakePool/FakeRedis) — покрывает `_validate_and_parse()`
+(коэрсия типов и валидационные ветки: `allowed_values`, `min`/`max` для
+int/float, bool-строки, JSON/CSV списки, regex), `update_setting()`
+(ошибки — неизвестный ключ, readonly-ключ, невалидное значение до
+обращения к БД — и happy path — `INSERT ... ON CONFLICT`, инвалидация
+кеша, `on_change`-колбэк и то, что его ошибка не прерывает обновление),
+`get_setting_value()` (чтение через кеш и fallback на дефолт),
+`initialize_defaults()` (идемпотентность) и `get_categories()`.
+Как и `test_blacklist_service.py`, эти тесты проверяют бизнес-логику
+на моках — SQL-уровневые баги вроде `AmbiguousColumnError` в
+`get_setting()` (Баг №10, §3.0) моками не ловятся, только живым прогоном
+против настоящего Postgres.
+
+Сейчас — 118 тестов, из них 113 не требует БД/Redis и проходит в любом
+окружении (было 76/71 в начале раунда исправления схемной просадки,
+91/86 — после `test_blacklist_service.py`).
 
 Ещё нужны: unit-тесты бизнес-логики сервисов, которым для проверки
 реально нужны БД/Redis (кампании, TTS/STT — по образцу
-`tests/test_blacklist_service.py`), интеграционные тесты полного цикла
+`tests/test_blacklist_service.py`/`tests/test_settings_service.py`),
+интеграционные тесты полного цикла
 обзвона (mock AMI), E2E (Playwright по vanilla JS UI или будущему React),
 нагрузочное тестирование (Locust/k6) на CPS/конкурентные звонки согласно
 целям масштабирования из ТЗ (сотни одновременных звонков, сотни тысяч
