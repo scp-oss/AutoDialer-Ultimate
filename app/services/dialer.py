@@ -969,15 +969,23 @@ class DialerManager:
             setvar = f'__CAMPAIGN_ID={campaign_id},__RETRY_COUNT={retry}'
             if traceparent:
                 setvar += f',__TRACEPARENT={traceparent}'
-            
+
             channel = f'Local/{normalized}@dialer_bridge/n'
-            
+
             action = ami_action('Originate', {
                 'Channel': channel,
                 'Async': 'true',
                 'Timeout': str(timeout_ms),
                 'CallerID': f'"Camp_{campaign_id}" <{self.caller_id}>',
-                'Setvar': setvar,
+                # AMI Originate action's channel-variable parameter is
+                # "Variable", not "Setvar" ("Setvar" is not a recognized
+                # Originate header in current Asterisk - Asterisk silently
+                # ignores unknown headers instead of rejecting the action,
+                # so this returned "Success" while never actually setting
+                # __CAMPAIGN_ID/__RETRY_COUNT on the channel). Confirmed
+                # live: with 'Setvar', ${CAMPAIGN_ID} traced empty inside
+                # dialer_bridge; with 'Variable', it carried the real value.
+                'Variable': setvar,
                 'ActionID': action_id
             })
             
@@ -1046,7 +1054,11 @@ class DialerManager:
     # =============================================
     async def handle_ami_event(self, manager, event):
         """Главный обработчик событий AMI"""
-        event_name = event.name
+        # ВАЖНО: panoramisk.Message не имеет атрибута .name — CaseInsensitiveDict.__getattr__
+        # молча возвращает '' для любого несуществующего ключа, поэтому event.name всегда
+        # был пустой строкой и ни одна ветка ниже никогда не срабатывала. Реальное имя события
+        # хранится в ключе 'event' (заголовок AMI "Event:").
+        event_name = event.get('event', '')
         channel = event.get('channel', '')
         unique_id = event.get('uniqueid')
         linked_id = event.get('linkedid')

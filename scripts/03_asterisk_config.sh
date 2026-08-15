@@ -357,6 +357,7 @@ print_success "Basic extensions.conf created"
 print_step "Configuring manager.conf..."
 
 AMI_PASSWORD="${AMI_PASSWORD:-$(openssl rand -hex 16)}"
+ADMIN_AMI_PASSWORD="${ADMIN_AMI_PASSWORD:-admin_secret_2024}"
 
 cat > /etc/asterisk/manager.conf << EOF
 [general]
@@ -378,7 +379,7 @@ eventfilter=!Event: VarSet
 eventfilter=!Event: DTMFBegin
 
 [admin]
-secret = \${ADMIN_AMI_PASSWORD:-admin_secret_2024}
+secret = ${ADMIN_AMI_PASSWORD}
 deny = 0.0.0.0/0.0.0.0
 permit = 127.0.0.1/255.255.255.255
 read = all
@@ -387,6 +388,7 @@ EOF
 
 print_success "manager.conf configured"
 print_info "AMI password: ${AMI_PASSWORD}"
+print_info "AMI admin password: ${ADMIN_AMI_PASSWORD}"
 
 # =============================================
 # Configure http.conf

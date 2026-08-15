@@ -9,7 +9,12 @@ CoreShowChannels) - i.e. the dialer could connect to AMI but could never
 actually place or manage a call. See app/services/dialer.py:ami_action.
 """
 
-from app.services.dialer import ami_action, ami_response_events
+from unittest.mock import AsyncMock
+
+import pytest
+from panoramisk.message import Message
+
+from app.services.dialer import DialerManager, ami_action, ami_response_events
 
 
 def test_ami_action_is_a_plain_dict_with_action_key():
@@ -40,3 +45,54 @@ def test_ami_response_events_wraps_a_single_message():
     # Start/Complete framing) when Asterisk answers immediately.
     single = {"event": "CoreShowChannel", "channel": "Local/1@dialer_bridge"}
     assert ami_response_events(single) == [single]
+
+
+def _bare_manager() -> DialerManager:
+    """A DialerManager with __init__ skipped - just enough state for
+    handle_ami_event's dedup cache, without needing a real AMI/DB/Redis
+    connection."""
+    manager = object.__new__(DialerManager)
+    manager.processed_events = {}
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_handle_ami_event_dispatches_on_event_field_not_name():
+    # panoramisk.message.Message (a CaseInsensitiveDict) has no real .name
+    # attribute - __getattr__ silently falls back to self.get('name', ''),
+    # which is always '' since AMI messages carry an "Event:" header (key
+    # 'event'), never a 'name' key. handle_ami_event used to read
+    # `event_name = event.name`, so this comparison was always against ''
+    # and none of the branches below ever matched, for any AMI event, ever.
+    # See app/services/dialer.py:handle_ami_event.
+    manager = _bare_manager()
+    manager._handle_hangup = AsyncMock()
+    manager._handle_dial_begin = AsyncMock()
+    manager._handle_user_event = AsyncMock()
+
+    hangup = Message.from_line(
+        "Event: Hangup\r\nChannel: Local/100@test-1\r\nUniqueid: 123\r\nLinkedid: 123\r\n"
+    )
+    assert hangup.name == ""  # sanity check documenting the trap in panoramisk
+    assert hangup.event == "Hangup"
+
+    await manager.handle_ami_event(manager=None, event=hangup)
+
+    manager._handle_hangup.assert_awaited_once()
+    manager._handle_dial_begin.assert_not_awaited()
+    manager._handle_user_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_ami_event_deduplicates_by_event_and_uniqueid():
+    manager = _bare_manager()
+    manager._handle_dial_begin = AsyncMock()
+
+    dial_begin = Message.from_line(
+        "Event: DialBegin\r\nChannel: Local/100@dialer_bridge-1\r\nUniqueid: 456\r\n"
+    )
+
+    await manager.handle_ami_event(manager=None, event=dial_begin)
+    await manager.handle_ami_event(manager=None, event=dial_begin)
+
+    manager._handle_dial_begin.assert_awaited_once()
