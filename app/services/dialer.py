@@ -272,7 +272,19 @@ class DialerManager:
         # =============================================
         self.channel_map: Dict[str, str] = {}                 # unique_id -> channel
         self.call_start_times: Dict[str, datetime] = {}       # unique_id -> start_time
-        self.action_to_channel: Dict[str, str] = {}           # action_id -> channel
+        self.action_to_channel: Dict[str, str] = {}           # action_id -> channel (resolved, exact)
+        # action_id -> channel prefix (e.g. "Local/79991234567@dialer_bridge"),
+        # registered at Originate time, before any unique_id is known. DialBegin/
+        # Hangup carry no ActionID header (confirmed live - Asterisk does not
+        # echo the Originate action's ActionID onto events raised by the
+        # dialplan's own Dial()), so this is the only way to tie a freshly
+        # dialed channel back to the action_id that originated it: Asterisk
+        # deterministically names the channel after the requested dial string,
+        # stripping only trailing Dial-style options like "/n". Safe against
+        # collisions because CHECK_PHONE_LUA (see originate_call) guarantees at
+        # most one active call per normalized phone number, and the prefix is
+        # derived from that same normalized number.
+        self.action_to_channel_prefix: Dict[str, str] = {}
         self.unique_to_action: Dict[str, str] = {}            # unique_id -> action_id
         self.action_to_uniques: Dict[str, Set[str]] = {}      # action_id -> set(unique_id)
         self.action_created_at: Dict[str, float] = {}         # для TTL cleanup
@@ -718,29 +730,45 @@ class DialerManager:
         self,
         unique_id: str,
         linked_id: Optional[str] = None,
-        event_action_id: Optional[str] = None
+        event_action_id: Optional[str] = None,
+        channel: Optional[str] = None
     ) -> Optional[str]:
         """Многоуровневое разрешение ActionID"""
         if event_action_id:
             return event_action_id
-        
+
         action_id = self.unique_to_action.get(unique_id)
         if action_id:
             return action_id
-        
+
         if linked_id:
             action_id = self.unique_to_action.get(linked_id)
             if action_id:
                 self.unique_to_action[unique_id] = action_id
                 return action_id
-        
-        channel = self.channel_map.get(unique_id)
-        if channel:
+
+        mapped_channel = self.channel_map.get(unique_id)
+        if mapped_channel:
             for aid, ch in self.action_to_channel.items():
-                if ch == channel:
+                if ch == mapped_channel:
                     self.unique_to_action[unique_id] = aid
                     return aid
-        
+
+        # Первое разрешение для свежего канала: DialBegin/Hangup не несут
+        # ActionID, поэтому единственный способ узнать action_id -
+        # сопоставить реальное имя канала (Asterisk дописывает к нему
+        # "-XXXXXXXX;N") с префиксом, зарегистрированным в originate_call()
+        # ДО того, как unique_id вообще появился на свет.
+        if channel:
+            for aid, prefix in self.action_to_channel_prefix.items():
+                if prefix and channel.startswith(prefix):
+                    self.unique_to_action[unique_id] = aid
+                    self.channel_map[unique_id] = channel
+                    if aid not in self.action_to_uniques:
+                        self.action_to_uniques[aid] = set()
+                    self.action_to_uniques[aid].add(unique_id)
+                    return aid
+
         return None
     
     def _add_mapping(self, action_id: str, unique_id: str, channel: str = None):
@@ -762,7 +790,10 @@ class DialerManager:
         """Очистка mapping с использованием обратного индекса"""
         if action_id in self.action_to_channel:
             del self.action_to_channel[action_id]
-        
+
+        if action_id in self.action_to_channel_prefix:
+            del self.action_to_channel_prefix[action_id]
+
         if action_id in self.action_to_uniques:
             for uid in self.action_to_uniques[action_id]:
                 if uid in self.unique_to_action:
@@ -863,11 +894,31 @@ class DialerManager:
     async def queue_worker(self):
         """Фоновый обработчик очереди звонков"""
         logger.info("Обработчик очереди запущен")
-        
+
         while self.running:
             try:
+                # Все mapping'и, которые связывают action_id с каналом/
+                # unique_id (action_to_channel_prefix, channel_map,
+                # call_contexts и т.д.) - это состояние В ПАМЯТИ ЭТОГО
+                # ПРОЦЕССА, а не общее между воркерами. handle_ami_event
+                # теперь обрабатывает события только на текущем лидере
+                # (_event_leader), поэтому если звонок разместит НЕ лидер
+                # (queue_worker() гоняется за BLPOP на всех 4 воркерах
+                # gunicorn независимо), лидер получит DialBegin/Hangup для
+                # канала, о котором в ЕГО памяти нет ни единой записи -
+                # разрешение action_id гарантированно проваливается.
+                # Подтверждено живьём: "DialBegin без ActionID" на
+                # большинстве размещённых звонков, кроме тех редких
+                # случаев, когда BLPOP случайно достаётся самому лидеру.
+                # Консолидируем размещение звонков на лидере тоже - так
+                # процесс, который создаёт mapping, гарантированно
+                # совпадает с процессом, который его потом читает.
+                if not self._event_leader.is_leader:
+                    await asyncio.sleep(1)
+                    continue
+
                 result = await self.redis.blpop(self.dial_queue_key, timeout=1)
-                
+
                 if result:
                     _, job_data = result
                     data = json.loads(job_data)
@@ -876,9 +927,9 @@ class DialerManager:
                         data['campaign_id'],
                         data.get('retry', 0)
                     )
-                
+
                 queue_size_gauge.set(await self.redis.llen(self.dial_queue_key))
-                    
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -1037,11 +1088,58 @@ class DialerManager:
                 'Variable': setvar,
                 'ActionID': action_id
             })
-            
-            response = await self.manager.send_action(action)
-            
-            if response and response.get('response') == 'Success':
-                self._add_mapping(action_id, None, None)
+
+            # Регистрируем префикс канала ДО отправки Originate, а не после
+            # получения ответа - Asterisk может начать выполнять dialplan и
+            # прислать DialBegin по тому же AMI-соединению раньше, чем
+            # наш собственный await send_action(...) успеет обработать
+            # ответ и зарегистрировать mapping (гонка подтверждена живьём:
+            # при одновременном размещении нескольких звонков часть
+            # DialBegin стабильно приходила раньше регистрации, даже с
+            # as_list=False). DialBegin/Hangup не несут ActionID (Asterisk
+            # не пробрасывает его на события, порождённые Dial() внутри
+            # dialplan'а), так что это единственный способ впоследствии
+            # связать реально созданный канал с этим action_id (см.
+            # _resolve_action_id). Если Originate в итоге провалится,
+            # except-ветка ниже уже вызывает _cleanup_mappings(action_id),
+            # которая удаляет и эту запись.
+            self.action_to_channel_prefix[action_id] = channel.rsplit('/', 1)[0]
+            self.action_created_at[action_id] = time.monotonic()
+
+            # as_list=False is critical, not cosmetic: panoramisk's
+            # Action.multi property, when as_list is None, treats any
+            # response ending in "successfully queued" (combined with our
+            # own 'Async': 'true') as the START of a multi-message
+            # sequence and keeps the future pending until the eventual
+            # OriginateResponse EVENT also arrives - which, for a
+            # dialplan-routed Local-channel Originate, only fires once
+            # dialplan execution on that channel reaches a completion
+            # point, potentially the FULL call duration. Confirmed live:
+            # without as_list=False, `await send_action(...)` took 10.5s
+            # to resolve for a single Originate; with it, 0.000s. Since
+            # queue_worker() awaits _start_call() directly in its serial
+            # loop, this silently limited the entire "auto"dialer to
+            # placing one call at a time, sequentially - defeating
+            # concurrent/predictive dialing entirely regardless of
+            # max_calls/CPS settings. as_list=False short-circuits
+            # Action.multi to False, so the future resolves on the first
+            # (immediate) ack alone, exactly matching 'Async': 'true's
+            # actual intent.
+            response = await self.manager.send_action(action, as_list=False)
+
+            # Even with as_list=False this stays defensive: it degrades to
+            # a no-op wrap-in-list when response is already a bare dict,
+            # but protects against any other panoramisk multi-response
+            # heuristic still matching in a future Asterisk/panoramisk
+            # version. Confirmed live without this: a plain
+            # `response.get(...)` crashed with AttributeError: 'list'
+            # object has no attribute 'get' whenever panoramisk DID bundle
+            # a list, which was silently treated as a failed call (fake
+            # 'originate_failed' result saved, the reservation slot wrongly
+            # released while the call was still actually running).
+            first_response = ami_response_events(response)[0] if response else None
+
+            if first_response and first_response.get('response') == 'Success':
                 logger.info(f"📞 Originate OK: {action_id} -> {normalized}")
                 
                 calls_initiated_counter.labels(campaign_id=str(campaign_id)).inc()
@@ -1053,7 +1151,7 @@ class DialerManager:
                 if span:
                     span.set_status(Status(StatusCode.OK))
             else:
-                error_msg = response.get('message') if response else 'No response'
+                error_msg = first_response.get('message') if first_response else 'No response'
                 raise OriginateError(f"Originate failed: {error_msg}")
                 
         except Exception as e:
@@ -1119,6 +1217,21 @@ class DialerManager:
         # хранится в ключе 'event' (заголовок AMI "Event:").
         event_name = event.get('event', '')
         channel = event.get('channel', '')
+        # panoramisk.message.Message.from_line stores a header as a list
+        # instead of a string if the exact same header name appears twice
+        # on the raw AMI line (case-sensitive comparison at that parsing
+        # layer, before CaseInsensitiveDict's lowercasing even applies).
+        # This bit us for real: a dialplan UserEvent(...,Channel: ...)
+        # field collided with Asterisk's own native "Channel:" header that
+        # every event already carries, and `channel.startswith(...)` below
+        # crashed with AttributeError: 'list' object has no attribute
+        # 'startswith' on every single DialerHangup event (confirmed live
+        # - fixed in asterisk/extensions.conf by dropping the redundant
+        # custom field). Normalizing defensively here too, since a future
+        # dialplan edit could reintroduce the same class of collision for
+        # some other field name.
+        if isinstance(channel, list):
+            channel = channel[0] if channel else ''
         unique_id = event.get('uniqueid')
         linked_id = event.get('linkedid')
         
@@ -1150,8 +1263,13 @@ class DialerManager:
     
     async def _handle_dial_begin(self, event, channel: str, unique_id: str):
         """Обработка DialBegin"""
-        action_id = self._resolve_action_id(unique_id, None, event.get('actionid'))
-        
+        # DialBegin никогда не несёт ActionID (это событие дialplan'а, а не
+        # ответ на AMI-экшен) и до сих пор не было известно ни одного
+        # unique_id для этого канала - единственный способ разрешить
+        # action_id здесь это сопоставление по префиксу имени канала
+        # (см. action_to_channel_prefix / originate_call).
+        action_id = self._resolve_action_id(unique_id, None, event.get('actionid'), channel)
+
         if not action_id:
             logger.warning(f"DialBegin без ActionID: {unique_id}")
             return
@@ -1259,11 +1377,11 @@ class DialerManager:
         if not await self.redis.set(redis_hangup_key, "1", ex=10, nx=True):
             return
         
-        action_id = self._resolve_action_id(unique_id, linked_id, event.get('actionid'))
-        
+        action_id = self._resolve_action_id(unique_id, linked_id, event.get('actionid'), channel)
+
         if not action_id:
             logger.critical(f"Невозможно разрешить ActionID для unique_id={unique_id}")
-            self._force_cleanup(unique_id)
+            await self._force_cleanup(unique_id)
             return
         
         if action_id in self.terminated_calls:
