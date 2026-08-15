@@ -394,7 +394,7 @@ class ConnectionPool:
             raise ConnectionError("База данных не подключена")
         
         self._stats['total_acquires'] += 1
-        
+
         conn = None
         try:
             # Используем Circuit Breaker если задан
@@ -402,32 +402,46 @@ class ConnectionPool:
                 conn = await self._circuit_breaker.call(self.pool.acquire)
             else:
                 conn = await self.pool.acquire()
-            
+        except Exception as e:
+            self._stats['total_errors'] += 1
+            self._stats['last_error'] = str(e)
+            self._stats['last_error_time'] = datetime.now()
+
+            if METRICS_ENABLED:
+                db_errors_counter.labels(error_type='general').inc()
+
+            logger.error(f"Ошибка получения соединения: {e}")
+            raise QueryError(f"Failed to acquire connection: {e}")
+
+        # Отдельный try/except только вокруг тела `async with` вызывающего
+        # кода: если его перенести в блок выше вместе с приобретением
+        # соединения, любое исключение бизнес-логики (например,
+        # InvalidCredentialsError при неверном пароле, XNotFoundError и
+        # т.п.), поднятое внутри `async with db_pool.acquire()`, ловится
+        # той же общей веткой `except Exception` и подменяется на
+        # QueryError("Failed to acquire connection: ...") - неверно и по
+        # смыслу, и по типу исключения, из-за чего вызывающий код
+        # (например, ошибка неверного пароля в AuthService.login()) не
+        # может отличить реальный сбой соединения от обычной бизнес-ошибки.
+        # Здесь перехватываются только конкретные asyncpg-исключения,
+        # которые сервисы ожидают получить именно от `acquire()`/
+        # `transaction()` (нарушение уникальности/внешнего ключа) - любое
+        # другое исключение, включая кастомные ошибки сервисов,
+        # пробрасывается как есть.
+        try:
             yield conn
-            
         except asyncpg.exceptions.UniqueViolationError as e:
             self._stats['total_errors'] += 1
             if METRICS_ENABLED:
                 db_errors_counter.labels(error_type='unique_violation').inc()
             raise UniqueViolationError(str(e))
-        
+
         except asyncpg.exceptions.ForeignKeyViolationError as e:
             self._stats['total_errors'] += 1
             if METRICS_ENABLED:
                 db_errors_counter.labels(error_type='foreign_key').inc()
             raise ForeignKeyViolationError(str(e))
-        
-        except Exception as e:
-            self._stats['total_errors'] += 1
-            self._stats['last_error'] = str(e)
-            self._stats['last_error_time'] = datetime.now()
-            
-            if METRICS_ENABLED:
-                db_errors_counter.labels(error_type='general').inc()
-            
-            logger.error(f"Ошибка получения соединения: {e}")
-            raise QueryError(f"Failed to acquire connection: {e}")
-        
+
         finally:
             if conn is not None:
                 try:

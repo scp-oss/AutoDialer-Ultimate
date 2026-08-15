@@ -54,6 +54,25 @@ def ami_action(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, 
     return action
 
 
+def ami_response_events(response: Any) -> List[Any]:
+    """
+    Normalize a Manager.send_action() result to a list of event messages.
+
+    For a "multi" AMI action (CoreShowChannels, CoreShowChannel, etc. -
+    anything that replies with a Start/.../Complete event sequence),
+    panoramisk's Action.add_message() resolves the future with
+    self.responses directly - a plain list of Message objects, not an
+    object with an `.events` attribute. Code that did `response.events`
+    crashed every single reconciliation/liveness-check cycle with
+    AttributeError: 'list' object has no attribute 'events' (confirmed
+    live against a real Asterisk over AMI). But a single-channel query
+    can also resolve to one bare Message (no Start/Complete framing) when
+    Asterisk answers immediately without a multi-event sequence - so this
+    normalizes both shapes to a list instead of assuming either one.
+    """
+    return response if isinstance(response, list) else [response]
+
+
 # =============================================
 # Метрики
 # =============================================
@@ -610,7 +629,7 @@ class DialerManager:
             )
             
             asterisk_channels = set()
-            for event in response.events:
+            for event in ami_response_events(response):
                 if event.get('event') == 'CoreShowChannel':
                     channel = event.get('channel')
                     unique_id = event.get('uniqueid')
@@ -1590,7 +1609,7 @@ class DialerManager:
                 self.manager.send_action(action),
                 timeout=2.0
             )
-            for event in response.events:
+            for event in ami_response_events(response):
                 if event.get('event') == 'CoreShowChannel':
                     return True
             return False

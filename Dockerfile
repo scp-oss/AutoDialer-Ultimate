@@ -29,6 +29,7 @@ RUN pip install --no-cache-dir -r app/requirements/tts.txt
 COPY app /srv/app
 COPY alembic /srv/alembic
 COPY alembic.ini /srv/alembic.ini
+COPY sql /srv/sql
 COPY docker/backend-entrypoint.sh /entrypoint.sh
 
 RUN chmod +x /entrypoint.sh \

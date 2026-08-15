@@ -22,8 +22,9 @@ import asyncio
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 # =============================================
@@ -196,6 +197,78 @@ _app_state: Dict[str, Any] = {
 
 
 # =============================================
+# Обработка бизнес-исключений сервисов
+# =============================================
+# app/services/*.py определяет ~50 кастомных классов исключений
+# (UserNotFoundError, InvalidCredentialsError, CampaignValidationError и
+# т.д.), но нигде в проекте не было ни одного места, конвертирующего их в
+# HTTP-ответ - ни в самих роутерах (app/api/*.py просто вызывают методы
+# сервиса и возвращают результат), ни глобального exception_handler'а.
+# Итог, подтверждённый живым HTTP-запросом через docker compose: ЛЮБАЯ
+# бизнес-ошибка где угодно в API (неверный пароль, "не найдено",
+# валидация, конфликт) долетает до FastAPI необработанной и превращается
+# в голый 500 Internal Server Error вместо корректного 401/404/409/422.
+# Соглашение по именам классов across всех сервисов достаточно
+# единообразно, чтобы сопоставить статус по суффиксу имени класса; любое
+# исключение, класс которого определён не в app.services.*, ниже не
+# перехватывается и по-прежнему становится 500 - это осознанно: реальные
+# непредвиденные баги (KeyError, AttributeError и т.п. из-за ошибок в
+# коде) должны громко проявляться как 500, а не тихо превращаться в 400.
+_ERROR_SUFFIX_STATUS: list[tuple[str, int]] = [
+    ("InvalidCredentialsError", 401),
+    ("InvalidTokenError", 401),
+    ("TokenExpiredError", 401),
+    ("AccountDisabledError", 403),
+    ("AccountLockedError", 403),
+    ("ReadOnlyError", 403),
+    ("PermissionError", 403),
+    ("NotFoundError", 404),
+    ("AlreadyExistsError", 409),
+    ("AlreadyRunningError", 409),
+    ("AlreadyEnabledError", 409),
+    ("AlreadyDisabledError", 409),
+    ("AlreadyInProgressError", 409),
+    ("NotRunningError", 409),
+    ("DuplicateError", 409),
+    ("ValidationError", 422),
+]
+
+
+def _service_error_status_code(exc: Exception) -> int:
+    """Сопоставить кастомное исключение сервиса с HTTP-статусом по суффиксу имени класса."""
+    name = type(exc).__name__
+    for suffix, status_code in _ERROR_SUFFIX_STATUS:
+        if name.endswith(suffix):
+            return status_code
+    return 400  # базовый класс ошибки конкретного домена (XError) - бизнес-правило, не баг
+
+
+async def _service_error_handler(request: Request, exc: Exception):
+    # Registered against the broad `Exception` type (Starlette has no way
+    # to register "any exception defined under a given module prefix"),
+    # so anything that isn't one of our own app.services.* error classes
+    # must be re-raised here - Starlette's ServerErrorMiddleware still
+    # turns it into the normal 500 response, this just adds one extra
+    # frame to get there.
+    from app.core.database import UniqueViolationError, ForeignKeyViolationError
+
+    if isinstance(exc, (UniqueViolationError, ForeignKeyViolationError)):
+        # ConnectionPool.acquire() already translates the raw asyncpg
+        # constraint violation into one of these two - found live via
+        # docker compose: creating a contact_groups row with a name that
+        # already exists surfaces this and, before this handler existed,
+        # became a bare 500 with no indication it was a duplicate.
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    if not type(exc).__module__.startswith("app.services."):
+        raise exc
+    return JSONResponse(
+        status_code=_service_error_status_code(exc),
+        content={"detail": str(exc)},
+    )
+
+
+# =============================================
 # Создание приложения
 # =============================================
 def create_app() -> FastAPI:
@@ -234,6 +307,11 @@ def create_app() -> FastAPI:
         allow_methods=settings.CORS_ALLOW_METHODS,
         allow_headers=settings.CORS_ALLOW_HEADERS,
     )
+
+    # Конвертирует кастомные исключения app/services/*.py (XNotFoundError,
+    # InvalidCredentialsError и т.д.) в корректные HTTP-статусы - см.
+    # комментарий у _service_error_handler выше.
+    _app.add_exception_handler(Exception, _service_error_handler)
     
     # Добавляем middleware
     @_app.middleware("http")
