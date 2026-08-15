@@ -277,7 +277,7 @@ install.sh, scripts/, systemd/, nginx/, fail2ban/, logrotate/  bare-metal пут
 
 ### 2.3 База данных
 
-37 таблиц (`sql/schema.sql`): `users`, `user_permissions`, `api_keys`,
+38 таблиц (`sql/schema.sql`): `users`, `user_permissions`, `api_keys`,
 `sessions`, `campaigns`, `campaign_tags`, `campaign_schedules`,
 `contact_groups`, `contacts`, `contact_group_members`, `contact_tags`,
 `contact_notes_history`, `contact_import_jobs`, `campaign_contacts`,
@@ -287,8 +287,8 @@ install.sh, scripts/, systemd/, nginx/, fail2ban/, logrotate/  bare-metal пут
 `blacklist_history`, `api_tokens`, `webhook_events`,
 `webhook_subscriptions`, `webhook_deliveries`, `record_versions`,
 `notifications`, `system_events`, `incoming_calls`,
-`incoming_call_tags`, `incoming_call_events`. Было 24 в начале раунда
-исправления схемной просадки (§3.0) — 13 таблиц добавлены по ходу
+`incoming_call_tags`, `incoming_call_events`. Было 23 в начале раунда
+исправления схемной просадки (§3.0) — 15 таблиц добавлены по ходу
 Багов №3-№10: `blacklist_tags`/`blacklist_history` (`blacklist`),
 `contact_group_members`/`contact_tags`/`contact_notes_history`
 (`contacts`), `campaign_tags` (`campaigns`), `call_tags`/`call_events`/
