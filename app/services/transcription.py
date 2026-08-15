@@ -594,9 +594,20 @@ class TranscriptionService:
         
         while self._running:
             try:
+                # BLPOP's own (server-side) blocking timeout must stay
+                # comfortably below the redis client's socket_timeout
+                # (settings.REDIS_SOCKET_TIMEOUT, 5s by default) - equal
+                # or larger and the client's socket read races the
+                # server's graceful nil-on-timeout response, so on every
+                # single idle poll (i.e. almost always, since the queue
+                # is normally empty) it raised a client-side
+                # TimeoutError("Timeout reading from redis:...") instead
+                # of blpop() just returning None. Confirmed live: this
+                # error repeated in the logs every ~11s against a real
+                # Redis container.
                 result = await self.redis.blpop(
                     REDIS_KEYS.TRANSCRIPTION_QUEUE,
-                    timeout=5
+                    timeout=max(1, settings.REDIS_SOCKET_TIMEOUT - 2)
                 )
                 
                 if result:
