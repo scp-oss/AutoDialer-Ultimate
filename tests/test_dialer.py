@@ -47,12 +47,23 @@ def test_ami_response_events_wraps_a_single_message():
     assert ami_response_events(single) == [single]
 
 
-def _bare_manager() -> DialerManager:
+class _FakeEventLeader:
+    """Stands in for LeaderElection - handle_ami_event() only processes
+    events when this worker holds AMI-event-processor leadership (see
+    DialerManager._event_leader / _maintain_event_leadership). Defaults to
+    True so existing dispatch tests exercise a "we are the leader" worker."""
+
+    def __init__(self, is_leader: bool = True):
+        self.is_leader = is_leader
+
+
+def _bare_manager(is_leader: bool = True) -> DialerManager:
     """A DialerManager with __init__ skipped - just enough state for
     handle_ami_event's dedup cache, without needing a real AMI/DB/Redis
     connection."""
     manager = object.__new__(DialerManager)
     manager.processed_events = {}
+    manager._event_leader = _FakeEventLeader(is_leader)
     return manager
 
 
@@ -96,3 +107,23 @@ async def test_handle_ami_event_deduplicates_by_event_and_uniqueid():
     await manager.handle_ami_event(manager=None, event=dial_begin)
 
     manager._handle_dial_begin.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_ami_event_skips_processing_on_non_leader_worker():
+    # gunicorn runs multiple worker processes, each with its own AMI
+    # connection logged in under the same account - Asterisk broadcasts
+    # every event to all of them. Without this gate, a single real call
+    # used to produce one call_results row per worker (confirmed live: 4
+    # duplicate rows under `gunicorn -w 4`). Only the elected leader
+    # (_event_leader.is_leader) should actually run the dispatch chain.
+    manager = _bare_manager(is_leader=False)
+    manager._handle_hangup = AsyncMock()
+
+    hangup = Message.from_line(
+        "Event: Hangup\r\nChannel: Local/100@test-1\r\nUniqueid: 789\r\nLinkedid: 789\r\n"
+    )
+
+    await manager.handle_ami_event(manager=None, event=hangup)
+
+    manager._handle_hangup.assert_not_awaited()

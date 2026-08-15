@@ -34,6 +34,7 @@ from app.core.database import ConnectionPool
 from app.core.redis import RedisClient, REDIS_KEYS
 from app.utils.rate_limiter import TokenBucket, GlobalRateLimiter, AdaptiveCPSLimiter
 from app.utils.phone import normalize_phone as _normalize_phone_digits
+from app.utils.leader_election import LeaderElection
 from prometheus_client import Counter, Gauge, Histogram
 
 
@@ -283,6 +284,24 @@ class DialerManager:
         # =============================================
         self.processed_events = TTLCache(maxsize=100000, ttl=300)
         self.hangup_events = TTLCache(maxsize=50000, ttl=60)
+
+        # =============================================
+        # Лидерство для обработки AMI-событий
+        # =============================================
+        # Все gunicorn-воркеры логинятся в AMI под одним аккаунтом, и
+        # Asterisk рассылает каждое событие всем подключённым менеджерам -
+        # без этого gate'а handle_ami_event() выполнялся бы независимо в
+        # каждом воркере, и один и тот же звонок писался бы в call_results
+        # по разу на воркер (обнаружено живым прогоном: 4 дублирующиеся
+        # строки на одно реальное событие при `gunicorn -w 4`).
+        # processed_events дедуплицирует только в рамках одного процесса,
+        # так что дедуп нужен на уровне "кто вообще обрабатывает события",
+        # а не "не обработать одно и то же дважды в одном процессе".
+        self._event_leader = LeaderElection(
+            redis_client,
+            lock_key="ami_event_processor",
+            ttl=30
+        )
         
         # =============================================
         # Состояние работы
@@ -524,6 +543,7 @@ class DialerManager:
             self._monitor_redis_memory(),
             self._recover_degraded_queue(),
             self._update_metrics_loop(),
+            self._maintain_event_leadership(),
         ]
         
         for task_coro in tasks:
@@ -531,7 +551,28 @@ class DialerManager:
             self._background_tasks.append(task)
         
         logger.info(f"Запущено {len(tasks)} фоновых задач")
-    
+
+    async def _maintain_event_leadership(self) -> None:
+        """
+        Поддерживает лидерство по обработке AMI-событий.
+
+        LeaderElection сам продлевает захваченное лидерство фоновым
+        heartbeat'ом (см. app/utils/leader_election.py), но кто-то должен
+        периодически ПЫТАТЬСЯ его захватить, если мы ещё не лидеры - иначе
+        при перезапуске/падении текущего лидера-воркера события просто
+        перестанут обрабатываться вообще (никто их не подхватит). Именно
+        так уже работает `leader_wrapper` для периодических задач в
+        app/workers/__init__.py - здесь та же идея, применённая к
+        реактивному (event-driven), а не периодическому коду.
+        """
+        while self.running:
+            try:
+                if not self._event_leader.is_leader:
+                    await self._event_leader.try_acquire()
+            except Exception as e:
+                logger.error(f"Ошибка попытки захвата лидерства AMI-событий: {e}")
+            await asyncio.sleep(5)
+
     async def disconnect(self) -> None:
         """Отключиться от AMI"""
         self.running = False
@@ -546,7 +587,15 @@ class DialerManager:
                     pass
         
         self._background_tasks.clear()
-        
+
+        # Отдаём лидерство по обработке AMI-событий, чтобы другой воркер
+        # подхватил его сразу, а не только по истечении TTL
+        if self._event_leader.is_leader:
+            try:
+                await self._event_leader.release()
+            except Exception as e:
+                logger.warning(f"Ошибка освобождения лидерства AMI-событий: {e}")
+
         # Останавливаем все активные звонки
         await self.stop_all_calls()
         
@@ -1054,6 +1103,16 @@ class DialerManager:
     # =============================================
     async def handle_ami_event(self, manager, event):
         """Главный обработчик событий AMI"""
+        # Каждый gunicorn-воркер держит собственное AMI-соединение под тем
+        # же аккаунтом, и Asterisk рассылает каждое событие всем
+        # подключённым менеджерам - без этой проверки один и тот же звонок
+        # обрабатывался бы (и писался в БД) в каждом воркере независимо.
+        # Обрабатывает события только текущий лидер (см. _event_leader /
+        # _maintain_event_leadership); остальные воркеры событие получают,
+        # но молча его игнорируют.
+        if not self._event_leader.is_leader:
+            return
+
         # ВАЖНО: panoramisk.Message не имеет атрибута .name — CaseInsensitiveDict.__getattr__
         # молча возвращает '' для любого несуществующего ключа, поэтому event.name всегда
         # был пустой строкой и ни одна ветка ниже никогда не срабатывала. Реальное имя события
