@@ -847,61 +847,73 @@ class AudioService:
 
         # .sln (Asterisk's raw signed-linear format, produced with
         # `sox ... -r 8000 -c 1 -b 16 -t raw` a few lines above) has no
-        # header at all - soxi can't infer sample rate/channels/bit depth
-        # from the bytes themselves, so without repeating those same
-        # flags as INPUT overrides here, every soxi call below silently
-        # fails (non-zero exit, caught by the bare `except: pass`) and
-        # duration/sample_rate/channels all stay None. Confirmed live:
-        # every TTS-generated file showed "Длительность: 0:00" in the UI.
-        raw_format_flags = (
-            ['-t', 'raw', '-r', '8000', '-c', '1', '-b', '16', '-e', 'signed-integer']
-            if format == AudioFormat.SLN else []
-        )
+        # header at all. A previous version of this code tried to make
+        # soxi read it by passing `-t raw -r 8000 ...` overrides the same
+        # way `sox` itself accepts them for conversion - but soxi is a
+        # different, simpler tool that does not support format-override
+        # flags at all: confirmed directly (`soxi -t raw -r 8000 ... -D
+        # file.sln` fails with "can't open input file `raw'" - it tried
+        # to open each flag as if it were a filename). That always
+        # exited non-zero, was swallowed by the bare `except: pass`
+        # below, and left duration/sample_rate/channels at None forever
+        # - which then crashed the *caller* in
+        # TTSService._generate_audio_sync ("unsupported format string
+        # passed to NoneType.__format__" on f"{metadata.duration:.1f}"),
+        # turning a file that actually generated fine into a 400 error.
+        # Compute it in Python instead: the format is always exactly
+        # 8000 Hz / mono / 16-bit (2 bytes/sample) by construction (see
+        # the sox command that writes it), so duration is just
+        # file_size / bytes_per_second - no external tool needed.
+        if format == AudioFormat.SLN:
+            info.sample_rate = 8000
+            info.channels = 1
+            if info.file_size:
+                info.duration = info.file_size / (8000 * 1 * 2)
+        else:
+            # Получаем длительность через sox
+            try:
+                cmd = ['soxi', '-D', str(file_path)]
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, _ = await process.communicate()
 
-        # Получаем длительность через sox
-        try:
-            cmd = ['soxi', *raw_format_flags, '-D', str(file_path)]
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, _ = await process.communicate()
+                if process.returncode == 0:
+                    info.duration = float(stdout.decode().strip())
+            except Exception:
+                pass
 
-            if process.returncode == 0:
-                info.duration = float(stdout.decode().strip())
-        except Exception:
-            pass
+            # Получаем sample rate
+            try:
+                cmd = ['soxi', '-r', str(file_path)]
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, _ = await process.communicate()
 
-        # Получаем sample rate
-        try:
-            cmd = ['soxi', *raw_format_flags, '-r', str(file_path)]
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, _ = await process.communicate()
+                if process.returncode == 0:
+                    info.sample_rate = int(stdout.decode().strip())
+            except Exception:
+                pass
 
-            if process.returncode == 0:
-                info.sample_rate = int(stdout.decode().strip())
-        except Exception:
-            pass
+            # Получаем количество каналов
+            try:
+                cmd = ['soxi', '-c', str(file_path)]
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, _ = await process.communicate()
 
-        # Получаем количество каналов
-        try:
-            cmd = ['soxi', *raw_format_flags, '-c', str(file_path)]
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, _ = await process.communicate()
-
-            if process.returncode == 0:
-                info.channels = int(stdout.decode().strip())
-        except Exception:
-            pass
+                if process.returncode == 0:
+                    info.channels = int(stdout.decode().strip())
+            except Exception:
+                pass
         
         # Битрейт
         if info.duration and info.file_size:
@@ -1219,7 +1231,8 @@ class TTSService:
                 self._stats['generated'] += 1
                 self._stats['total_duration'] += metadata.duration or 0
                 
-                logger.info(f"TTS сгенерирован: {request.name} ({metadata.duration:.1f}с, {generation_time:.1f}с)")
+                duration_str = f"{metadata.duration:.1f}с" if metadata.duration is not None else "?с"
+                logger.info(f"TTS сгенерирован: {request.name} ({duration_str}, {generation_time:.1f}с)")
                 
                 return AudioGenerateResponse(
                     id=audio_id,
