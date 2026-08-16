@@ -205,6 +205,16 @@ small {
     border: 1px solid var(--color-danger);
 }
 
+/* JS only ever sets .error-message's textContent, it never toggles a
+   hidden/display state - without this the box rendered as an empty red
+   bar on every page load, before any error ever occurred. */
+.error-message:empty {
+    display: none;
+    margin-bottom: 0;
+    padding: 0;
+    border: none;
+}
+
 /* ============================================= */
 /* System Bar */
 /* ============================================= */
