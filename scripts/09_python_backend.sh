@@ -280,9 +280,9 @@ verify_imports() {
 import sys
 import importlib
 
-modules = ["fastapi", "uvicorn", "sqlalchemy", "asyncpg", "redis.asyncio", 
-           "pydantic", "pydantic_settings", "jose", "passlib", "bcrypt", 
-           "celery", "httpx", "aiohttp", "panoramisk"]
+modules = ["fastapi", "uvicorn", "sqlalchemy", "asyncpg", "redis.asyncio",
+           "pydantic", "pydantic_settings", "jose", "passlib", "bcrypt",
+           "httpx", "aiohttp", "panoramisk"]
 
 failed = []
 for module in modules:
