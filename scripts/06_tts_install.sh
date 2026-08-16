@@ -98,6 +98,16 @@ install_piper() {
     rm -rf /opt/piper
     mkdir -p /opt/piper
     tar -xzf piper.tar.gz -C /opt/piper --strip-components=1
+
+    # `ln -sf` does NOT replace an existing DIRECTORY at the target path
+    # - it silently creates the symlink INSIDE it instead
+    # (/usr/local/bin/piper/piper), leaving /usr/local/bin/piper itself
+    # as a directory. Every install attempt before this fix used the old
+    # buggy extraction that left exactly that kind of leftover directory
+    # at /usr/local/bin/piper - confirmed live, this is why `command -v
+    # piper` kept failing even after the extraction itself was fixed.
+    # rm -f alone can't remove a directory either, hence -rf here.
+    rm -rf /usr/local/bin/piper
     ln -sf /opt/piper/piper /usr/local/bin/piper
 
     # Очистка
