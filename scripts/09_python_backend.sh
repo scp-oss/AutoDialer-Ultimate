@@ -183,6 +183,12 @@ copy_backend_files() {
         cp -r "$PROJECT_ROOT/app/"* /opt/autodialer/backend/app/
         [ -d "$PROJECT_ROOT/utils" ] && cp -r "$PROJECT_ROOT/utils" /opt/autodialer/backend/
         [ -f "$PROJECT_ROOT/main.py" ] && cp "$PROJECT_ROOT/main.py" /opt/autodialer/backend/
+        # install_requirements() below looks for requirements/prod.txt
+        # relative to /opt/autodialer/backend - the real files live in
+        # app/requirements/ (same ones the Docker build uses), which the
+        # `cp -r app/*` above already lands one level too deep, at
+        # backend/app/requirements/. Copy them to where it actually looks.
+        [ -d "$PROJECT_ROOT/app/requirements" ] && cp -r "$PROJECT_ROOT/app/requirements" /opt/autodialer/backend/
         log_success "Файлы скопированы (модульная структура)"
     else
         log_error "Директория backend не найдена"

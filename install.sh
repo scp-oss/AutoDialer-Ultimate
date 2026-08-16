@@ -573,11 +573,11 @@ copy_project_files() {
         log_success "  ✓ sql/"
     fi
     
-    # Requirements
+    # Requirements (real files live under app/requirements/, same ones the
+    # Docker build uses - 09_python_backend.sh's copy_backend_files() is
+    # what actually installs from them, this is just a convenience copy)
     mkdir -p /opt/autodialer/requirements
-    [ -f "$SCRIPT_DIR/requirements/base.txt" ] && cp "$SCRIPT_DIR/requirements/base.txt" /opt/autodialer/requirements/
-    [ -f "$SCRIPT_DIR/requirements/prod.txt" ] && cp "$SCRIPT_DIR/requirements/prod.txt" /opt/autodialer/requirements/
-    [ -f "$SCRIPT_DIR/requirements.txt" ] && cp "$SCRIPT_DIR/requirements.txt" /opt/autodialer/
+    [ -d "$SCRIPT_DIR/app/requirements" ] && cp -r "$SCRIPT_DIR/app/requirements/"* /opt/autodialer/requirements/
     
     # .env
     [ -f "$SCRIPT_DIR/.env" ] && cp "$SCRIPT_DIR/.env" /opt/autodialer/.env && chmod 600 /opt/autodialer/.env
