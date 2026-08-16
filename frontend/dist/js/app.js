@@ -564,13 +564,10 @@ window.authFetch = (url, options) => {
 // =============================================
 // Автоматическая инициализация
 // =============================================
-document.addEventListener('DOMContentLoaded', () => {
-    App.init();
-    
-    // Проверяем сохранённый токен
-    const savedToken = localStorage.getItem('refresh_token');
-    if (savedToken) {
-        App.state.refreshToken = savedToken;
-        App.checkAutoLogin();
-    }
-});
+// Инициализация (App.init() + автологин) выполняется из инлайн-скрипта в
+// конце index.html - там же грузятся sidebar.html/modals.html до вызова
+// tryAutoLogin(). Второй, независимый DOMContentLoaded-обработчик здесь
+// раньше тоже вызывал checkAutoLogin(), из-за чего автологин и, как
+// следствие, вся загрузка дашборда (5 параллельных запросов) выполнялись
+// ДВАЖДЫ при каждом заходе на страницу - это и приводило к 429 Too Many
+// Requests от лимитера Nginx.

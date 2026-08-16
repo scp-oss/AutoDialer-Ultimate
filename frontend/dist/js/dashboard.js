@@ -352,12 +352,17 @@ App.dashboard = {
             
             // Сортируем по дате
             chartData.sort((a, b) => new Date(a.date) - new Date(b.date));
-            
+
             const labels = chartData.map(d => this.formatChartDate(d.date));
             const totals = chartData.map(d => d.total || 0);
             const agreed = chartData.map(d => d.agreed || 0);
             const noanswer = chartData.map(d => d.noanswer || 0);
-            
+
+            // initChart() can silently no-op (canvas gone) if the user
+            // switched away from the dashboard tab while this was in
+            // flight - guard rather than crash on a null chart.
+            if (!this.state.chart) return;
+
             this.state.chart.data.labels = labels;
             this.state.chart.data.datasets[0].data = totals;
             this.state.chart.data.datasets[1].data = agreed;
@@ -372,6 +377,8 @@ App.dashboard = {
     },
 
     loadMockChartData() {
+        if (!this.state.chart) return;
+
         // Заглушка если API не отдаёт данные для графика
         const labels = [];
         const totals = [];

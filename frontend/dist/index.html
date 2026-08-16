@@ -133,6 +133,11 @@
             
             document.addEventListener('DOMContentLoaded', async () => {
                 try {
+                    // Единственная точка инициализации приложения - см.
+                    // комментарий в app.js о том, почему второй обработчик
+                    // DOMContentLoaded был удалён (дублировал автологин).
+                    App.init();
+
                     // Загружаем боковое меню
                     const sidebarResponse = await fetch('components/sidebar.html');
                     document.getElementById('sidebarContainer').innerHTML = await sidebarResponse.text();
