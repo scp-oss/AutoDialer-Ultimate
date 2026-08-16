@@ -78,6 +78,14 @@ services:
       AMI_USER: ${AMI_USER:-autodialer}
       AMI_PASSWORD: ${AMI_PASSWORD:?AMI_PASSWORD is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required (min 32 chars)}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-noreply@autodialer.local}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-AutoDialer Ultimate}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8000}
       TTS_DIR: /var/lib/asterisk/sounds/tts
       RECORDINGS_DIR: /var/spool/asterisk/monitor
       LOG_DIR: /opt/autodialer/logs

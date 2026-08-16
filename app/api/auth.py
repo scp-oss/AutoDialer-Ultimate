@@ -13,7 +13,8 @@ from app.services.user import AuthService, get_auth_service
 from app.models.auth import (
     LoginRequest, LoginResponse,
     RefreshTokenRequest, RefreshTokenResponse,
-    ChangePasswordRequest, LogoutResponse
+    ChangePasswordRequest, LogoutResponse,
+    ForgotPasswordRequest, ForgotPasswordConfirmRequest
 )
 
 router = APIRouter()
@@ -50,6 +51,31 @@ async def change_password(
     """Смена пароля"""
     auth_service = get_auth_service()
     await auth_service.change_password(user.user_id, request)
+    return {"status": "changed"}
+
+
+@router.post("/forgot-password")
+async def forgot_password(request: ForgotPasswordRequest):
+    """
+    Запросить восстановление пароля по email.
+
+    AuthService.forgot_password()/confirm_forgot_password() уже были
+    полностью реализованы (генерация токена, хранение в Redis, смена
+    пароля по токену), но ни разу не были подключены ни к одному
+    HTTP-эндпоинту - "забыли пароль" был недостижим через API. Всегда
+    возвращает {"status": "ok"} независимо от того, найден ли email, -
+    сервис намеренно не раскрывает существование пользователя.
+    """
+    auth_service = get_auth_service()
+    await auth_service.forgot_password(request)
+    return {"status": "ok"}
+
+
+@router.post("/reset-password")
+async def reset_password(request: ForgotPasswordConfirmRequest):
+    """Подтвердить восстановление пароля по токену из письма."""
+    auth_service = get_auth_service()
+    await auth_service.confirm_forgot_password(request)
     return {"status": "changed"}
 
 

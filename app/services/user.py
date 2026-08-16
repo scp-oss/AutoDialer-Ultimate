@@ -29,6 +29,7 @@ from app.core.security import (
     generate_api_key, hash_api_key, verify_api_key,
     totp_manager, LoginAttemptTracker
 )
+from app.utils.email import send_email, EmailSendError
 from app.models.user import (
     UserRole, UserStatus, Permission, ROLE_PERMISSIONS,
     UserCreateRequest, UserUpdateRequest, UserProfileUpdateRequest,
@@ -928,8 +929,23 @@ class UserService:
     
     async def _send_welcome_email(self, user: UserResponse) -> None:
         """Отправить приветственное письмо"""
-        # TODO: Интеграция с email сервисом
-        logger.info(f"Приветственное письмо отправлено пользователю {user.email}")
+        if not user.email:
+            logger.debug(f"У пользователя {user.username} нет email - приветственное письмо не отправлено")
+            return
+
+        name = user.full_name or user.username
+        text_body = (
+            f"Здравствуйте, {name}!\n\n"
+            f"Для вас создана учётная запись в AutoDialer Ultimate.\n"
+            f"Логин: {user.username}\n\n"
+            f"Войти можно по адресу: {settings.APP_BASE_URL}\n"
+        )
+        try:
+            await send_email(user.email, "Добро пожаловать в AutoDialer Ultimate", text_body)
+        except EmailSendError:
+            # Отправка письма - best-effort: не проваливать создание
+            # пользователя, если недоступен SMTP-сервер.
+            pass
     
     async def _log_audit(
         self,
@@ -1270,17 +1286,34 @@ class AuthService:
         
         # Генерируем токен восстановления
         reset_token = secrets.token_urlsafe(32)
-        
+
         # Сохраняем в Redis
         await self.redis.setex(
             f"password_reset:{reset_token}",
             3600,  # 1 час
             str(user.id)
         )
-        
-        # TODO: Отправить email с токеном
+
         logger.info(f"Токен восстановления создан для пользователя {user.id}")
-        
+
+        if user.email:
+            reset_url = f"{settings.APP_BASE_URL}/reset-password?token={reset_token}"
+            text_body = (
+                f"Для вашей учётной записи ({user.username}) запрошено "
+                f"восстановление пароля.\n\n"
+                f"Перейдите по ссылке, чтобы задать новый пароль (действует "
+                f"1 час):\n{reset_url}\n\n"
+                f"Если вы не запрашивали восстановление пароля, "
+                f"проигнорируйте это письмо."
+            )
+            try:
+                await send_email(user.email, "Восстановление пароля AutoDialer Ultimate", text_body)
+            except EmailSendError:
+                # Best-effort: токен уже сохранён в Redis и остаётся
+                # валидным, даже если письмо не удалось отправить сейчас -
+                # не проваливаем запрос из-за временной недоступности SMTP.
+                pass
+
         return True
     
     async def confirm_forgot_password(

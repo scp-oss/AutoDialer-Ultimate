@@ -329,7 +329,27 @@ class Settings(BaseSettings):
         default_factory=lambda: ["127.0.0.1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
         description="Доверенные прокси"
     )
-    
+
+    # =============================================
+    # Email (SMTP)
+    # =============================================
+    # Отсутствие SMTP_HOST - валидное состояние "email не настроен", а не
+    # ошибка конфигурации: письма (приветственное, восстановление пароля)
+    # логируются, но не отправляются, по аналогии с тем, как STT
+    # намеренно необязателен для установки (app/requirements/stt.txt).
+    SMTP_HOST: Optional[str] = Field(None, description="Адрес SMTP-сервера")
+    SMTP_PORT: int = Field(587, ge=1, le=65535, description="Порт SMTP-сервера")
+    SMTP_USER: Optional[str] = Field(None, description="Пользователь SMTP")
+    SMTP_PASSWORD: Optional[str] = Field(None, description="Пароль SMTP")
+    SMTP_USE_TLS: bool = Field(True, description="STARTTLS для SMTP")
+    SMTP_FROM_EMAIL: str = Field("noreply@autodialer.local", description="Адрес отправителя")
+    SMTP_FROM_NAME: str = Field("AutoDialer Ultimate", description="Имя отправителя")
+    SMTP_TIMEOUT: int = Field(10, ge=1, le=60, description="Таймаут соединения с SMTP (сек)")
+    APP_BASE_URL: str = Field(
+        "http://localhost:8000",
+        description="Базовый URL приложения для ссылок в письмах (сброс пароля и т.п.)"
+    )
+
     # =============================================
     # Логирование
     # =============================================
@@ -495,7 +515,14 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "production"
-    
+
+    @property
+    def SMTP_ENABLED(self) -> bool:
+        """Email считается настроенным, если задан SMTP_HOST - без него
+        письма (welcome, восстановление пароля) логируются, но не
+        отправляются, а не падают с ошибкой конфигурации."""
+        return bool(self.SMTP_HOST)
+
     @property
     def redis_url(self) -> str:
         """Полный URL для Redis"""
