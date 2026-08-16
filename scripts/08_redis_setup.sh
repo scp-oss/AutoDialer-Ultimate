@@ -31,6 +31,15 @@ REDIS_PORT="${REDIS_PORT:-6379}"
 REDIS_MAXMEMORY="${REDIS_MAXMEMORY:-256mb}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 
+# redis-cli reads REDISCLI_AUTH automatically, so every bare `redis-cli`
+# call below authenticates without needing its own -a flag. Without this,
+# every verification/test call in this script (ping, SET/GET, Lua EVAL,
+# CONFIG GET, INFO...) hit "NOAUTH Authentication required." once
+# requirepass is set below - and since redis-cli still exits 0 on a NOAUTH
+# reply, those checks were silently "passing" on the error text itself
+# rather than actually verifying anything.
+[ -n "$REDIS_PASSWORD" ] && export REDISCLI_AUTH="$REDIS_PASSWORD"
+
 # =============================================
 # Install Redis
 # =============================================
@@ -302,6 +311,8 @@ print_step "Creating Redis helper scripts..."
 cat > /usr/local/bin/autodialer-redis-status << 'EOF'
 #!/bin/bash
 # AutoDialer Redis Status Helper
+[ -f /opt/autodialer/.env ] && REDISCLI_AUTH=$(grep -m1 '^REDIS_PASSWORD=' /opt/autodialer/.env | cut -d= -f2-)
+export REDISCLI_AUTH
 
 echo "=============================================="
 echo "AutoDialer Redis Status"
@@ -340,6 +351,8 @@ chmod +x /usr/local/bin/autodialer-redis-status
 cat > /usr/local/bin/autodialer-redis-flush-queue << 'EOF'
 #!/bin/bash
 # Emergency queue flush
+[ -f /opt/autodialer/.env ] && REDISCLI_AUTH=$(grep -m1 '^REDIS_PASSWORD=' /opt/autodialer/.env | cut -d= -f2-)
+export REDISCLI_AUTH
 
 echo "WARNING: This will clear the dial queue!"
 read -p "Are you sure? [y/N] " -n 1 -r

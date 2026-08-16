@@ -312,7 +312,17 @@ fi
 # =============================================
 print_step "Verifying Fail2ban..."
 
-sleep 2
+# systemctl is-active reports the service "active" as soon as the process
+# starts, before fail2ban-server has finished binding its control socket
+# at /var/run/fail2ban/fail2ban.sock - a fixed `sleep 2` guessed wrong on
+# a loaded box and fail2ban-client failed with "Is fail2ban running?"
+# even though the service really was starting. Poll for the socket to
+# actually respond instead of guessing a fixed delay.
+for i in $(seq 1 15); do
+    fail2ban-client ping &>/dev/null && break
+    sleep 1
+done
+fail2ban-client ping &>/dev/null || print_error "fail2ban-client всё ещё не отвечает после 15с ожидания"
 
 echo ""
 print_info "Fail2ban Status:"

@@ -315,6 +315,8 @@ setup_systemd() {
 Description=AutoDialer Ultimate Backend
 After=network.target postgresql.service redis-server.service
 Wants=postgresql.service redis-server.service
+StartLimitBurst=5
+StartLimitIntervalSec=60
 
 [Service]
 Type=simple
@@ -322,15 +324,33 @@ User=autodialer
 Group=autodialer
 WorkingDirectory=/opt/autodialer/backend
 Environment="PATH=/opt/autodialer/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
+# systemd's own $VAR substitution in ExecStart/ExecStartPre does not
+# support bash's ${VAR:-default} fallback syntax - it would pass the
+# literal, unexpanded string as an argument (this is exactly what broke
+# gunicorn: "-w '${WORKERS:-4}'" was passed through verbatim, not
+# resolved to a number). These Environment= lines are real systemd-level
+# defaults; EnvironmentFile= below is read after them, so .env silently
+# overrides any of these that it actually sets.
+Environment="WORKERS=4"
+Environment="HOST=0.0.0.0"
+Environment="PORT=8000"
+Environment="DB_HOST=127.0.0.1"
+Environment="DB_PORT=5432"
+Environment="REDIS_HOST=127.0.0.1"
+Environment="REDIS_PORT=6379"
 EnvironmentFile=/opt/autodialer/.env
 
-ExecStartPre=/bin/bash -c 'until pg_isready -h ${DB_HOST:-127.0.0.1} -p ${DB_PORT:-5432}; do sleep 1; done'
-ExecStartPre=/bin/bash -c 'until redis-cli -h ${REDIS_HOST:-127.0.0.1} -p ${REDIS_PORT:-6379} ping 2>/dev/null; do sleep 1; done'
+# -a "$REDIS_PASSWORD" matters here, not just for correctness: redis-cli
+# against a password-protected server prints "NOAUTH Authentication
+# required." but still exits 0, so without the password this readiness
+# check silently "passes" even when Redis auth is completely broken.
+ExecStartPre=/bin/bash -c 'until pg_isready -h "$DB_HOST" -p "$DB_PORT"; do sleep 1; done'
+ExecStartPre=/bin/bash -c 'until redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ${REDIS_PASSWORD:+-a "$REDIS_PASSWORD"} ping 2>/dev/null | grep -q PONG; do sleep 1; done'
 
 ExecStart=/opt/autodialer/backend/venv/bin/gunicorn \
-    -w ${WORKERS:-4} \
+    -w ${WORKERS} \
     -k uvicorn.workers.UvicornWorker \
-    -b ${HOST:-0.0.0.0}:${PORT:-8000} \
+    -b ${HOST}:${PORT} \
     --access-logfile /opt/autodialer/logs/backend/access.log \
     --error-logfile /opt/autodialer/logs/backend/error.log \
     --timeout 120 \
@@ -339,8 +359,6 @@ ExecStart=/opt/autodialer/backend/venv/bin/gunicorn \
 
 Restart=always
 RestartSec=5
-StartLimitBurst=5
-StartLimitIntervalSec=60
 
 [Install]
 WantedBy=multi-user.target
@@ -392,7 +410,20 @@ setup_database() {
     [ -z "$schema_file" ] && [ -f "$PROJECT_ROOT/sql/schema.sql" ] && schema_file="$PROJECT_ROOT/sql/schema.sql"
     [ -z "$schema_file" ] && [ -f "/opt/autodialer/backend/sql/schema.sql" ] && schema_file="/opt/autodialer/backend/sql/schema.sql"
     
-    if [ -n "$schema_file" ]; then
+    # scripts/07_postgresql_setup.sh already applies this exact schema.sql,
+    # as the postgres superuser, and grants $DB_USER privileges on every
+    # object it creates - it runs before this script in install.sh's
+    # ALL_SCRIPTS order. Re-applying it here AS $DB_USER (not postgres)
+    # doesn't create anything new - every table already exists, owned by
+    # postgres - and instead spews an "ОШИБКА: нужно быть владельцем..."
+    # for every ALTER TABLE/CREATE OR REPLACE FUNCTION/DROP TRIGGER/CREATE
+    # VIEW statement in the file, since $DB_USER isn't the owner of any of
+    # them. Skip it when 07's marker shows the schema is already in place;
+    # only fall back to applying it here (e.g. someone ran with
+    # --skip-postgres) when that marker is absent.
+    if [ -f /opt/autodialer/.postgresql_configured ]; then
+        log_info "Схема уже применена скриптом 07_postgresql_setup.sh, пропускаю повторное применение"
+    elif [ -n "$schema_file" ]; then
         log_info "Применение схемы из $schema_file..."
         PGPASSWORD="${DB_PASSWORD}" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f "$schema_file" 2>&1 | grep -v "уже существует" | grep -v "NOTICE" || true
         log_success "Схема применена"

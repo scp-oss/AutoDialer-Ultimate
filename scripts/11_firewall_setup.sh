@@ -284,7 +284,7 @@ add_ufw_rules() {
     # =============================================
     # ICMP (ping) - для диагностики
     # =============================================
-    ufw allow proto icmp comment 'ICMP (ping)'
+    ufw allow proto icmp from any to any comment 'ICMP (ping)'
     
     log_success "Все правила добавлены"
 }
