@@ -362,11 +362,27 @@ EOF
 
     rm -f "$extra_rules_file"
 
+    # Не применяем собранный файл вслепую: прогоняем его через
+    # iptables-restore в тестовом режиме (--test не меняет реальные
+    # правила) ПЕРЕД тем, как заменить рабочий before.rules. Именно
+    # отсутствие такой проверки и позволило прошлому багу (см. комментарий
+    # выше) подсунуть enable_ufw_safe() файл без COMMIT - тест поймал бы
+    # это здесь, до попытки реально включить UFW и до какого-либо риска
+    # потери сетевой связности.
+    if ! iptables-restore --test < "$temp_file" 2>/tmp/ufw_rules_test_error; then
+        log_error "Собранный before.rules не прошёл проверку iptables-restore --test:"
+        cat /tmp/ufw_rules_test_error >&2
+        log_error "Оставляю оригинальный before.rules без изменений, доп. защита НЕ добавлена"
+        rm -f "$temp_file" /tmp/ufw_rules_test_error
+        return 1
+    fi
+    rm -f /tmp/ufw_rules_test_error
+
     # Заменяем оригинал
     mv "$temp_file" "$before_rules"
     chmod 640 "$before_rules"
-    
-    log_success "Дополнительная защита добавлена"
+
+    log_success "Дополнительная защита добавлена (проверено iptables-restore --test)"
 }
 
 # =============================================
@@ -414,7 +430,33 @@ enable_ufw_safe() {
         log_error "Не удалось активировать UFW"
         return 1
     fi
-    
+
+    # 🔥 ПРОВЕРКА РЕАЛЬНОЙ СВЯЗНОСТИ ПОСЛЕ ВКЛЮЧЕНИЯ
+    # Живой инцидент: собранный before.rules когда-то потерял штатное
+    # правило UFW "-A ufw-before-input -m state --state
+    # RELATED,ESTABLISHED -j ACCEPT" - исходящие пакеты уходили
+    # (OUTPUT: ACCEPT), но ответы на них (ping-ответ, DNS-ответ) резались
+    # политикой INPUT DROP как "новый" входящий трафик, поскольку без
+    # этого правила они ни с чем не сопоставлялись. `ufw status` при
+    # этом всё равно показывал "Status: active" - обычная проверка выше
+    # ничего бы не заметила. Единственный надёжный способ поймать именно
+    # такой класс поломки - реально проверить связность после включения,
+    # а не просто спросить статус.
+    log_info "Проверка связности после включения UFW..."
+    if ping -c2 -W2 8.8.8.8 &>/dev/null; then
+        log_success "Связность подтверждена (исходящий трафик и ответы проходят)"
+    else
+        log_error "КРИТИЧЕСКАЯ ОШИБКА: после включения UFW пропала связность (ping 8.8.8.8 не проходит)!"
+        log_error "Откатываю: ufw disable + восстановление before.rules из резервной копии..."
+        ufw disable
+        if [ -f /etc/ufw/before.rules.backup ]; then
+            cp /etc/ufw/before.rules.backup /etc/ufw/before.rules
+            log_warn "before.rules восстановлен из /etc/ufw/before.rules.backup"
+        fi
+        log_warn "UFW отключён, чтобы не блокировать сервер. Проверьте /etc/ufw/before.rules вручную и включите UFW отдельно: ufw enable"
+        return 1
+    fi
+
     # 🔥 ПОВТОРНАЯ ПРОВЕРКА SSH ПОСЛЕ ВКЛЮЧЕНИЯ
     if ! ufw status | grep -q "$ssh_port/tcp.*ALLOW"; then
         log_error "КРИТИЧЕСКАЯ ОШИБКА: SSH правило пропало после включения!"
@@ -609,12 +651,20 @@ main() {
     # Добавление правил
     add_ufw_rules "$SSH_PORT"
     
-    # Дополнительная защита
-    add_extra_protection
-    
-    # Включение UFW
-    enable_ufw_safe "$SSH_PORT"
-    
+    # Дополнительная защита (не критично для установки: если сборка
+    # правил не прошла валидацию, add_extra_protection() уже оставила
+    # before.rules нетронутым и вернула 1 - продолжаем без доп. защиты,
+    # а не роняем всю установку под set -e из-за bare-вызова)
+    add_extra_protection || log_warn "Доп. защита в before.rules пропущена, UFW включится без неё"
+
+    # Включение UFW (не даём bare-вызову под set -e прервать скрипт без
+    # объяснения - enable_ufw_safe() уже сама откатывает и логирует всё
+    # нужное перед тем как вернуть 1)
+    if ! enable_ufw_safe "$SSH_PORT"; then
+        log_error "Включение UFW не удалось или было автоматически отменено - см. сообщения выше"
+        exit 1
+    fi
+
     # Проверка доступа
     verify_ssh_access "$SSH_PORT"
     
