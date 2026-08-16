@@ -291,25 +291,6 @@ add_ufw_rules() {
     log_success "Все правила добавлены"
 }
 
-# =============================================
-# 🔥 ПРОВЕРКА ПРАВИЛ ПЕРЕД ВКЛЮЧЕНИЕМ
-# =============================================
-verify_ssh_rule() {
-    local ssh_port="$1"
-    
-    log_step "Проверка правила SSH..."
-    
-    if ufw status | grep -q "$ssh_port/tcp.*ALLOW"; then
-        log_success "✅ Правило SSH присутствует: $ssh_port/tcp ALLOW"
-        return 0
-    else
-        log_error "❌ Правило SSH ОТСУТСТВУЕТ!"
-        log_error "ЭКСТРЕННО ДОБАВЛЯЮ SSH..."
-        ufw allow "$ssh_port/tcp" comment 'SSH (emergency)'
-        ufw allow 22/tcp comment 'SSH fallback (emergency)'
-        return 1
-    fi
-}
 
 # =============================================
 # 🔥 ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА В BEFORE.RULES
@@ -384,10 +365,16 @@ enable_ufw_safe() {
     local ssh_port="$1"
     
     log_step "Включение UFW..."
-    
-    # Финальная проверка перед включением
-    verify_ssh_rule "$ssh_port"
-    
+
+    # verify_ssh_rule() checks `ufw status` for an ALLOW line - but while
+    # UFW is still inactive (true here, before `ufw enable` below), `ufw
+    # status` only ever prints "Status: inactive" and lists no rules at
+    # all, regardless of what's staged. The check can't succeed at this
+    # point no matter what, so under `set -e` it reliably killed the
+    # whole script the first time this function ran far enough to reach
+    # it. The real safety net is the post-enable check further down in
+    # this function, plus verify_ssh_access() called right after it.
+
     # Показываем правила перед включением
     log_info "Текущие правила UFW:"
     ufw status verbose | head -30
