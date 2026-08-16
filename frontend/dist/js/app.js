@@ -106,9 +106,15 @@ const App = {
             this.state.currentTab = tabId;
             
             // Вызываем инициализацию вкладки
-            const initFunc = this[tabId]?.init;
-            if (initFunc) {
-                await initFunc();
+            // Extracting .init into a standalone reference before calling
+            // it (the old `const initFunc = this[tabId]?.init; initFunc()`)
+            // loses its `this` binding to the tab module (App.dashboard,
+            // App.campaigns, ...), so every tab's init() saw `this` as
+            // undefined and crashed on its very first `this.loadXxx()`
+            // call. Call it through the module object so `this` stays
+            // bound correctly.
+            if (this[tabId]?.init) {
+                await this[tabId].init();
             }
             
             // Останавливаем старые интервалы
