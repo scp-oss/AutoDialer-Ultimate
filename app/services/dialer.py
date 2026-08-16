@@ -872,12 +872,12 @@ class DialerManager:
         if not normalized:
             logger.warning(f"Пропуск невалидного номера: {phone}")
             return
-        
+
         # Проверяем чёрный список
         if await self.redis.is_blacklisted(normalized):
             logger.info(f"Пропуск номера из чёрного списка: {normalized}")
             return
-        
+
         # Добавляем в очередь
         await self.redis.rpush(self.dial_queue_key, json.dumps({
             "phone": normalized,
@@ -885,10 +885,10 @@ class DialerManager:
             "retry": retry,
             "queued_at": datetime.utcnow().isoformat()
         }))
-        
+
         queue_size = await self.redis.llen(self.dial_queue_key)
         queue_size_gauge.set(queue_size)
-        
+
         logger.debug(f"Звонок в очереди: {normalized} (кампания {campaign_id}), размер очереди: {queue_size}")
     
     async def queue_worker(self):
