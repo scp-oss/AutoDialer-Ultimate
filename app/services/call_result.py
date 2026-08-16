@@ -115,16 +115,25 @@ class CallResultService:
             # Получаем или создаём контакт
             contact_id = request.contact_id
             if not contact_id and request.phone:
+                # Атомарный upsert вместо SELECT-затем-INSERT: та же
+                # dialer_bridge context выполняется дважды на звонок (по
+                # разу на каждую половину Local-канала, из-за флага /n),
+                # так что два UserEvent(DialerResult) для одного номера
+                # могут прийти почти одновременно - SELECT-затем-INSERT
+                # гарантированно ловит гонку (оба видят "контакта нет",
+                # оба пытаются INSERT), падая с
+                # `duplicate key value violates unique constraint
+                # "idx_contacts_phone_active"` - подтверждено живьём.
+                # Индекс частичный (`WHERE NOT blacklisted`), поэтому
+                # предикат ON CONFLICT должен точно ему соответствовать,
+                # иначе Postgres не примет его как arbiter вообще.
                 contact_id = await conn.fetchval("""
-                    SELECT id FROM contacts WHERE phone = $1
+                    INSERT INTO contacts (phone, source, status, created_at, updated_at)
+                    VALUES ($1, 'incoming', 'active', NOW(), NOW())
+                    ON CONFLICT (phone) WHERE NOT blacklisted
+                    DO UPDATE SET updated_at = NOW()
+                    RETURNING id
                 """, request.phone)
-                
-                if not contact_id:
-                    contact_id = await conn.fetchval("""
-                        INSERT INTO contacts (phone, source, status, created_at, updated_at)
-                        VALUES ($1, 'incoming', 'active', NOW(), NOW())
-                        RETURNING id
-                    """, request.phone)
             
             # Вставляем результат
             call_id = await conn.fetchval("""
