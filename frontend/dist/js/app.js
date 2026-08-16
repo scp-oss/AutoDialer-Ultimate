@@ -352,6 +352,16 @@ const App = {
         return date.toLocaleString('ru-RU');
     },
 
+    // contacts.js/campaigns.js/dashboard.js/contactGroups.js/blacklist.js/
+    // history.js/incoming.js all call App.formatPhoneNumber(), but the
+    // actual implementation only ever existed on the separate `Utils`
+    // namespace (utils.js, loaded before this file) - App.formatPhoneNumber
+    // itself was never defined, so every one of those call sites threw
+    // "App.formatPhoneNumber is not a function" the moment it ran.
+    formatPhoneNumber(phone) {
+        return Utils.formatPhoneNumber(phone);
+    },
+
     formatFileSize(bytes) {
         if (!bytes) return '0 B';
         const k = 1024;
