@@ -69,6 +69,15 @@ if [ -f "$PROJECT_ROOT/asterisk/modules.conf" ]; then
     print_success "modules.conf copied"
 fi
 
+# amd.conf (Answering Machine Detection tuning, used by AMD() via
+# [sub-amd] in extensions.conf) - tracked explicitly instead of silently
+# inheriting whatever amd.conf the asterisk package happens to ship, same
+# as every other config file copied above.
+if [ -f "$PROJECT_ROOT/asterisk/amd.conf" ]; then
+    cp "$PROJECT_ROOT/asterisk/amd.conf" /etc/asterisk/
+    print_success "amd.conf copied"
+fi
+
 # =============================================
 # Configure modules.conf (Auto-load)
 # =============================================

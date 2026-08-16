@@ -23,6 +23,7 @@ COPY asterisk/logger.conf /etc/asterisk/logger.conf
 COPY asterisk/cdr.conf /etc/asterisk/cdr.conf
 COPY asterisk/rtp.conf /etc/asterisk/rtp.conf
 COPY asterisk/indications.conf /etc/asterisk/indications.conf
+COPY asterisk/amd.conf /etc/asterisk/amd.conf
 COPY asterisk/extensions.conf /etc/asterisk/extensions.conf
 COPY asterisk/manager.conf /etc/asterisk/manager.conf.template
 COPY asterisk/pjsip.conf.template /etc/asterisk/pjsip.conf.template

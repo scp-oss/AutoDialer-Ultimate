@@ -89,7 +89,11 @@ same => n,Set(CALLERID(num)=\${CALLER_ID})
 same => n,Set(CALLERID(name)=Camp_\${CAMPAIGN_ID})
 same => n,Set(CHANNEL(hangup_handler_push)=hangup-handler,s,1)
 same => n,Set(CDR(userfield)=campaign:\${CAMPAIGN_ID})
-same => n,Set(ORIGINAL_PHONE=\${EXTEN})
+; __-префикс обязателен: [sub-media] выполняется на канале, который
+; создаёт Dial() (через опцию U()), а не на этом - обычная (без __)
+; переменная на этот новый канал не наследуется, и \${ORIGINAL_PHONE}
+; во всех UserEvent(DialerResult,...) ниже был бы всегда пуст.
+same => n,Set(__ORIGINAL_PHONE=\${EXTEN})
 same => n,Dial(\${TRUNK_NAME}/\${EXTEN},\${CALL_TIMEOUT},U(sub-media^\${CAMPAIGN_ID}))
 same => n,Goto(sub-dial-status,s,1)
 
@@ -111,19 +115,19 @@ same => n,Hangup()
 ; Ветка "Занято"
 same => n(busy),NoOp(=== Результат: BUSY (Занято) ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},status=busy)
-same => n,UserEvent(DialerResult,Status=busy,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},RetryCount=\${RETRY_COUNT},LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: busy,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)})
 same => n,Return()
 
 ; Ветка "Нет ответа"
 same => n(noanswer),NoOp(=== Результат: NOANSWER (Нет ответа) ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},status=noanswer)
-same => n,UserEvent(DialerResult,Status=noanswer,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},RetryCount=\${RETRY_COUNT},LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: noanswer,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)})
 same => n,Return()
 
 ; Ветка "Ошибка"
 same => n(failed),NoOp(=== Результат: FAILED (\${DIALSTATUS}) ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},status=failed)
-same => n,UserEvent(DialerResult,Status=failed,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},RetryCount=\${RETRY_COUNT},LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: failed,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)})
 same => n,Return()
 
 ; Ветка "Ответил" (обрабатывается в sub-media)
@@ -150,10 +154,24 @@ same => n,Progress()
 same => n,Wait(0.3)
 same => n,Answer()
 same => n,Wait(0.2)
+
+; AMD должен отработать (и дослушать) ДО того, как начнём проигрывать
+; своё TTS - он различает живого человека и автоответчика по тому, что
+; говорит ДАЛЬНЯЯ сторона первой, а наш же Background() заглушил бы это,
+; если бы шёл одновременно. [sub-amd] сам публикует
+; UserEvent(DialerResult,Status: machine,...) при вердикте MACHINE, так
+; что результат уже записан к моменту возврата сюда - остаётся только
+; прервать IVR и положить трубку, а не тратить питч на автоответчик.
+same => n,Gosub(sub-amd,s,1)
+same => n,GotoIf(\$["\${AMDSTATUS}"="MACHINE"]?amd_hangup)
+
 same => n,Set(TIMEOUT(digit)=\${DTMF_TIMEOUT})
 same => n,Set(TIMEOUT(response)=\${DTMF_TIMEOUT})
 same => n,Background(\${AUDIO_FILE})
 same => n,WaitExten(\${DTMF_TIMEOUT})
+
+same => n(amd_hangup),NoOp(=== Автоответчик - питч пропущен, кладём трубку ===)
+same => n,Hangup()
 
 
 ; =============================================
@@ -163,7 +181,7 @@ same => n,WaitExten(\${DTMF_TIMEOUT})
 ; DTMF 1 - Согласие
 exten => 1,1,NoOp(=== DTMF 1: Согласие ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},dtmf=1)
-same => n,UserEvent(DialerResult,Status=agreed,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},DTMF=1,LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: agreed,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 1,LinkedID: \${CHANNEL(linkedid)})
 same => n,Playback(tts/thanks_\${CAMPAIGN_ID})
 same => n,GotoIf(\$[\${STAT(e,tts/thanks_\${CAMPAIGN_ID})} = 1]?hangup)
 same => n,Playback(tts/thanks_default)
@@ -172,7 +190,7 @@ same => n(hangup),Hangup()
 ; DTMF 2 - Отказ
 exten => 2,1,NoOp(=== DTMF 2: Отказ ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},dtmf=2)
-same => n,UserEvent(DialerResult,Status=declined,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},DTMF=2,LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: declined,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 2,LinkedID: \${CHANNEL(linkedid)})
 same => n,Playback(tts/goodbye_\${CAMPAIGN_ID})
 same => n,GotoIf(\$[\${STAT(e,tts/goodbye_\${CAMPAIGN_ID})} = 1]?hangup)
 same => n,Playback(tts/goodbye_default)
@@ -187,7 +205,7 @@ same => n,WaitExten(\${DTMF_TIMEOUT})
 ; DTMF 4 - Запрос оператора
 exten => 4,1,NoOp(=== DTMF 4: Запрос оператора ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},dtmf=4)
-same => n,UserEvent(DialerResult,Status=operator,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},DTMF=4,LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: operator,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 4,LinkedID: \${CHANNEL(linkedid)})
 same => n,Playback(tts/operator_\${CAMPAIGN_ID})
 same => n,GotoIf(\$[\${STAT(e,tts/operator_\${CAMPAIGN_ID})} = 1]?hangup)
 same => n,Playback(tts/operator_default)
@@ -195,41 +213,41 @@ same => n(hangup),Hangup()
 
 ; DTMF 5-9, 0, *, # - Пользовательские действия
 exten => 5,1,NoOp(=== DTMF 5: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status=custom5,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},DTMF=5,LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: custom5,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 5,LinkedID: \${CHANNEL(linkedid)})
 same => n,Hangup()
 
 exten => 6,1,NoOp(=== DTMF 6: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status=custom6,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},DTMF=6,LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: custom6,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 6,LinkedID: \${CHANNEL(linkedid)})
 same => n,Hangup()
 
 exten => 7,1,NoOp(=== DTMF 7: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status=custom7,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},DTMF=7,LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: custom7,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 7,LinkedID: \${CHANNEL(linkedid)})
 same => n,Hangup()
 
 exten => 8,1,NoOp(=== DTMF 8: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status=custom8,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},DTMF=8,LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: custom8,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 8,LinkedID: \${CHANNEL(linkedid)})
 same => n,Hangup()
 
 exten => 9,1,NoOp(=== DTMF 9: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status=custom9,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},DTMF=9,LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: custom9,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 9,LinkedID: \${CHANNEL(linkedid)})
 same => n,Hangup()
 
 exten => 0,1,NoOp(=== DTMF 0: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status=custom0,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},DTMF=0,LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: custom0,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 0,LinkedID: \${CHANNEL(linkedid)})
 same => n,Hangup()
 
 exten => *,1,NoOp(=== DTMF *: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status=star,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},DTMF=*,LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: star,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: *,LinkedID: \${CHANNEL(linkedid)})
 same => n,Hangup()
 
 exten => #,1,NoOp(=== DTMF #: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status=hash,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},DTMF=#,LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: hash,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: #,LinkedID: \${CHANNEL(linkedid)})
 same => n,Hangup()
 
 ; Таймаут - DTMF не получен
 exten => t,1,NoOp(=== Таймаут DTMF ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},dtmf=timeout)
-same => n,UserEvent(DialerResult,Status=timeout,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: timeout,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},LinkedID: \${CHANNEL(linkedid)})
 same => n,Playback(tts/timeout_\${CAMPAIGN_ID})
 same => n,GotoIf(\$[\${STAT(e,tts/timeout_\${CAMPAIGN_ID})} = 1]?hangup)
 same => n,Playback(tts/timeout_default)
@@ -238,7 +256,7 @@ same => n(hangup),Hangup()
 ; Неверный ввод
 exten => i,1,NoOp(=== Неверный DTMF: \${INVALID_EXTEN} ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},dtmf=invalid)
-same => n,UserEvent(DialerResult,Status=invalid_dtmf,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},DTMF=\${INVALID_EXTEN},LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: invalid_dtmf,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: \${INVALID_EXTEN},LinkedID: \${CHANNEL(linkedid)})
 same => n,Playback(invalid)
 same => n,Background(\${AUDIO_FILE})
 same => n,WaitExten(\${DTMF_TIMEOUT})
@@ -249,7 +267,13 @@ same => n,WaitExten(\${DTMF_TIMEOUT})
 ; =============================================
 [hangup-handler]
 exten => s,1,NoOp(=== Канал \${CHANNEL} завершён ===)
-same => n,UserEvent(DialerHangup,Channel=\${CHANNEL},LinkedID=\${CHANNEL(linkedid)},Status=\${DIALSTATUS},Duration=\${CDR(duration)},BillSec=\${CDR(billsec)})
+; Без своего "Channel:" - у любого AMI-события (включая UserEvent) уже
+; есть нативный заголовок "Channel:", который Asterisk добавляет всегда.
+; Дублирующий заголовок с тем же именем заставляет panoramisk хранить
+; его как список из двух одинаковых значений вместо строки, и
+; \`channel.startswith(...)\` на стороне приложения падает с
+; AttributeError - подтверждено живьём на Docker-сборке того же дозвона.
+same => n,UserEvent(DialerHangup,LinkedID: \${CHANNEL(linkedid)},Status: \${DIALSTATUS},Duration: \${CDR(duration)},BillSec: \${CDR(billsec)})
 same => n,Return()
 
 
@@ -267,7 +291,7 @@ same => n,Return()
 
 same => n(machine),NoOp(=== Обнаружен автоответчик ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},amd=machine)
-same => n,UserEvent(DialerResult,Status=machine,Campaign=\${CAMPAIGN_ID},Phone=\${ORIGINAL_PHONE},LinkedID=\${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: machine,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},LinkedID: \${CHANNEL(linkedid)})
 same => n,Return()
 
 same => n(human),NoOp(=== Обнаружен человек ===)
