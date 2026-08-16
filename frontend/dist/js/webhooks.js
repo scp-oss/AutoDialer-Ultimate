@@ -406,7 +406,8 @@ const WebhooksModule = {
         try {
             const response = await authFetch(`${API_BASE}/campaigns/?limit=100`);
             if (response.ok) {
-                const campaigns = await response.json();
+                const data = await response.json();
+                const campaigns = data.items || data || [];
                 const select = document.getElementById('webhookCampaignFilter');
                 if (select) {
                     const options = campaigns.map(c => 

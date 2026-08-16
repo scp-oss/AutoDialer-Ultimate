@@ -111,7 +111,7 @@ App.contactGroups = {
                         <p class="group-description">${this.escapeHtml(group.description)}</p>
                     ` : ''}
                     <div class="group-footer">
-                        <span class="group-date">Создана: ${App.formatDate(group.created_at)}</span>
+                        <span class="group-date">Создана: ${App.formatDateTime(group.created_at)}</span>
                         <div class="group-actions">
                             <button class="btn btn-sm btn-outline" 
                                     onclick="App.contactGroups.viewGroupContacts(${group.id})"

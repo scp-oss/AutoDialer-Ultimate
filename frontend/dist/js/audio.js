@@ -423,8 +423,9 @@ const AudioModule = {
         try {
             const response = await authFetch(`${API_BASE}/campaigns/`);
             if (response.ok) {
-                const campaigns = await response.json();
-                const options = '<option value="">Нет</option>' + 
+                const data = await response.json();
+                const campaigns = data.items || data || [];
+                const options = '<option value="">Нет</option>' +
                     campaigns.map(c => `<option value="${c.id}">${this.escapeHtml(c.name)}</option>`).join('');
                 
                 const ttsSelect = document.getElementById('ttsCampaign');

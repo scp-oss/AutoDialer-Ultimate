@@ -548,7 +548,18 @@ window.App = App;
 window.AppState = App.state;
 window.API_BASE = App.API_BASE;
 window.showToast = (message, type) => App.showToast(message, type);
-window.authFetch = (url, options) => App.apiFetch(url, options);
+window.authFetch = (url, options) => {
+    // Every call site in the old-style modules already builds its URL
+    // as `${API_BASE}/...` (API_BASE = '/api'), but App.apiFetch ALSO
+    // prepends this.API_BASE to whatever it's given unless the string
+    // already starts with "http" - passing an already-prefixed URL
+    // straight through produced /api/api/... on every single request
+    // (confirmed live: POST /api/api/audio/generate -> 405). Strip the
+    // leading API_BASE here so apiFetch's own prefixing lands on a
+    // plain endpoint path, same as every other (non-legacy) module.
+    const endpoint = url.startsWith(App.API_BASE) ? url.slice(App.API_BASE.length) : url;
+    return App.apiFetch(endpoint, options);
+};
 
 // =============================================
 // Автоматическая инициализация
