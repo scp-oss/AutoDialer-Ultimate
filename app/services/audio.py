@@ -777,31 +777,42 @@ class AudioService:
         if file_path.suffix.lower() != '.sln':
             return file_path
 
-        cached_wav = file_path.with_suffix('.playback.wav')
-        if cached_wav.exists() and cached_wav.stat().st_mtime >= file_path.stat().st_mtime:
-            return cached_wav
+        try:
+            cached_wav = file_path.with_suffix('.playback.wav')
+            if cached_wav.exists() and cached_wav.stat().st_mtime >= file_path.stat().st_mtime:
+                return cached_wav
 
-        cmd = [
-            'sox',
-            '-t', 'raw', '-r', '8000', '-c', '1', '-b', '16', '-e', 'signed-integer',
-            str(file_path),
-            str(cached_wav)
-        ]
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        _, stderr = await process.communicate()
-
-        if process.returncode != 0 or not cached_wav.exists():
-            logger.error(
-                f"Не удалось сконвертировать {file_path} в WAV для проигрывания: "
-                f"{stderr.decode('utf-8', errors='ignore')}"
+            cmd = [
+                'sox',
+                '-t', 'raw', '-r', '8000', '-c', '1', '-b', '16', '-e', 'signed-integer',
+                str(file_path),
+                str(cached_wav)
+            ]
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
-            return file_path
+            _, stderr = await process.communicate()
 
-        return cached_wav
+            if process.returncode != 0 or not cached_wav.exists():
+                logger.error(
+                    f"Не удалось сконвертировать {file_path} в WAV для проигрывания "
+                    f"(sox exit {process.returncode}): "
+                    f"{stderr.decode('utf-8', errors='ignore')}"
+                )
+                return file_path
+
+            return cached_wav
+        except Exception as e:
+            # Ранее тут не было try/except вокруг создания подпроцесса -
+            # любая ошибка (sox не найден на PATH, нет прав на запись в
+            # каталог и т.п. до того, как sox успевает сам вернуть код
+            # выхода) улетала наружу необработанной и превращалась в
+            # голый 500 при каждой попытке воспроизведения. Деградируем
+            # до отдачи исходного .sln вместо падения запроса целиком.
+            logger.error(f"Ошибка подготовки {file_path} к воспроизведению: {e}")
+            return file_path
 
     # =============================================
     # Вспомогательные методы
