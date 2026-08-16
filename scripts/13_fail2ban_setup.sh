@@ -129,7 +129,7 @@ findtime = 600
 enabled = true
 port = 80,443
 filter = autodialer-api
-logpath = /opt/autodialer/logs/access.log
+logpath = /opt/autodialer/logs/backend/access.log
 maxretry = 10
 bantime = 1800
 findtime = 60
@@ -324,6 +324,42 @@ ignoreregex =
 EOF
 
 print_success "nginx-limit-req.conf filter created"
+
+# =============================================
+# Ensure every enabled jail's logpath actually exists
+# =============================================
+# fail2ban-server's config load is all-or-nothing: if even ONE enabled
+# jail's logpath is missing, the ENTIRE daemon refuses to start ("Have
+# not found any log file for <jail> jail" -> "Async configuration of
+# server failed"), taking down every other jail with it. auth.log is
+# handled above; these three are the other jails whose log file isn't
+# guaranteed to exist yet at this point in the install:
+#   - autodialer-api's logpath (fixed above to point at gunicorn's real
+#     --access-logfile) - gunicorn only creates it once the backend has
+#     actually started and logged a request.
+#   - asterisk's/asterisk-ami's shared "security" logpath - Asterisk's
+#     logger.conf security channel only creates the file on its first
+#     write, not merely by being configured.
+#   - autodialer.log (autodialer-auth jail) - created lazily by Python
+#     logging on first write.
+# nginx's and postgresql's log files are not touched here because those
+# services already created them during their own setup scripts earlier
+# in install.sh.
+print_step "Проверка наличия log-файлов для всех jail fail2ban..."
+
+mkdir -p /opt/autodialer/logs/backend
+touch /opt/autodialer/logs/backend/access.log
+chown autodialer:autodialer /opt/autodialer/logs/backend/access.log 2>/dev/null || true
+
+mkdir -p /var/log/asterisk
+touch /var/log/asterisk/security
+chown asterisk:asterisk /var/log/asterisk/security 2>/dev/null || true
+
+mkdir -p /opt/autodialer/logs
+touch /opt/autodialer/logs/autodialer.log
+chown autodialer:autodialer /opt/autodialer/logs/autodialer.log 2>/dev/null || true
+
+print_success "Log-файлы для fail2ban готовы"
 
 # =============================================
 # Restart Fail2ban

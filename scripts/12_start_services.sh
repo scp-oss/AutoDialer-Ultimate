@@ -194,8 +194,14 @@ wait_for_backend() {
     log_info "Ожидание бэкенда (http://127.0.0.1:${BACKEND_PORT})..."
     
     while [ $attempt -lt $max_attempts ]; do
-        # Проверка health endpoint
-        if curl -s --max-time 3 "http://127.0.0.1:${BACKEND_PORT}/api/health" 2>/dev/null | grep -q "ok"; then
+        # Проверка health endpoint. /api/health всегда возвращает HTTP 200 и
+        # JSON вида {"status": "healthy"|"degraded"|"unhealthy"|"starting", ...}
+        # - подстроки "ok" в этих значениях нет, поэтому раньше проверка
+        # `grep -q "ok"` никогда не срабатывала, даже когда бэкенд был
+        # полностью здоров (подтверждено вручную через curl).
+        local health_body
+        health_body="$(curl -s --max-time 3 "http://127.0.0.1:${BACKEND_PORT}/api/health" 2>/dev/null)"
+        if echo "$health_body" | grep -q '"status"[[:space:]]*:[[:space:]]*"\(healthy\|degraded\)"'; then
             log_success "Бэкенд готов и отвечает"
             return 0
         fi

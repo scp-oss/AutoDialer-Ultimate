@@ -453,8 +453,9 @@ else
     print_warn "HTTP endpoint not responding"
 fi
 
-# Test API health
-if curl -s http://127.0.0.1/api/health | grep -q "ok"; then
+# Test API health (ответ вида {"status": "healthy"|"degraded", ...} -
+# подстроки "ok" в реальных значениях status нет)
+if curl -s http://127.0.0.1/api/health | grep -q '"status"[[:space:]]*:[[:space:]]*"\(healthy\|degraded\)"'; then
     print_success "API health check passed"
 else
     print_warn "API health check failed"
