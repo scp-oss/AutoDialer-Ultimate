@@ -254,9 +254,13 @@ App.auth = {
         }
         
         try {
+            // ChangePasswordRequest (app/models/auth.py) requires
+            // confirm_password too, not just old/new - omitting it made
+            // every single password change 422 before this fix.
             const response = await App.apiPost('/auth/change-password', {
                 old_password: oldPassword,
-                new_password: newPassword1
+                new_password: newPassword1,
+                confirm_password: newPassword2
             });
             
             App.showToast('Пароль успешно изменён', 'success');

@@ -248,10 +248,29 @@ const App = {
         }
     },
 
+    // FastAPI's validation errors (422) return `detail` as an ARRAY of
+    // {loc, msg, type} objects, not a string - `new Error(error.detail)`
+    // stringified that straight to "[object Object]" (confirmed live on
+    // /auth/change-password), hiding the actual problem from both the
+    // user and the console. Handles the plain-string `detail` shape too
+    // (used by most other endpoints, e.g. raised HTTPExceptions).
+    async extractApiError(response) {
+        const body = await response.json().catch(() => ({}));
+        if (typeof body.detail === 'string') {
+            return body.detail;
+        }
+        if (Array.isArray(body.detail)) {
+            return body.detail
+                .map(e => e.msg || JSON.stringify(e))
+                .join('; ');
+        }
+        return `API error: ${response.status}`;
+    },
+
     async apiGet(endpoint) {
         const response = await this.apiFetch(endpoint);
         if (!response.ok) {
-            throw new Error(`API error: ${response.status}`);
+            throw new Error(await this.extractApiError(response));
         }
         return response.json();
     },
@@ -262,8 +281,7 @@ const App = {
             body: JSON.stringify(data)
         });
         if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.detail || `API error: ${response.status}`);
+            throw new Error(await this.extractApiError(response));
         }
         return response.json();
     },
@@ -274,7 +292,7 @@ const App = {
             body: JSON.stringify(data)
         });
         if (!response.ok) {
-            throw new Error(`API error: ${response.status}`);
+            throw new Error(await this.extractApiError(response));
         }
         return response.json();
     },
@@ -285,7 +303,7 @@ const App = {
             body: JSON.stringify(data)
         });
         if (!response.ok) {
-            throw new Error(`API error: ${response.status}`);
+            throw new Error(await this.extractApiError(response));
         }
         return response.json();
     },
@@ -295,7 +313,7 @@ const App = {
             method: 'DELETE'
         });
         if (!response.ok) {
-            throw new Error(`API error: ${response.status}`);
+            throw new Error(await this.extractApiError(response));
         }
         return response.json();
     },
