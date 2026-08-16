@@ -755,7 +755,54 @@ class AudioService:
             """, audio_id)
             
             return file_path
-    
+
+    async def get_playable_audio_path(self, audio_id: int) -> Path:
+        """
+        Получить путь к аудиофайлу в формате, который умеет проигрывать
+        браузер.
+
+        Файлы, сгенерированные/сконвертированные в .sln (Asterisk's raw
+        headerless signed-linear, 8kHz/mono/16-bit - см. _convert_format
+        выше), не содержат вообще никакого заголовка формата. Отдавая их
+        как есть с Content-Type: audio/wav (как раньше делали
+        download_audio/stream_audio), браузер получает файл, помеченный
+        как WAV, но без WAV-заголовка - <audio> закономерно не может его
+        разобрать ("NotSupportedError: Failed to load because no
+        supported source was found", подтверждено живьём). Конвертируем
+        такие файлы в настоящий WAV рядом (с кэшированием по mtime), а
+        всё остальное (уже .wav/.mp3/...) отдаём как есть.
+        """
+        file_path = await self.get_audio_file_path(audio_id)
+
+        if file_path.suffix.lower() != '.sln':
+            return file_path
+
+        cached_wav = file_path.with_suffix('.playback.wav')
+        if cached_wav.exists() and cached_wav.stat().st_mtime >= file_path.stat().st_mtime:
+            return cached_wav
+
+        cmd = [
+            'sox',
+            '-t', 'raw', '-r', '8000', '-c', '1', '-b', '16', '-e', 'signed-integer',
+            str(file_path),
+            str(cached_wav)
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        _, stderr = await process.communicate()
+
+        if process.returncode != 0 or not cached_wav.exists():
+            logger.error(
+                f"Не удалось сконвертировать {file_path} в WAV для проигрывания: "
+                f"{stderr.decode('utf-8', errors='ignore')}"
+            )
+            return file_path
+
+        return cached_wav
+
     # =============================================
     # Вспомогательные методы
     # =============================================
@@ -786,47 +833,60 @@ class AudioService:
             format=format,
             file_size=file_path.stat().st_size if file_path.exists() else None
         )
-        
+
+        # .sln (Asterisk's raw signed-linear format, produced with
+        # `sox ... -r 8000 -c 1 -b 16 -t raw` a few lines above) has no
+        # header at all - soxi can't infer sample rate/channels/bit depth
+        # from the bytes themselves, so without repeating those same
+        # flags as INPUT overrides here, every soxi call below silently
+        # fails (non-zero exit, caught by the bare `except: pass`) and
+        # duration/sample_rate/channels all stay None. Confirmed live:
+        # every TTS-generated file showed "Длительность: 0:00" in the UI.
+        raw_format_flags = (
+            ['-t', 'raw', '-r', '8000', '-c', '1', '-b', '16', '-e', 'signed-integer']
+            if format == AudioFormat.SLN else []
+        )
+
         # Получаем длительность через sox
         try:
-            cmd = ['soxi', '-D', str(file_path)]
+            cmd = ['soxi', *raw_format_flags, '-D', str(file_path)]
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             stdout, _ = await process.communicate()
-            
+
             if process.returncode == 0:
                 info.duration = float(stdout.decode().strip())
         except Exception:
             pass
-        
+
         # Получаем sample rate
         try:
-            cmd = ['soxi', '-r', str(file_path)]
+            cmd = ['soxi', *raw_format_flags, '-r', str(file_path)]
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             stdout, _ = await process.communicate()
-            
+
             if process.returncode == 0:
                 info.sample_rate = int(stdout.decode().strip())
         except Exception:
             pass
-        
+
         # Получаем количество каналов
         try:
-            cmd = ['soxi', '-c', str(file_path)]
+            cmd = ['soxi', *raw_format_flags, '-c', str(file_path)]
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             stdout, _ = await process.communicate()
-            
+
             if process.returncode == 0:
                 info.channels = int(stdout.decode().strip())
         except Exception:

@@ -504,29 +504,57 @@ const AudioModule = {
         }
     },
     
-    showGeneratedAudio(audio) {
+    async showGeneratedAudio(audio) {
+        // AudioGenerateResponse (app/models/audio.py) has no download_url
+        // field at all - `audio.download_url || audio.file_path` always
+        // fell through to file_path, the server's raw filesystem path
+        // (e.g. /var/lib/asterisk/sounds/tts/tts_xxx.sln), which a
+        // browser obviously can't fetch as a URL. Confirmed live: the
+        // player showed "0:00 / 0:00" and never played. Point it at the
+        // real download endpoint instead, and load it the same
+        // authenticated-blob way playAudio() does (that endpoint needs
+        // the same JWT bearer auth as everything else - a plain <audio
+        // src> can't send it).
+        const downloadUrl = `${API_BASE}/audio/${audio.id}/download`;
+
         const modalContent = `
             <div class="tts-result">
                 <h4>✅ Речь успешно сгенерирована!</h4>
-                
+
                 <div class="audio-player-container">
-                    <audio controls src="${audio.download_url || audio.file_path}" style="width: 100%;"></audio>
+                    <audio controls style="width: 100%;"></audio>
                 </div>
-                
+
                 <div class="file-details">
                     <p><strong>Название:</strong> ${this.escapeHtml(audio.name)}</p>
                     <p><strong>Длительность:</strong> ${this.formatDuration(audio.duration)}</p>
                     <p><strong>Размер:</strong> ${this.formatFileSize(audio.file_size)}</p>
                 </div>
-                
+
                 <div class="modal-actions">
                     <button class="btn btn-primary" onclick="document.querySelector('.close-modal').click()">Закрыть</button>
                     <button class="btn btn-success" id="useInCampaignBtn">Использовать в кампании</button>
                 </div>
             </div>
         `;
-        
-        this.showModal('Результат генерации', modalContent);
+
+        let objectUrl = null;
+        const modal = this.showModal('Результат генерации', modalContent, {
+            onClose: () => {
+                if (objectUrl) URL.revokeObjectURL(objectUrl);
+            }
+        });
+
+        try {
+            const response = await authFetch(downloadUrl);
+            if (response.ok) {
+                const blob = await response.blob();
+                objectUrl = URL.createObjectURL(blob);
+                modal.querySelector('audio').src = objectUrl;
+            }
+        } catch (error) {
+            console.error('Failed to load generated audio preview:', error);
+        }
         
         document.getElementById('useInCampaignBtn')?.addEventListener('click', () => {
             document.querySelector('.close-modal').click();
@@ -677,23 +705,47 @@ const AudioModule = {
         await this.loadAudioFiles();
     },
     
-    playAudio(url) {
-        const audio = new Audio(url);
-        
+    async playAudio(url) {
+        // /audio/{id}/download and /stream both require the same JWT
+        // bearer auth as every other API call - a plain <audio src="...">
+        // has no way to send that header, so pointing it straight at an
+        // authenticated URL always got a 401 (confirmed live). Fetch the
+        // file through authFetch (which does attach the header) as a
+        // blob, then hand the browser a local blob: URL instead.
         const modalContent = `
             <div class="audio-player-container">
-                <audio controls src="${url}" style="width: 100%;" autoplay></audio>
+                <div class="loading">Загрузка...</div>
+                <audio controls style="width: 100%; display: none;"></audio>
             </div>
         `;
-        
-        this.showModal('Воспроизведение', modalContent, {
-            onClose: () => audio.pause()
+
+        let objectUrl = null;
+        const modal = this.showModal('Воспроизведение', modalContent, {
+            onClose: () => {
+                if (objectUrl) URL.revokeObjectURL(objectUrl);
+            }
         });
-        
-        audio.play().catch(e => {
-            console.error('Playback failed:', e);
+
+        try {
+            const response = await authFetch(url);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+            const blob = await response.blob();
+            objectUrl = URL.createObjectURL(blob);
+
+            const container = modal.querySelector('.audio-player-container');
+            const loading = container.querySelector('.loading');
+            const audioEl = container.querySelector('audio');
+
+            if (loading) loading.remove();
+            audioEl.src = objectUrl;
+            audioEl.style.display = '';
+            await audioEl.play();
+        } catch (error) {
+            console.error('Playback failed:', error);
             showToast('Ошибка воспроизведения', 'error');
-        });
+            modal.remove();
+        }
     },
     
     downloadFile(url, filename) {

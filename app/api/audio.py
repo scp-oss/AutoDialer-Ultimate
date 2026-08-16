@@ -91,9 +91,14 @@ async def download_audio(
     user: TokenData = Depends(get_current_user)
 ):
     """Скачать аудиофайл"""
+    # get_playable_audio_path (not get_audio_file_path) - a .sln source
+    # (Asterisk's raw headerless format) transcoded on the fly into a
+    # real WAV, cached alongside the original. Serving the raw .sln
+    # bytes labeled "audio/wav" used to give browsers a file they
+    # couldn't parse at all.
     audio_service = get_audio_service()
-    path = await audio_service.get_audio_file_path(audio_id)
-    
+    path = await audio_service.get_playable_audio_path(audio_id)
+
     return FileResponse(
         path,
         media_type="audio/wav",
@@ -108,8 +113,8 @@ async def stream_audio(
 ):
     """Потоковое воспроизведение аудио"""
     audio_service = get_audio_service()
-    path = await audio_service.get_audio_file_path(audio_id)
-    
+    path = await audio_service.get_playable_audio_path(audio_id)
+
     return FileResponse(
         path,
         media_type="audio/wav",
