@@ -128,21 +128,26 @@ async def api_root():
     }
 
 
-# =============================================
-# Обработчик 404 для API
-# =============================================
-@api_router.get("/{path:path}", include_in_schema=False)
-async def api_not_found(path: str):
-    """
-    Обработчик несуществующих API эндпоинтов.
-    """
-    from app.models.common import ErrorResponse
-    
-    return ErrorResponse(
-        error="Not Found",
-        detail=f"API endpoint '/api/{path}' not found",
-        code="API_ENDPOINT_NOT_FOUND"
-    )
+# NOTE: there used to be a catch-all `@api_router.get("/{path:path}")`
+# handler here meant to give unmatched /api/* requests a nicer JSON 404
+# body. It caused two confirmed bugs instead of fixing anything:
+#   1. It returned the error body via a plain Pydantic model with no
+#      explicit status_code, so FastAPI sent it back as a bare 200 OK -
+#      every genuinely-missing endpoint "succeeded" with an error payload
+#      disguised as data.
+#   2. Because a `{path:path}` converter matches literally any path, it
+#      gave Starlette's router a FULL match before it ever got a chance
+#      to fall back to its own redirect-slash handling for a real
+#      sub-router route missing only a trailing slash. Confirmed live:
+#      GET /api/audio (no trailing slash, exactly what the frontend
+#      sends) was swallowed by this handler and returned 200 with a
+#      "Not Found" body instead of either 307-redirecting to the real
+#      /api/audio/ or being genuinely absent - the frontend then tried
+#      to treat that error object as a list and crashed with
+#      "X.map is not a function".
+# Removing it restores FastAPI/Starlette's own default behavior: a
+# proper 404 for paths that really don't exist, and a correct redirect
+# for real routes reached without their trailing slash.
 
 
 # =============================================
