@@ -596,13 +596,20 @@ start_service() {
     systemctl enable autodialer
     systemctl start autodialer
     
+    # /api/health always returns HTTP 200 with a body like
+    # {"status": "healthy"|"degraded"|"unhealthy"|"starting", ...} - none
+    # of those values contain the substring "ok", so `grep -q "ok"` never
+    # matched and this loop always ran its full 30 attempts even when the
+    # backend was genuinely healthy the whole time.
+    local health_re='"status"[[:space:]]*:[[:space:]]*"\(healthy\|degraded\)"'
+
     log_info "Ожидание бэкенда..."
     for i in $(seq 1 30); do
-        curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok" && break
+        curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "$health_re" && break
         sleep 2
     done
-    
-    if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok"; then
+
+    if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "$health_re"; then
         log_success "Бэкенд запущен"
     else
         log_warn "Бэкенд не ответил, проверьте логи"
@@ -615,9 +622,9 @@ start_service() {
 # =============================================
 verify_installation() {
     log_step "Проверка установки..."
-    
+
     systemctl is-active --quiet autodialer && log_success "Сервис работает" || log_warn "Сервис не запущен"
-    curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok" && log_success "API отвечает" || log_warn "API не отвечает"
+    curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"\(healthy\|degraded\)"' && log_success "API отвечает" || log_warn "API не отвечает"
 }
 
 # =============================================
