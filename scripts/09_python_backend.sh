@@ -509,7 +509,40 @@ EOSQL
 # =============================================
 create_admin_user() {
     log_step "Создание администратора..."
-    
+
+    # sql/schema.sql seeds a hardcoded default admin user (username admin,
+    # a bcrypt hash of the literal string "admin" baked into the SQL file
+    # itself) completely independently of $ADMIN_PASSWORD. This function
+    # used to only ever WRITE $ADMIN_PASSWORD to a credentials file
+    # without ever setting it as the real database password - so every
+    # fresh install actually logged in with the well-known default
+    # admin/admin, while the install summary showed the operator a random
+    # password that never worked. Hash $ADMIN_PASSWORD with the same
+    # bcrypt scheme app/core/security.py uses and write it into the DB.
+    local venv_python="/opt/autodialer/backend/venv/bin/python3"
+    local admin_hash=""
+
+    if [ -x "$venv_python" ]; then
+        admin_hash="$(ADMIN_PASSWORD="$ADMIN_PASSWORD" "$venv_python" -c '
+import os
+import bcrypt
+pw = os.environ["ADMIN_PASSWORD"].encode("utf-8")
+print(bcrypt.hashpw(pw, bcrypt.gensalt(rounds=12)).decode("utf-8"))
+' 2>/dev/null)"
+    fi
+
+    if [ -n "$admin_hash" ]; then
+        if PGPASSWORD="${DB_PASSWORD}" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 \
+            -c "UPDATE users SET password_hash = '${admin_hash}', force_password_change = TRUE WHERE username = '${ADMIN_USERNAME:-admin}';" \
+            >/dev/null 2>&1; then
+            log_success "Пароль администратора в БД установлен из ADMIN_PASSWORD (.env)"
+        else
+            log_warn "Не удалось обновить пароль администратора в БД - логин admin/admin из schema.sql может ещё действовать"
+        fi
+    else
+        log_warn "Не удалось сгенерировать хеш пароля администратора (venv/bcrypt недоступны) - логин admin/admin из schema.sql может ещё действовать"
+    fi
+
     cat > /opt/autodialer/.admin_credentials << EOF
 ============================================
 AutoDialer Ultimate - Admin Credentials
@@ -522,7 +555,7 @@ IMPORTANT: Change this password after first login!
 ============================================
 EOF
     chmod 600 /opt/autodialer/.admin_credentials
-    
+
     log_success "Учётные данные сохранены в /opt/autodialer/.admin_credentials"
 }
 
