@@ -75,11 +75,19 @@ App.auth = {
         if (!App.state.refreshToken) {
             return;
         }
-        
+
         try {
+            // RefreshTokenRequest on the backend requires refresh_token in
+            // the JSON body (app/models/auth.py) - sending it only as an
+            // Authorization header (as this used to) gets no body at all,
+            // so FastAPI rejects it with 422 every single time. That made
+            // every page reload with a stored refresh token silently wipe
+            // it and dump the user back to the login screen, even right
+            // after a successful login.
             const response = await fetch(`${App.API_BASE}/auth/refresh`, {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${App.state.refreshToken}` }
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ refresh_token: App.state.refreshToken })
             });
             
             if (response.ok) {
@@ -105,11 +113,12 @@ App.auth = {
             this.logout();
             return false;
         }
-        
+
         try {
             const response = await fetch(`${App.API_BASE}/auth/refresh`, {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${App.state.refreshToken}` }
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ refresh_token: App.state.refreshToken })
             });
             
             if (response.ok) {
