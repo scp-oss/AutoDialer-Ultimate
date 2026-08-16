@@ -67,7 +67,14 @@ check_already_installed() {
         log_warn "Python бэкенд уже установлен"
         exit 0
     fi
+    # Bare `test && action` as the last statement of a function aborts the
+    # whole script under `set -e` when the test is false (its exit code
+    # becomes the function's own exit code, and check_already_installed is
+    # called unguarded from main()) - the trailing `true` keeps the no-op
+    # case a success. This is what silently killed a live install:
+    # FORCE_REINSTALL unset -> false -> script exit code 1, zero output.
     [ "${FORCE_REINSTALL:-false}" = "true" ] && rm -f "$INSTALLED_MARKER"
+    true
 }
 
 # =============================================
@@ -151,7 +158,12 @@ generate_secrets() {
         log_info "Сгенерирован пароль для метрик"
     fi
     
+    # Same set -e trap as check_already_installed() above: ADMIN_PASSWORD
+    # and METRICS_PASS are typically already set by install.sh's own
+    # generate_secret() by the time this runs, so secrets_updated stays
+    # false here and this bare `&&` would otherwise kill the script.
     [ "$secrets_updated" = true ] && log_success "Секреты сгенерированы"
+    true
 }
 
 # =============================================
