@@ -465,14 +465,22 @@ setup_swap() {
 # =============================================
 setup_timezone() {
     log_step "Настройка временной зоны..."
-    
-    if [ -n "${TIMEZONE:-}" ]; then
-        if [ -f "/usr/share/zoneinfo/$TIMEZONE" ]; then
-            ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime
-            echo "$TIMEZONE" > /etc/timezone
-            log_success "Временная зона установлена: $TIMEZONE"
+
+    # .env/.env.example document and generate a TZ= key (e.g. TZ=UTC),
+    # but this function used to check a $TIMEZONE variable that's never
+    # set anywhere - so it silently ignored whatever TZ was configured
+    # and always fell back to UTC, even when a user set e.g.
+    # TZ=Europe/Moscow. Accept both names, preferring TZ since that's
+    # the one actually in .env.
+    local tz="${TZ:-${TIMEZONE:-}}"
+
+    if [ -n "$tz" ]; then
+        if [ -f "/usr/share/zoneinfo/$tz" ]; then
+            ln -sf "/usr/share/zoneinfo/$tz" /etc/localtime
+            echo "$tz" > /etc/timezone
+            log_success "Временная зона установлена: $tz"
         else
-            log_warn "Временная зона $TIMEZONE не найдена, используется UTC"
+            log_warn "Временная зона $tz не найдена, используется UTC"
             ln -sf /usr/share/zoneinfo/UTC /etc/localtime
             echo "UTC" > /etc/timezone
         fi
@@ -481,7 +489,7 @@ setup_timezone() {
         ln -sf /usr/share/zoneinfo/UTC /etc/localtime 2>/dev/null || true
         echo "UTC" > /etc/timezone 2>/dev/null || true
     fi
-    
+
     if command -v timedatectl &>/dev/null; then
         timedatectl set-ntp true 2>/dev/null || true
     fi
