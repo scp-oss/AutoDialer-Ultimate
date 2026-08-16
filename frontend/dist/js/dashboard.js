@@ -28,9 +28,25 @@ App.dashboard = {
     // Инициализация
     // =============================================
     async init() {
+        // Re-entering this tab replaces #contentContainer's innerHTML, so
+        // any previous Chart instance is bound to a canvas element that no
+        // longer exists in the DOM - but this.state.chart (on the
+        // App.dashboard singleton) still points at it, so loadChart()'s
+        // `if (!this.state.chart)` lazy-init guard would wrongly think a
+        // chart already exists and skip creating a fresh one. Destroy and
+        // clear it up front so that guard re-initializes correctly.
+        if (this.state.chart) {
+            this.state.chart.destroy();
+            this.state.chart = null;
+        }
+
+        // loadAll() -> loadChart() already lazily calls initChart() itself
+        // when this.state.chart is unset - calling it again here created a
+        // SECOND Chart.js instance on the same canvas on every single
+        // dashboard load, which Chart.js rejects ("Canvas is already in
+        // use. Chart with ID '1' must be destroyed..."), confirmed live.
         await this.loadAll();
         this.setupEventListeners();
-        this.initChart();
     },
 
     setupEventListeners() {
@@ -201,7 +217,9 @@ App.dashboard = {
     // =============================================
     async loadRecentCalls() {
         try {
-            const data = await App.apiGet('/history?limit=10');
+            // /api/history doesn't exist - the endpoint is registered
+            // under the /calls router as /calls/history (app/api/calls.py)
+            const data = await App.apiGet('/calls/history?limit=10');
             this.state.recentCalls = data.items || data.history || data || [];
             this.renderRecentCalls();
         } catch (error) {
@@ -245,7 +263,14 @@ App.dashboard = {
     initChart() {
         const canvas = document.getElementById('statsChart');
         if (!canvas) return;
-        
+
+        // Defensive: destroy any chart still attached before creating a
+        // new one, regardless of call path.
+        if (this.state.chart) {
+            this.state.chart.destroy();
+            this.state.chart = null;
+        }
+
         const ctx = canvas.getContext('2d');
         
         this.state.chart = new Chart(ctx, {
@@ -310,7 +335,15 @@ App.dashboard = {
         }
         
         try {
-            const data = await App.apiGet(`/stats/chart?period=${this.state.chartPeriod}`);
+            // /api/stats/chart doesn't exist anywhere in the backend -
+            // the real endpoint is /stats/calls/daily (app/api/calls.py,
+            // stats_router), takes `days` (int), not `period` (string),
+            // and returns a plain JSON array of DailyCallStatsResponse
+            // (date/total/agreed/noanswer/... - exactly what this
+            // function already reads below).
+            const daysByPeriod = { day: 1, week: 7, month: 30 };
+            const days = daysByPeriod[this.state.chartPeriod] || 7;
+            const data = await App.apiGet(`/stats/calls/daily?days=${days}`);
             const chartData = data.daily || data || [];
             
             if (chartData.length === 0) {
