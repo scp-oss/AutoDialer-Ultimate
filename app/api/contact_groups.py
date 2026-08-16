@@ -12,6 +12,7 @@ from app.api.contacts import (
     list_contact_groups,
     create_contact_group,
     get_contact_group,
+    get_contact_group_members,
     update_contact_group,
     delete_contact_group,
     get_contact_group_tree
@@ -25,5 +26,6 @@ router.get("/")(list_contact_groups)
 router.post("/")(create_contact_group)
 router.get("/tree")(get_contact_group_tree)
 router.get("/{group_id}")(get_contact_group)
+router.get("/{group_id}/contacts")(get_contact_group_members)
 router.patch("/{group_id}")(update_contact_group)
 router.delete("/{group_id}")(delete_contact_group)

@@ -61,6 +61,64 @@ async def create_contact(
     return await contact_service.create_contact(request, user.user_id)
 
 
+@router.post("/import", response_model=ContactBulkImportResponse)
+async def import_contacts(
+    request: ContactBulkImportRequest,
+    user: TokenData = Depends(get_current_user)
+):
+    """Массовый импорт контактов"""
+    contact_service = get_contact_service()
+    return await contact_service.bulk_import_contacts(request, user.user_id)
+
+
+@router.get("/export")
+async def export_contacts(
+    format: str = "csv",
+    user: TokenData = Depends(get_current_user)
+):
+    """Экспорт контактов"""
+    from fastapi.responses import StreamingResponse
+    import io
+
+    contact_service = get_contact_service()
+    content = await contact_service.export_contacts(format=format)
+
+    media_type = "text/csv" if format == "csv" else "application/json"
+    filename = f"contacts_export.{format}"
+
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@router.get("/duplicates")
+async def get_duplicate_contacts(user: TokenData = Depends(get_current_user)):
+    """Найти дубликаты контактов по номеру телефона"""
+    contact_service = get_contact_service()
+    return await contact_service.find_duplicates()
+
+
+@router.post("/merge")
+async def merge_duplicate_contacts(
+    phone: str,
+    user: TokenData = Depends(get_current_user)
+):
+    """Объединить дубликаты контактов с одинаковым номером"""
+    contact_service = get_contact_service()
+    removed = await contact_service.merge_duplicates(phone, user.user_id)
+    return {"status": "merged", "removed": removed}
+
+
+# NOTE: /{contact_id} must be registered after every literal sibling path
+# above (/import, /export, /duplicates, /merge) - FastAPI/Starlette match
+# routes in registration order, and since this path segment has no type
+# converter in the route string (only in the Python annotation), a literal
+# path like "/export" matches "/{contact_id}" first if that's registered
+# first; the int conversion then fails and returns 422 instead of ever
+# reaching the real handler. (Confirmed live: /contacts/export and
+# /contacts/duplicates both 422'd before this reorder.)
 @router.get("/{contact_id}", response_model=ContactDetailResponse)
 async def get_contact(
     contact_id: int,
@@ -94,38 +152,6 @@ async def delete_contact(
     contact_service = get_contact_service()
     await contact_service.delete_contact(contact_id, user.user_id)
     return {"status": "deleted"}
-
-
-@router.post("/import", response_model=ContactBulkImportResponse)
-async def import_contacts(
-    request: ContactBulkImportRequest,
-    user: TokenData = Depends(get_current_user)
-):
-    """Массовый импорт контактов"""
-    contact_service = get_contact_service()
-    return await contact_service.bulk_import_contacts(request, user.user_id)
-
-
-@router.get("/export")
-async def export_contacts(
-    format: str = "csv",
-    user: TokenData = Depends(get_current_user)
-):
-    """Экспорт контактов"""
-    from fastapi.responses import StreamingResponse
-    import io
-    
-    contact_service = get_contact_service()
-    content = await contact_service.export_contacts(format=format)
-    
-    media_type = "text/csv" if format == "csv" else "application/json"
-    filename = f"contacts_export.{format}"
-    
-    return StreamingResponse(
-        io.BytesIO(content),
-        media_type=media_type,
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
 
 
 @router.post("/{contact_id}/blacklist")
@@ -174,6 +200,17 @@ async def create_contact_group(
     return await group_service.create_group(request, user.user_id)
 
 
+@router.get("/groups/tree")
+async def get_contact_group_tree(user: TokenData = Depends(get_current_user)):
+    """Получить дерево групп контактов"""
+    group_service = get_contact_group_service()
+    return await group_service.get_group_tree()
+
+
+# NOTE: /groups/tree must be registered before /groups/{group_id} for the
+# same reason as /{contact_id} above - both are 2-segment paths for the
+# same method, and "tree" would otherwise get parsed as group_id:int and
+# 422 before ever reaching this handler. (Confirmed live.)
 @router.get("/groups/{group_id}", response_model=ContactGroupResponse)
 async def get_contact_group(
     group_id: int,
@@ -185,6 +222,27 @@ async def get_contact_group(
     if not group:
         raise HTTPException(404, "Group not found")
     return group
+
+
+@router.get("/groups/{group_id}/contacts", response_model=ContactListResponse)
+async def get_contact_group_members(
+    group_id: int,
+    pagination: PaginationParams = Depends(),
+    user: TokenData = Depends(get_current_user)
+):
+    """Получить контакты, входящие в группу"""
+    group_service = get_contact_group_service()
+    group = await group_service.get_group(group_id)
+    if not group:
+        raise HTTPException(404, "Group not found")
+
+    contact_service = get_contact_service()
+    filter_params = ContactFilterRequest(group_ids=[group_id])
+    return await contact_service.list_contacts(
+        page=pagination.page,
+        page_size=pagination.page_size,
+        filter_params=filter_params
+    )
 
 
 @router.patch("/groups/{group_id}", response_model=ContactGroupResponse)
@@ -207,10 +265,3 @@ async def delete_contact_group(
     group_service = get_contact_group_service()
     await group_service.delete_group(group_id, user.user_id)
     return {"status": "deleted"}
-
-
-@router.get("/groups/tree")
-async def get_contact_group_tree(user: TokenData = Depends(get_current_user)):
-    """Получить дерево групп контактов"""
-    group_service = get_contact_group_service()
-    return await group_service.get_group_tree()

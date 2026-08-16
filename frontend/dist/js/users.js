@@ -951,6 +951,15 @@ const UsersModule = {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    },
+
+    // Кнопка 👤 в шапке (index.html) вызывает App.users.showProfile() на
+    // любой вкладке, а не только на "Пользователи" - эта функция раньше
+    // не существовала вовсе, поэтому клик не делал ничего. passwordModal
+    // (modals.html) грузится один раз глобально при старте приложения,
+    // поэтому безопасно открывать его независимо от активной вкладки.
+    showProfile() {
+        App.auth.showPasswordChangeModal();
     }
 };
 

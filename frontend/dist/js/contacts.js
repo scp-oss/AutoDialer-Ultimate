@@ -222,7 +222,7 @@ App.contacts = {
         
         try {
             if (id) {
-                await App.apiPut(`/contacts/${id}`, data);
+                await App.apiPatch(`/contacts/${id}`, data);
                 App.showToast('Контакт обновлён', 'success');
             } else {
                 await App.apiPost('/contacts/', data);

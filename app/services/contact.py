@@ -422,6 +422,76 @@ class ContactService:
         
         return True
     
+    async def find_duplicates(self) -> Dict[str, Any]:
+        """Найти группы контактов с одинаковым номером телефона"""
+        async with self.db_pool.acquire() as conn:
+            phone_rows = await conn.fetch("""
+                SELECT phone FROM contacts
+                WHERE deleted_at IS NULL
+                GROUP BY phone
+                HAVING COUNT(*) > 1
+            """)
+
+            duplicates = []
+            for phone_row in phone_rows:
+                contact_rows = await conn.fetch("""
+                    SELECT id, name, status FROM contacts
+                    WHERE phone = $1 AND deleted_at IS NULL
+                    ORDER BY id
+                """, phone_row['phone'])
+
+                duplicates.append({
+                    'phone': phone_row['phone'],
+                    'contacts': [dict(r) for r in contact_rows]
+                })
+
+            return {'duplicates': duplicates}
+
+    async def merge_duplicates(self, phone: str, user_id: Optional[int] = None) -> int:
+        """
+        Объединить дубликаты контактов с одинаковым номером телефона.
+        Оставляет самый старый контакт (наименьший id), остальные помечает
+        удалёнными - как и delete_contact(), мягко (deleted_at), а не DELETE.
+        """
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT id FROM contacts
+                WHERE phone = $1 AND deleted_at IS NULL
+                ORDER BY id
+            """, phone)
+
+            if len(rows) <= 1:
+                raise ContactNotFoundError("Дубликаты для этого номера не найдены")
+
+            keep_id = rows[0]['id']
+            remove_ids = [r['id'] for r in rows[1:]]
+
+            await conn.execute("""
+                UPDATE contacts
+                SET deleted_at = NOW(), status = $1, updated_at = NOW()
+                WHERE id = ANY($2)
+            """, ContactStatus.INACTIVE.value, remove_ids)
+
+            await conn.execute(
+                "DELETE FROM contact_group_members WHERE contact_id = ANY($1)",
+                remove_ids
+            )
+
+            await self.redis.delete(f"contact:phone:{phone}")
+            for cid in remove_ids:
+                await self.redis.delete(f"contact:{cid}")
+
+            await self._log_audit(conn, user_id, 'contacts_merged', 'contact', keep_id, {
+                'phone': phone,
+                'kept': keep_id,
+                'removed': remove_ids
+            })
+
+        contact_deleted_counter.inc(len(remove_ids))
+        logger.info(f"Дубликаты контактов для {phone} объединены: оставлен {keep_id}, удалены {remove_ids}")
+
+        return len(remove_ids)
+
     async def delete_contact_permanent(self, contact_id: int, user_id: Optional[int] = None) -> bool:
         """Полностью удалить контакт (администратор)"""
         async with self.db_pool.acquire() as conn:

@@ -1,3 +1,32 @@
+<!-- Модальное окно смены собственного пароля -->
+<div id="passwordModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Смена пароля</h3>
+            <button class="close-modal" onclick="App.auth.closePasswordModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="passwordError" class="error-message"></div>
+            <div class="form-group">
+                <label>Текущий пароль <span class="required">*</span></label>
+                <input type="password" id="oldPassword" class="form-control" placeholder="Текущий пароль" autocomplete="current-password">
+            </div>
+            <div class="form-group">
+                <label>Новый пароль <span class="required">*</span></label>
+                <input type="password" id="newPassword1" class="form-control" placeholder="Новый пароль" autocomplete="new-password">
+            </div>
+            <div class="form-group">
+                <label>Подтверждение нового пароля <span class="required">*</span></label>
+                <input type="password" id="newPassword2" class="form-control" placeholder="Повторите новый пароль" autocomplete="new-password">
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-outline" onclick="App.auth.closePasswordModal()">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="App.auth.changePassword()">Сменить пароль</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Модальное окно входящего звонка -->
 <div id="incomingCallModal" class="modal incoming-call-modal" style="display: none;">
     <div class="modal-content incoming-call-content">
