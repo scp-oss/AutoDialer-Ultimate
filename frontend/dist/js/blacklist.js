@@ -284,7 +284,7 @@ const BlacklistModule = {
         tbody.innerHTML = '<tr><td colspan="7" class="text-center">Загрузка...</td></tr>';
         
         try {
-            let url = `${API_BASE}/blacklist?page=${page}&page_size=${this.pageSize}`;
+            let url = `${API_BASE}/blacklist/?page=${page}&page_size=${this.pageSize}`;
             if (this.searchQuery) {
                 url += `&search=${encodeURIComponent(this.searchQuery)}`;
             }
@@ -561,7 +561,7 @@ const BlacklistModule = {
                 if (reason) data.reason = reason;
                 if (notes.value) data.notes = notes.value;
                 
-                const response = await authFetch(`${API_BASE}/blacklist`, {
+                const response = await authFetch(`${API_BASE}/blacklist/`, {
                     method: 'POST',
                     body: JSON.stringify(data)
                 });
@@ -771,7 +771,7 @@ const BlacklistModule = {
     
     async exportToCSVClientSide() {
         try {
-            const response = await authFetch(`${API_BASE}/blacklist?page_size=10000`);
+            const response = await authFetch(`${API_BASE}/blacklist/?page_size=10000`);
             if (!response.ok) throw new Error('Failed to load');
             
             const data = await response.json();
@@ -986,3 +986,4 @@ const BlacklistModule = {
 
 // Экспорт глобально
 window.BlacklistModule = BlacklistModule;
+App.blacklist = BlacklistModule;

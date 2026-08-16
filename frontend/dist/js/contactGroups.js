@@ -52,7 +52,7 @@ App.contactGroups = {
         }
         
         try {
-            let url = `/contact-groups?page=${page}&page_size=${this.state.pageSize}`;
+            let url = `/contact-groups/?page=${page}&page_size=${this.state.pageSize}`;
             
             if (this.state.searchQuery) {
                 url += `&search=${encodeURIComponent(this.state.searchQuery)}`;
@@ -229,7 +229,7 @@ App.contactGroups = {
                 await App.apiPut(`/contact-groups/${id}`, data);
                 App.showToast('Группа обновлена', 'success');
             } else {
-                await App.apiPost('/contact-groups', data);
+                await App.apiPost('/contact-groups/', data);
                 App.showToast('Группа создана', 'success');
             }
             
@@ -403,7 +403,7 @@ App.contactGroups = {
         
         // Загружаем контакты без группы
         try {
-            const data = await App.apiGet('/contacts?ungrouped=true&limit=1000');
+            const data = await App.apiGet('/contacts/?ungrouped=true&limit=1000');
             const contacts = data.items || data || [];
             
             const content = document.getElementById('batchAssignContent');

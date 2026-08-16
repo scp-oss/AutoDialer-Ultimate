@@ -339,7 +339,7 @@ const UsersModule = {
             const roleFilter = document.getElementById('userRoleFilter')?.value;
             const statusFilter = document.getElementById('userStatusFilter')?.value;
             
-            let url = `${API_BASE}/users?page=${page}&page_size=${this.pageSize}`;
+            let url = `${API_BASE}/users/?page=${page}&page_size=${this.pageSize}`;
             if (this.searchQuery) url += `&search=${encodeURIComponent(this.searchQuery)}`;
             if (roleFilter) url += `&role=${roleFilter}`;
             if (statusFilter) url += `&status=${statusFilter}`;
@@ -711,7 +711,7 @@ const UsersModule = {
         submitBtn.textContent = 'Сохранение...';
         
         try {
-            const url = id ? `${API_BASE}/users/${id}` : `${API_BASE}/users`;
+            const url = id ? `${API_BASE}/users/${id}` : `${API_BASE}/users/`;
             const method = id ? 'PUT' : 'POST';
             
             const response = await authFetch(url, {
@@ -956,3 +956,4 @@ const UsersModule = {
 
 // Экспорт глобально
 window.UsersModule = UsersModule;
+App.users = UsersModule;

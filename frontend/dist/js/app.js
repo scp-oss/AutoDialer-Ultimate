@@ -531,6 +531,26 @@ const App = {
 window.App = App;
 
 // =============================================
+// Совместимость со старым стилем модулей
+// =============================================
+// apiTokens.js, audio.js, audit.js, blacklist.js, history.js,
+// settings.js, users.js и webhooks.js написаны в более старом стиле и
+// ссылаются на глобальные AppState/authFetch/API_BASE/showToast (см.
+// комментарий "Зависимости: app.js (...)" в начале каждого из них), но
+// ни один из этих четырёх глобальных идентификаторов нигде не был
+// определён - каждый вызов сразу падал с ReferenceError, так что ни
+// одна кнопка на этих вкладках не работала вообще (подтверждено:
+// "не одна кнопка не работает на Аудио"). Остальные модули
+// (campaigns.js, contacts.js, dashboard.js и т.д.) используют
+// App.apiGet/apiPost/... напрямую и в этом не нуждаются - тут только
+// тонкие алиасы поверх уже существующей реализации в App, без
+// дублирования логики.
+window.AppState = App.state;
+window.API_BASE = App.API_BASE;
+window.showToast = (message, type) => App.showToast(message, type);
+window.authFetch = (url, options) => App.apiFetch(url, options);
+
+// =============================================
 // Автоматическая инициализация
 // =============================================
 document.addEventListener('DOMContentLoaded', () => {

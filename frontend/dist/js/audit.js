@@ -251,7 +251,7 @@ const AuditModule = {
         tbody.innerHTML = '<tr><td colspan="7" class="text-center">Загрузка...</td></tr>';
         
         try {
-            let url = `${API_BASE}/audit?page=${page}&page_size=${this.pageSize}`;
+            let url = `${API_BASE}/audit/?page=${page}&page_size=${this.pageSize}`;
             
             if (this.filters.action) url += `&action=${encodeURIComponent(this.filters.action)}`;
             if (this.filters.username) url += `&username=${encodeURIComponent(this.filters.username)}`;
@@ -657,7 +657,7 @@ const AuditModule = {
     
     async exportToCSVClientSide() {
         try {
-            const response = await authFetch(`${API_BASE}/audit?page_size=10000`);
+            const response = await authFetch(`${API_BASE}/audit/?page_size=10000`);
             if (!response.ok) throw new Error('Failed to load');
             
             const data = await response.json();
@@ -790,3 +790,4 @@ const AuditModule = {
 
 // Экспорт глобально
 window.AuditModule = AuditModule;
+App.audit = AuditModule;

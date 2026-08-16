@@ -41,7 +41,7 @@ App.contacts = {
         this.state.currentPage = page;
         
         try {
-            let url = `/contacts?page=${page}&page_size=20`;
+            let url = `/contacts/?page=${page}&page_size=20`;
             
             if (this.state.searchQuery) {
                 url += `&search=${encodeURIComponent(this.state.searchQuery)}`;
@@ -225,7 +225,7 @@ App.contacts = {
                 await App.apiPut(`/contacts/${id}`, data);
                 App.showToast('Контакт обновлён', 'success');
             } else {
-                await App.apiPost('/contacts', data);
+                await App.apiPost('/contacts/', data);
                 App.showToast('Контакт создан', 'success');
             }
             
@@ -342,7 +342,7 @@ App.contacts = {
     // =============================================
     async loadContactGroupsForSelect() {
         try {
-            const data = await App.apiGet('/contact-groups');
+            const data = await App.apiGet('/contact-groups/');
             const groups = data.items || data;
             
             const selects = ['contactGroupSelect', 'contactGroup'];
@@ -397,7 +397,7 @@ App.contacts = {
         }
         
         try {
-            await App.apiPost('/blacklist', { phone, reason });
+            await App.apiPost('/blacklist/', { phone, reason });
             App.showToast(`Номер ${phone} добавлен в чёрный список`, 'success');
             this.loadContacts(this.state.currentPage);
         } catch (error) {

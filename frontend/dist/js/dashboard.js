@@ -97,7 +97,7 @@ App.dashboard = {
     // =============================================
     async loadStats() {
         try {
-            const data = await App.apiGet('/stats');
+            const data = await App.apiGet('/stats/calls');
             
             this.state.stats = {
                 totalCalls: data.total_calls || 0,
@@ -146,7 +146,7 @@ App.dashboard = {
     // =============================================
     async loadActiveCampaigns() {
         try {
-            const data = await App.apiGet('/campaigns?status=running&limit=10');
+            const data = await App.apiGet('/campaigns/?status=running&limit=10');
             this.state.activeCampaigns = data.items || data || [];
             this.renderActiveCampaigns();
         } catch (error) {

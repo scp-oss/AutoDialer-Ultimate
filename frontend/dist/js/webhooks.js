@@ -404,7 +404,7 @@ const WebhooksModule = {
     // Загрузка кампаний для фильтра
     async loadCampaignsForFilter() {
         try {
-            const response = await authFetch(`${API_BASE}/campaigns?limit=100`);
+            const response = await authFetch(`${API_BASE}/campaigns/?limit=100`);
             if (response.ok) {
                 const campaigns = await response.json();
                 const select = document.getElementById('webhookCampaignFilter');
@@ -1112,3 +1112,4 @@ const WebhooksModule = {
 
 // Экспорт глобально
 window.WebhooksModule = WebhooksModule;
+App.webhooks = WebhooksModule;

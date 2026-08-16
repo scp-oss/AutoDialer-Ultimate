@@ -290,7 +290,7 @@ const AudioModule = {
         tbody.innerHTML = '<tr><td colspan="8" class="text-center">Загрузка...</td></tr>';
         
         try {
-            let url = `${API_BASE}/audio?page=${this.currentPage}&page_size=${this.pageSize}`;
+            let url = `${API_BASE}/audio/?page=${this.currentPage}&page_size=${this.pageSize}`;
             if (this.searchQuery) {
                 url += `&search=${encodeURIComponent(this.searchQuery)}`;
             }
@@ -384,7 +384,7 @@ const AudioModule = {
         if (!container) return;
         
         try {
-            const response = await authFetch(`${API_BASE}/audio?source=tts&limit=5`);
+            const response = await authFetch(`${API_BASE}/audio/?source=tts&limit=5`);
             if (response.ok) {
                 const data = await response.json();
                 const items = data.items || data || [];
@@ -421,7 +421,7 @@ const AudioModule = {
     
     async loadCampaignsForSelect() {
         try {
-            const response = await authFetch(`${API_BASE}/campaigns`);
+            const response = await authFetch(`${API_BASE}/campaigns/`);
             if (response.ok) {
                 const campaigns = await response.json();
                 const options = '<option value="">Нет</option>' + 
@@ -1065,3 +1065,4 @@ const AudioModule = {
 
 // Экспорт глобально
 window.AudioModule = AudioModule;
+App.audio = AudioModule;

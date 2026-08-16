@@ -67,7 +67,7 @@ App.campaigns = {
         }
         
         try {
-            let url = `/campaigns?page=${page}&page_size=${this.state.pageSize}`;
+            let url = `/campaigns/?page=${page}&page_size=${this.state.pageSize}`;
             
             if (this.state.filterStatus) {
                 url += `&status=${this.state.filterStatus}`;
@@ -424,7 +424,7 @@ App.campaigns = {
                 await App.apiPut(`/campaigns/${id}`, data);
                 App.showToast('Кампания обновлена', 'success');
             } else {
-                await App.apiPost('/campaigns', data);
+                await App.apiPost('/campaigns/', data);
                 App.showToast('Кампания создана', 'success');
             }
             
@@ -666,8 +666,8 @@ App.campaigns = {
             // Both endpoints return a paginated envelope
             // ({items, total, page, ...} - ContactGroupListResponse /
             // ContactListResponse on the backend), not a bare array.
-            const groupsData = await App.apiGet('/contact-groups');
-            const contactsData = await App.apiGet('/contacts?limit=10000');
+            const groupsData = await App.apiGet('/contact-groups/');
+            const contactsData = await App.apiGet('/contacts/?limit=10000');
             const groups = groupsData.items || groupsData || [];
             const contacts = contactsData.items || contactsData || [];
 
@@ -750,7 +750,7 @@ App.campaigns = {
     // =============================================
     async loadAudioForSelect() {
         try {
-            const data = await App.apiGet('/audio?limit=100');
+            const data = await App.apiGet('/audio/?limit=100');
             this.state.audioFiles = data.items || data || [];
             
             const select = document.getElementById('campaignAudioSelect');

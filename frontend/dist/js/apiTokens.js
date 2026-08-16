@@ -772,3 +772,4 @@ const ApiTokensModule = {
 
 // Экспорт глобально
 window.ApiTokensModule = ApiTokensModule;
+App.apiTokens = ApiTokensModule;

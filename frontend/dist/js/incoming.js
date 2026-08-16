@@ -116,7 +116,7 @@
         limit: perPage
       });
       
-      const response = await App.apiGet(`/incoming-calls?${params.toString()}`);
+      const response = await App.apiGet(`/incoming-calls/?${params.toString()}`);
       
       incomingCalls = response.items || response.calls || [];
       totalRecords = response.total || incomingCalls.length;

@@ -556,3 +556,4 @@ const HistoryModule = {
 
 // Экспорт глобально
 window.HistoryModule = HistoryModule;
+App.history = HistoryModule;

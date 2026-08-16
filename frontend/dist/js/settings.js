@@ -125,7 +125,7 @@ const SettingsModule = {
     // Загрузка настроек
     async loadSettings() {
         try {
-            const response = await authFetch(`${API_BASE}/settings`);
+            const response = await authFetch(`${API_BASE}/settings/`);
             if (response.ok) {
                 const data = await response.json();
                 this.settings = data;
@@ -732,3 +732,4 @@ const SettingsModule = {
 
 // Экспорт глобально
 window.SettingsModule = SettingsModule;
+App.settings = SettingsModule;
