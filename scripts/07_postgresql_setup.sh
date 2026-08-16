@@ -266,6 +266,21 @@ EOF
     else
         log_warn "Некоторые элементы схемы уже существуют"
     fi
+
+    # Схема выше применяется от имени суперпользователя postgres, поэтому
+    # все таблицы/последовательности создаются с владельцем postgres, а не
+    # $DB_USER (autodialer), под которым реально подключается бэкенд. Без
+    # явного GRANT бэкенд получает "permission denied" на каждый запрос -
+    # схема физически применена, но приложением не используема.
+    log_info "Выдача прав пользователю $DB_USER на объекты схемы..."
+    sudo -u postgres psql -d "$DB_NAME" -c "
+        GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $DB_USER;
+        GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;
+        GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO $DB_USER;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $DB_USER;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $DB_USER;
+    " &>/dev/null
+    log_success "Права на таблицы выданы $DB_USER"
 }
 
 # =============================================
