@@ -191,6 +191,13 @@ print_success "jail.local created"
 print_step "Creating Asterisk filter..."
 
 cat > /etc/fail2ban/filter.d/asterisk.conf << 'EOF'
+# __prefix_line used below is defined in common.conf's [Definition], not
+# ours - without pulling it in via [INCLUDES], fail2ban-server refuses to
+# start at all ("Bad value substitution ... '__prefix_line' is not a
+# valid option name"), taking down every other jail with it.
+[INCLUDES]
+before = common.conf
+
 [Definition]
 failregex = ^%(__prefix_line)s.*Registration from '[^']*' failed for '<HOST>(:\d+)?' - Wrong password$
             ^%(__prefix_line)s.*Registration from '[^']*' failed for '<HOST>(:\d+)?' - No matching peer found$
@@ -212,6 +219,9 @@ print_success "asterisk.conf filter created"
 print_step "Creating Asterisk AMI filter..."
 
 cat > /etc/fail2ban/filter.d/asterisk-ami.conf << 'EOF'
+[INCLUDES]
+before = common.conf
+
 [Definition]
 failregex = ^%(__prefix_line)s.*AMI.*Failed to authenticate user .* from <HOST>$
             ^%(__prefix_line)s.*Manager.*Failed to authenticate user .* from <HOST>$
@@ -256,6 +266,9 @@ print_success "autodialer-auth.conf filter created"
 print_step "Creating PostgreSQL filter..."
 
 cat > /etc/fail2ban/filter.d/postgresql.conf << 'EOF'
+[INCLUDES]
+before = common.conf
+
 [Definition]
 failregex = ^%(__prefix_line)s.*FATAL:.*password authentication failed for user.*HOST:\s*<HOST>.*$
             ^%(__prefix_line)s.*FATAL:.*no pg_hba.conf entry for host.*<HOST>.*$

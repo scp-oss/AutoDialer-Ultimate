@@ -16,10 +16,10 @@
 
 import os
 import json
-from typing import List, Optional, Dict, Any, Union, Literal
+from typing import List, Optional, Dict, Any, Union, Literal, Annotated
 from pathlib import Path
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict, NoDecode
 from datetime import timedelta
 
 
@@ -265,13 +265,13 @@ class Settings(BaseSettings):
     PIPER_MODEL_DIR: Path = Field(
         default_factory=lambda: Path("/var/lib/asterisk/sounds/tts/models")
     )
-    PIPER_VOICES: List[str] = Field(["denis", "irina"], description="Доступные голоса")
+    PIPER_VOICES: Annotated[List[str], NoDecode] = Field(["denis", "irina"], description="Доступные голоса")
     PIPER_DEFAULT_VOICE: str = Field("denis", description="Голос по умолчанию")
     PIPER_SPEED: float = Field(1.0, ge=0.5, le=2.0, description="Скорость речи")
     
     # Аудио файлы
     AUDIO_MAX_SIZE: int = Field(10 * 1024 * 1024, description="Макс. размер файла (байт)")
-    AUDIO_ALLOWED_FORMATS: List[str] = Field([".wav", ".mp3"], description="Разрешённые форматы")
+    AUDIO_ALLOWED_FORMATS: Annotated[List[str], NoDecode] = Field([".wav", ".mp3"], description="Разрешённые форматы")
     AUDIO_RETENTION_DAYS: int = Field(30, ge=7, le=365, description="Дней хранения аудио")
     AUDIO_CONVERT_FORMAT: str = Field("sln", description="Формат для конвертации")
     AUDIO_SAMPLE_RATE: int = Field(8000, description="Частота дискретизации")
@@ -310,7 +310,7 @@ class Settings(BaseSettings):
     RATE_LIMIT_API: int = Field(100, description="Лимит для /api/* в минуту")
     
     # CORS
-    CORS_ORIGINS: List[str] = Field(
+    CORS_ORIGINS: Annotated[List[str], NoDecode] = Field(
         default_factory=lambda: ["*"],
         description="Разрешённые origins для CORS"
     )
@@ -325,7 +325,7 @@ class Settings(BaseSettings):
     )
     
     # Trusted proxies
-    TRUSTED_PROXIES: List[str] = Field(
+    TRUSTED_PROXIES: Annotated[List[str], NoDecode] = Field(
         default_factory=lambda: ["127.0.0.1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
         description="Доверенные прокси"
     )
