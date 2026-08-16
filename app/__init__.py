@@ -519,10 +519,6 @@ async def shutdown_handler(sig=None):
         except Exception as e:
             logger.warning(f"Ошибка остановки SystemService: {e}")
 
-        # 2. Отключаем систему
-        if _app_state.get('redis_client'):
-            await _app_state['redis_client'].set(REDIS_KEYS.SYSTEM_ENABLED, "false")
-        
         # 3. Останавливаем все сервисы
         try:
             await shutdown_services()
@@ -608,7 +604,6 @@ def get_uptime() -> Optional[float]:
 # Импорт для корректной работы
 # =============================================
 from datetime import datetime
-from app.core.redis import REDIS_KEYS
 
 
 # =============================================

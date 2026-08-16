@@ -11,12 +11,23 @@ App.auth = {
         const username = document.getElementById('loginUsername')?.value;
         const password = document.getElementById('loginPassword')?.value;
         const errorDiv = document.getElementById('loginError');
-        
+        const submitBtn = document.querySelector('#loginForm button[type="submit"]');
+
+        if (errorDiv) errorDiv.textContent = '';
+
         if (!username || !password) {
             if (errorDiv) errorDiv.textContent = 'Введите логин и пароль';
             return;
         }
-        
+
+        // Без видимого состояния загрузки клик по "Войти" не даёт никакой
+        // обратной связи, пока идут /auth/login + /auth/me + загрузка
+        // вкладки дашборда - выглядит так, будто кнопка не сработала.
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Вход...';
+        }
+
         try {
             const response = await fetch(`${App.API_BASE}/auth/login`, {
                 method: 'POST',
@@ -44,27 +55,41 @@ App.auth = {
             if (!response.ok) {
                 throw new Error(data.detail || 'Ошибка входа');
             }
-            
+
+            // Учётка с включённой 2FA возвращает 200 OK с пустыми токенами,
+            // ожидая TOTP-код вторым запросом - без этой проверки пустой
+            // access_token тихо сохранялся и все последующие запросы (в
+            // т.ч. /auth/me) молча падали с 401 без видимой причины.
+            if (!data.access_token) {
+                throw new Error('Требуется код двухфакторной аутентификации');
+            }
+
             // Сохраняем токены
             App.state.accessToken = data.access_token;
             App.state.refreshToken = data.refresh_token;
             App.state.userRole = data.role;
-            
+
             localStorage.setItem('refresh_token', data.refresh_token);
-            
+
             // Загружаем информацию о пользователе
             await this.loadCurrentUser();
-            
+
             // Проверяем необходимость смены пароля
             if (data.force_password_change) {
                 this.showPasswordChangeModal();
             } else {
                 App.showApp();
             }
-            
+
         } catch (error) {
             console.error('Login error:', error);
             if (errorDiv) errorDiv.textContent = error.message;
+            App.showToast(error.message || 'Ошибка входа', 'error');
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Войти';
+            }
         }
     },
 
