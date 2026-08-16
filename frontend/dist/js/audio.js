@@ -468,7 +468,7 @@ const AudioModule = {
             if (campaignId) data.campaign_id = campaignId;
             if (description) data.description = description;
             
-            const response = await authFetch(`${API_BASE}/audio/generate`, {
+            const response = await authFetch(`${API_BASE}/audio/tts/generate`, {
                 method: 'POST',
                 body: JSON.stringify(data)
             });
