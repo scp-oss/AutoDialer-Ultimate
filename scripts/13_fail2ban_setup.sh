@@ -39,6 +39,26 @@ else
 fi
 
 # =============================================
+# Ensure the sshd jail's log file actually exists
+# =============================================
+# fail2ban-server refuses to start AT ALL if even one enabled jail's
+# logpath is missing ("Have not found any log file for sshd jail" ->
+# "Async configuration of server failed") - confirmed live, and it took
+# down every other jail (asterisk, redis, autodialer-api, ...) with it,
+# not just sshd. /var/log/auth.log only exists if rsyslog is installed
+# and running; some minimal Debian images don't have it by default.
+print_step "Проверка наличия /var/log/auth.log для sshd jail..."
+if ! command -v rsyslogd &> /dev/null; then
+    print_info "rsyslog не установлен, устанавливаю..."
+    apt-get install -y rsyslog
+fi
+systemctl enable rsyslog --now 2>/dev/null || true
+touch /var/log/auth.log
+chmod 640 /var/log/auth.log
+chown root:adm /var/log/auth.log 2>/dev/null || true
+print_success "/var/log/auth.log готов"
+
+# =============================================
 # Create Jail Local Configuration
 # =============================================
 print_step "Creating jail.local configuration..."
