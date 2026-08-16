@@ -328,11 +328,13 @@ class IncomingCallService:
         """Получить входящий звонок по ID"""
         async with self.db_pool.acquire() as conn:
             row = await conn.fetchrow("""
-                SELECT 
+                SELECT
                     ic.*,
-                    c.name as contact_name
+                    c.name as contact_name,
+                    COALESCE(u.full_name, u.username) as listened_by_name
                 FROM incoming_calls ic
                 LEFT JOIN contacts c ON ic.contact_id = c.id
+                LEFT JOIN users u ON ic.listened_by = u.id
                 WHERE ic.id = $1
             """, call_id)
             
@@ -376,7 +378,7 @@ class IncomingCallService:
                 listened=row['listened'],
                 listened_at=row['listened_at'],
                 listened_by=row['listened_by'],
-                listened_by_name=None,  # TODO: join users
+                listened_by_name=row['listened_by_name'],
                 status=IncomingCallStatus(row['status']) if row['status'] else IncomingCallStatus.NEW,
                 notes=row['notes'],
                 tags=tags,
@@ -514,11 +516,13 @@ class IncomingCallService:
             
             # Получаем данные
             query = f"""
-                SELECT 
+                SELECT
                     ic.*,
-                    c.name as contact_name
+                    c.name as contact_name,
+                    COALESCE(u.full_name, u.username) as listened_by_name
                 FROM incoming_calls ic
                 LEFT JOIN contacts c ON ic.contact_id = c.id
+                LEFT JOIN users u ON ic.listened_by = u.id
                 {where_clause}
                 ORDER BY ic.{sort_by} {sort_order}
                 LIMIT ${param_idx} OFFSET ${param_idx + 1}
@@ -555,7 +559,7 @@ class IncomingCallService:
                     listened=row['listened'],
                     listened_at=row['listened_at'],
                     listened_by=row['listened_by'],
-                    listened_by_name=None,
+                    listened_by_name=row['listened_by_name'],
                     status=IncomingCallStatus(row['status']) if row['status'] else IncomingCallStatus.NEW,
                     notes=row['notes'],
                     tags=tags,
