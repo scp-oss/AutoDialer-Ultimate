@@ -402,8 +402,12 @@ print_info "Active Jails:"
 fail2ban-client status | grep "Jail list" | cut -d':' -f2 | tr ',' '\n' | while read jail; do
     jail=$(echo "$jail" | xargs)
     if [ -n "$jail" ]; then
-        status=$(fail2ban-client status "$jail" 2>/dev/null | grep -c "Currently banned" || echo "0")
-        echo "  ✓ $jail (banned: $status)"
+        # `grep -c` counts MATCHING LINES, and "Currently banned:" is
+        # always exactly one line in the output regardless of its value -
+        # this always printed "banned: 1" even with zero bans. Extract the
+        # actual count after the colon instead.
+        status=$(fail2ban-client status "$jail" 2>/dev/null | grep "Currently banned" | awk -F':' '{print $2}' | xargs)
+        echo "  ✓ $jail (banned: ${status:-0})"
     fi
 done
 

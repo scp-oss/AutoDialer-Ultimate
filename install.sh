@@ -545,18 +545,23 @@ copy_project_files() {
     mkdir -p /opt/autodialer
     mkdir -p /opt/autodialer/{logs,data,uploads,recordings,backups}
     mkdir -p /opt/autodialer/logs/{backend,nginx,asterisk}
-    mkdir -p /var/www/autodialer
+    mkdir -p /opt/autodialer/frontend/dist
     mkdir -p /etc/asterisk
-    
+
     # Бэкенд
     [ -d "$SCRIPT_DIR/backend" ] && cp -r "$SCRIPT_DIR/backend" /opt/autodialer/ && log_success "  ✓ backend/"
     [ -d "$SCRIPT_DIR/app" ] && cp -r "$SCRIPT_DIR/app" /opt/autodialer/ && log_success "  ✓ app/"
     [ -d "$SCRIPT_DIR/utils" ] && cp -r "$SCRIPT_DIR/utils" /opt/autodialer/ && log_success "  ✓ utils/"
     [ -d "$SCRIPT_DIR/migrations" ] && cp -r "$SCRIPT_DIR/migrations" /opt/autodialer/ && log_success "  ✓ migrations/"
-    
+
     # Фронтенд
+    # scripts/10_nginx_setup.sh's generated `location /` block serves from
+    # `root /opt/autodialer/frontend/dist` - this used to be copied to
+    # /var/www/autodialer instead, a path nothing ever pointed Nginx at,
+    # so index.html never existed where Nginx looked and every request to
+    # "/" 404'd even though Nginx itself was up and healthy.
     if [ -d "$SCRIPT_DIR/frontend/dist" ]; then
-        cp -r "$SCRIPT_DIR/frontend/dist/"* /var/www/autodialer/
+        cp -r "$SCRIPT_DIR/frontend/dist/"* /opt/autodialer/frontend/dist/
         log_success "  ✓ frontend/dist/"
     fi
     
@@ -593,7 +598,7 @@ copy_project_files() {
     
     # Права
     chown -R autodialer:autodialer /opt/autodialer
-    chown -R www-data:www-data /var/www/autodialer
+    chown -R www-data:www-data /opt/autodialer/frontend/dist
     chown -R asterisk:asterisk /etc/asterisk 2>/dev/null || true
     
     log_success "Копирование файлов завершено"
@@ -733,7 +738,7 @@ wait_for_all_services() {
     
     log_info "Ожидание бэкенда..."
     for i in $(seq 1 30); do
-        if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok"; then
+        if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"\(healthy\|degraded\)"'; then
             log_success "Бэкенд готов"
             break
         fi
@@ -771,7 +776,7 @@ verify_installation() {
     done
     
     for i in $(seq 1 15); do
-        if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok"; then
+        if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"\(healthy\|degraded\)"'; then
             log_success "API отвечает"
             break
         fi
@@ -944,7 +949,7 @@ post_install_diagnostics() {
     log_success "Диагностика сохранена: $report_file"
     
     echo ""
-    if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q "ok"; then
+    if curl -s http://127.0.0.1:${PORT:-8000}/api/health 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"\(healthy\|degraded\)"'; then
         log_success "✅ API работает корректно"
     else
         log_error "❌ API НЕ РАБОТАЕТ"

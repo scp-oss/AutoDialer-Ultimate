@@ -399,7 +399,12 @@ verify_all_services() {
                     details="$(asterisk -rx "core show version" 2>/dev/null | head -1 | cut -d' ' -f1-2 || echo "no response")"
                     ;;
                 autodialer)
-                    details="$(curl -s http://127.0.0.1:${BACKEND_PORT}/api/health 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "no response")"
+                    # /api/health's JSON has a top-level "status" AND one
+                    # per component (database/redis/ami/transcription) -
+                    # grep -o returns every match, which without `head -1`
+                    # turned this single-line details field into a multi-
+                    # line blob that broke the status table's formatting.
+                    details="$(curl -s http://127.0.0.1:${BACKEND_PORT}/api/health 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "no response")"
                     ;;
                 nginx)
                     details="HTTP $(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1/ 2>/dev/null || echo "000")"
