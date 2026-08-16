@@ -102,7 +102,15 @@ type = auth
 auth_type = userpass
 username = ${FREEPBX_EXTENSION}
 password = ${EXTENSION_PASSWORD}
-realm = ${FREEPBX_IP}
+; FreePBX's default PJSIP realm is the literal string "asterisk", not its
+; IP - confirmed via a live SIP trace: its 401 challenge sent
+; `WWW-Authenticate: Digest realm="asterisk"`. res_pjsip_outbound_auth
+; only responds to a challenge if it has an auth object whose realm
+; matches the challenge's realm, so realm=${FREEPBX_IP} here meant no
+; auth object ever matched, and every REGISTER attempt died with "No
+; auth objects matching realm/algorithm(s) 'asterisk/md5' from challenge
+; found" - Asterisk never got as far as sending credentials back.
+realm = asterisk
 
 ; =============================================
 ; Address of Record (AOR)

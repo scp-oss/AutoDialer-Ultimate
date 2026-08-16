@@ -303,17 +303,22 @@ add_extra_protection() {
         cp /etc/ufw/before.rules /etc/ufw/before.rules.backup
     fi
     
-    # Добавляем защиту в before.rules (перед COMMIT)
+    # Вставляем наши правила прямо перед COMMIT существующей таблицы
+    # *filter, вместо того чтобы открывать свою собственную (что и
+    # делалось раньше). Прежний вариант использовал переменную $found в
+    # ДВУХ отдельных вызовах awk - но каждый вызов awk - это новый
+    # процесс с чистыми переменными, так что второй вызов ("скопировать
+    # всё после *filter") никогда ничего не печатал: $found там всегда
+    # был пуст. Результат - собранный before.rules открывал *filter, но
+    # оригинальный COMMIT так и не копировался, отсюда живая ошибка
+    # "iptables-restore: COMMIT expected" и "Problem running
+    # '/etc/ufw/before.rules'". Однопроходный awk ниже вставляет блок
+    # прямо перед первым COMMIT и не трогает остальное содержимое файла.
     local before_rules="/etc/ufw/before.rules"
     local temp_file=$(mktemp)
-    
-    # Копируем всё до *filter
-    awk '!found && /^\*filter/ {found=1} !found {print}' "$before_rules" > "$temp_file"
-    
-    # Добавляем *filter и наши правила
-    cat >> "$temp_file" << 'EOF'
-*filter
+    local extra_rules_file=$(mktemp)
 
+    cat > "$extra_rules_file" << 'EOF'
 # =============================================
 # AutoDialer Ultimate - Extra Protection
 # =============================================
@@ -345,12 +350,18 @@ add_extra_protection() {
 # Ограничение подключений к HTTP/HTTPS
 -A ufw-before-input -p tcp --dport 80 -m connlimit --connlimit-above 100 --connlimit-mask 32 -j DROP
 -A ufw-before-input -p tcp --dport 443 -m connlimit --connlimit-above 100 --connlimit-mask 32 -j DROP
-
 EOF
-    
-    # Копируем остальное после *filter (пропуская уже добавленное)
-    awk 'found {print}' "$before_rules" >> "$temp_file"
-    
+
+    awk -v extra_file="$extra_rules_file" '
+        /^COMMIT$/ && !done {
+            while ((getline line < extra_file) > 0) print line
+            done = 1
+        }
+        { print }
+    ' "$before_rules" > "$temp_file"
+
+    rm -f "$extra_rules_file"
+
     # Заменяем оригинал
     mv "$temp_file" "$before_rules"
     chmod 640 "$before_rules"
