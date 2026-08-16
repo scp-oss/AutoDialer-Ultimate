@@ -85,10 +85,21 @@ install_piper() {
         fi
     done
     
-    # Распаковка
-    tar -xzf piper.tar.gz -C /usr/local/bin/
-    chmod +x /usr/local/bin/piper
-    
+    # Распаковка. Архив содержит не один бинарник, а директорию piper/ с
+    # самим исполняемым файлом ВМЕСТЕ с библиотеками, от которых он
+    # зависит через relative rpath ($ORIGIN) - libpiper_phonemize.so*,
+    # libespeak-ng.so*, libtashkeel_model.ort, espeak-ng-data/ (проверено
+    # напрямую: `tar -tzf piper_linux_x86_64.tar.gz` выводит именно такую
+    # структуру). Прежняя версия распаковывала архив прямо в
+    # /usr/local/bin/, из-за чего там создавалась ДИРЕКТОРИЯ piper/, а не
+    # исполняемый файл - `command -v piper` её не находил, и установка
+    # всегда проваливалась именно на этом шаге, даже не доходя до
+    # скачивания голосовых моделей ниже.
+    rm -rf /opt/piper
+    mkdir -p /opt/piper
+    tar -xzf piper.tar.gz -C /opt/piper --strip-components=1
+    ln -sf /opt/piper/piper /usr/local/bin/piper
+
     # Очистка
     cd /
     rm -rf "$TMP_DIR"
