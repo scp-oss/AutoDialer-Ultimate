@@ -23,9 +23,24 @@ App.auth = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password })
             });
-            
+
+            // Nginx's rate limiter (or any other infra in front of the
+            // API) can reject the request before it ever reaches the
+            // backend, returning an HTML error page instead of JSON -
+            // response.json() then throws a confusing "Unexpected token
+            // '<'" SyntaxError that masked the real cause (429 Too Many
+            // Requests). Detect that case and show a clear message.
+            if (response.status === 429) {
+                throw new Error('Слишком много попыток входа. Подождите немного и попробуйте снова.');
+            }
+
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                throw new Error(`Сервер вернул неожиданный ответ (HTTP ${response.status})`);
+            }
+
             const data = await response.json();
-            
+
             if (!response.ok) {
                 throw new Error(data.detail || 'Ошибка входа');
             }
