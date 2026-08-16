@@ -281,11 +281,13 @@ add_ufw_rules() {
         fi
     fi
     
-    # =============================================
-    # ICMP (ping) - для диагностики
-    # =============================================
-    ufw allow proto icmp from any to any comment 'ICMP (ping)'
-    
+    # ICMP (ping) - UFW does not support icmp via `allow proto` at all
+    # (confirmed live: "ERROR: Unsupported protocol 'icmp'" even with a
+    # proper from/to clause) - ICMP isn't port-based, so ufw's high-level
+    # rule syntax doesn't cover it. It's handled separately in
+    # /etc/ufw/before.rules, which allows ping by default out of the box -
+    # nothing to add here.
+
     log_success "Все правила добавлены"
 }
 
