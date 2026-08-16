@@ -116,7 +116,7 @@
         limit: perPage
       });
       
-      const response = await App.apiGet(`/api/incoming-calls?${params.toString()}`);
+      const response = await App.apiGet(`/incoming-calls?${params.toString()}`);
       
       incomingCalls = response.items || response.calls || [];
       totalRecords = response.total || incomingCalls.length;
@@ -422,7 +422,7 @@
   // Сохранение заметок
   const saveNotes = async (id, notes) => {
     try {
-      await App.apiPut(`/api/incoming-calls/${id}/notes`, { notes });
+      await App.apiPut(`/incoming-calls/${id}/notes`, { notes });
       App.showNotification('Заметка сохранена', 'success');
       
       // Обновить локальные данные
@@ -453,7 +453,7 @@
     if (!confirm('Удалить запись о звонке? Файл также будет удален.')) return;
     
     try {
-      await App.apiDelete(`/api/incoming-calls/${id}`);
+      await App.apiDelete(`/incoming-calls/${id}`);
       App.showNotification('Запись удалена', 'success');
       
       // Удалить из локального массива

@@ -663,9 +663,14 @@ App.campaigns = {
         this.closeCampaignDetailModal();
         
         try {
-            const groups = await App.apiGet('/contact-groups');
-            const contacts = await App.apiGet('/contacts?limit=10000');
-            
+            // Both endpoints return a paginated envelope
+            // ({items, total, page, ...} - ContactGroupListResponse /
+            // ContactListResponse on the backend), not a bare array.
+            const groupsData = await App.apiGet('/contact-groups');
+            const contactsData = await App.apiGet('/contacts?limit=10000');
+            const groups = groupsData.items || groupsData || [];
+            const contacts = contactsData.items || contactsData || [];
+
             const modal = document.getElementById('assignContactsModal');
             const content = document.getElementById('assignContactsContent');
             
