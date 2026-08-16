@@ -297,7 +297,14 @@ set_permissions() {
     log_step "Установка прав доступа..."
     
     chown -R asterisk:asterisk "$TTS_DIR" 2>/dev/null || true
-    chmod -R 755 "$TTS_DIR"
+    # 775, not 755: CampaignService._link_campaign_audio (app/services/
+    # campaign.py) symlinks the campaign's chosen audio file into this
+    # directory on every campaign start, running as the `autodialer`
+    # user (systemd User=autodialer) - now a member of the `asterisk`
+    # group (see install.sh's create_user()). Creating/replacing a
+    # symlink needs WRITE on the *directory*, which a group-read-only
+    # 755 never grants regardless of group membership.
+    chmod -R 775 "$TTS_DIR"
     find "$TTS_DIR" -name "*.sln" -exec chmod 644 {} \; 2>/dev/null || true
     
     log_success "Права установлены"

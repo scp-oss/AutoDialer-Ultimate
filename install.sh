@@ -531,6 +531,14 @@ create_user() {
     
     /usr/sbin/usermod -aG audio autodialer 2>/dev/null || true
     /usr/sbin/usermod -aG www-data autodialer 2>/dev/null || true
+    # /var/lib/asterisk/sounds/tts is chown asterisk:asterisk, mode 755
+    # (06_tts_install.sh's set_permissions) - without group membership
+    # the autodialer service (runs as User=autodialer, see
+    # 09_python_backend.sh's systemd unit) can read but not write there,
+    # so campaign.py's per-campaign audio symlinking
+    # (CampaignService._link_campaign_audio) would fail with
+    # PermissionError on every campaign start.
+    /usr/sbin/usermod -aG asterisk autodialer 2>/dev/null || true
     
     mkdir -p /opt/autodialer/{logs,backups,uploads,recordings}
     chown -R autodialer:autodialer /opt/autodialer

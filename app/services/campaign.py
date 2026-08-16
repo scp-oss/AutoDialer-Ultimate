@@ -15,9 +15,11 @@ import asyncio
 import json
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
 
+from app.core.config import settings
 from app.core.logger import logger
 from app.core.database import ConnectionPool
 from app.core.redis import RedisClient, REDIS_KEYS
@@ -551,6 +553,62 @@ class CampaignService:
             )
     
     # =============================================
+    # Связь выбранного аудио с файлом, который реально ищет диалплан
+    # =============================================
+    async def _link_campaign_audio(
+        self,
+        conn,
+        campaign_id: int,
+        audio_id: Optional[int]
+    ) -> None:
+        """
+        [sub-media] в asterisk/extensions.conf проверяет наличие файла
+        tts/main_<campaign_id>.sln и, если его нет, проигрывает
+        tts/default.sln:
+
+            Set(AUDIO_FILE=tts/main_${CAMPAIGN_ID})
+            GotoIf($[${STAT(e,${AUDIO_FILE})} = 1]?play)
+            Set(AUDIO_FILE=tts/default)
+
+        TTS-генерация (AudioService._generate_audio_sync) сохраняет файлы
+        под случайным именем tts_<timestamp>_<uuid>.sln, никак не
+        привязанным к campaign_id - ничего в приложении раньше не
+        создавало файл с именем main_<campaign_id>.sln, поэтому какое бы
+        аудио ни было выбрано в форме кампании (dialer_settings.audio_id),
+        при звонках всегда проигрывался только общий tts/default.sln.
+        Линкуем выбранный файл под ожидаемым диалпланом именем при каждом
+        запуске кампании, и убираем линк, если аудио не выбрано (или файл
+        пропал) - иначе повторный запуск той же кампании с другим/снятым
+        аудио тихо продолжал бы играть сообщение от предыдущего запуска.
+        """
+        target = settings.TTS_DIR / f"main_{campaign_id}.sln"
+        source: Optional[Path] = None
+
+        if audio_id:
+            row = await conn.fetchrow(
+                "SELECT file_path FROM audio_files WHERE id = $1",
+                audio_id
+            )
+            if row and row['file_path']:
+                candidate = Path(row['file_path'])
+                if candidate.exists():
+                    source = candidate
+                else:
+                    logger.warning(
+                        f"Кампания {campaign_id}: аудиофайл audio_id={audio_id} "
+                        f"не найден на диске ({candidate}), использую tts/default"
+                    )
+
+        try:
+            if target.is_symlink() or target.exists():
+                target.unlink()
+            if source:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.symlink_to(source)
+        except OSError as e:
+            logger.error(f"Кампания {campaign_id}: не удалось связать аудио ({target}): {e}")
+
+    # =============================================
     # Управление жизненным циклом кампании
     # =============================================
     async def start_campaign(
@@ -613,10 +671,17 @@ class CampaignService:
                 AND NOT c.blacklisted
                 AND cc.status != 'completed'
             """, campaign_id)
-            
+
+            # [sub-media] в asterisk/extensions.conf ищет файл по имени
+            # tts/main_<campaign_id>.sln - без этого шага никакой TTS,
+            # выбранный в форме кампании (dialer_settings.audio_id),
+            # никогда реально не проигрывался, звонящим всегда шёл общий
+            # tts/default.sln независимо от выбора.
+            await self._link_campaign_audio(conn, campaign_id, campaign['audio_id'])
+
             # Обновляем статус кампании
             await conn.execute("""
-                UPDATE campaigns 
+                UPDATE campaigns
                 SET status = $1, started_at = NOW(), updated_at = NOW()
                 WHERE id = $2
             """, CampaignStatus.RUNNING.value, campaign_id)
