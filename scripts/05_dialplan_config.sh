@@ -293,7 +293,7 @@ exten => s,1,NoOp(=== Канал \${CHANNEL} завершён ===)
 ; \`channel.startswith(...)\` на стороне приложения падает с
 ; AttributeError - подтверждено живьём на Docker-сборке того же дозвона.
 same => n,UserEvent(DialerHangup,LinkedID: \${CHANNEL(linkedid)},Status: \${DIALSTATUS},Duration: \${CDR(duration)},BillSec: \${CDR(billsec)})
-same => n,DBdel(dialer_bridge_lock/\${CHANNEL(linkedid)})
+same => n,Set(DB_DELETE(dialer_bridge_lock/\${CHANNEL(linkedid)})=)
 same => n,Return()
 
 
