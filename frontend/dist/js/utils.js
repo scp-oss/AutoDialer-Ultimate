@@ -512,8 +512,11 @@ const Utils = {
      * @returns {boolean} Валиден ли телефон
      */
     isValidPhone(phone) {
+        // Минимум 3, не 10 - см. App.validatePhone (app.js) и
+        // validate_phone_number (app/utils/phone.py): короткие внутренние
+        // добавочные АТС тоже валидная цель для звонка.
         const cleaned = phone.replace(/\D/g, '');
-        return cleaned.length >= 10 && cleaned.length <= 15;
+        return cleaned.length >= 3 && cleaned.length <= 15;
     },
     
     /**

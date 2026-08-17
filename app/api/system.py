@@ -5,10 +5,10 @@
 Управление системой
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 
-from app.core.dependencies import require_admin, TokenData
-from app.services import get_system_service
+from app.core.dependencies import require_admin, require_operator, TokenData
+from app.services import get_system_service, get_dialer_service
 from app.models.system import (
     SystemStatusResponse, SystemEnableResponse, SystemDisableResponse,
     SystemConfigResponse, SystemMode
@@ -65,3 +65,26 @@ async def get_resource_usage(admin: TokenData = Depends(require_admin)):
     """Получить использование ресурсов"""
     system_service = get_system_service()
     return await system_service.get_resource_usage()
+
+
+@router.post("/test-call")
+async def test_call(
+    phone: str = Body(..., embed=True),
+    user: TokenData = Depends(require_operator)
+):
+    """
+    Тестовый звонок (кнопка "Быстрый звонок" на дашборде).
+
+    Фронтенд (dashboard.js quickCall() -> system.js testCall()) уже вызывал
+    этот маршрут, но его не существовало вообще - кнопка была полностью
+    подключена на фронтенде и мертва на бэкенде (тот же паттерн, что
+    API-токены/Webhooks). Ставит звонок в ту же очередь, что и обычные
+    кампании (campaign_id=0 - существующее соглашение "без кампании", см.
+    _save_call_result), поэтому идёт по тому же пути AMI Originate ->
+    dialer_bridge, что и реальные звонки - это и есть смысл теста.
+    """
+    dialer_service = get_dialer_service()
+    if not dialer_service:
+        raise HTTPException(503, "Dialer недоступен")
+    await dialer_service.start_call(phone, campaign_id=0)
+    return {"status": "queued", "phone": phone}

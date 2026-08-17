@@ -857,9 +857,18 @@ class DialerManager:
     # Нормализация номера
     # =============================================
     def normalize_phone(self, phone: str) -> Optional[str]:
-        """Нормализация номера телефона (см. app.utils.phone)"""
+        """
+        Нормализация номера телефона (см. app.utils.phone).
+
+        Минимум 3 цифры, не 10 - см. app/utils/phone.py:validate_phone_number
+        и frontend App.validatePhone для того же порога и объяснения (тестовый
+        стенд с внутренней АТС, короткие добавочные вроде "291" - валидная
+        цель для звонка). Без этого фикса короткие номера прошли бы
+        валидацию на фронтенде и в API, но всё равно молча отбрасывались бы
+        именно здесь, в start_call(), с "Пропуск невалидного номера" в логе.
+        """
         digits = _normalize_phone_digits(phone)
-        if len(digits) < 10:
+        if len(digits) < 3:
             return None
         return digits
     

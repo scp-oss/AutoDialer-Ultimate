@@ -474,9 +474,13 @@ const App = {
     // =============================================
     // Валидация
     // =============================================
+    // Минимум 3 цифры, не 10 - короткие внутренние добавочные АТС (3-5
+    // цифр, например "291") тоже валидная цель для звонка, не только
+    // мобильные номера. Держим в паре с validate_phone_number()
+    // (app/utils/phone.py) - тот же минимум.
     validatePhone(phone) {
         const cleaned = phone.replace(/\D/g, '');
-        return cleaned.length >= 10;
+        return cleaned.length >= 3;
     },
 
     validateEmail(email) {
