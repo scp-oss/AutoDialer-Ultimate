@@ -45,12 +45,8 @@
         <span class="sidebar-icon">🔍</span>
         <span class="sidebar-label">Аудит</span>
     </div>
-    <div class="sidebar-item admin-only" data-tab="apiTokens" onclick="App.switchTab('apiTokens')">
-        <span class="sidebar-icon">🔑</span>
-        <span class="sidebar-label">API Токены</span>
-    </div>
-    <div class="sidebar-item admin-only" data-tab="webhooks" onclick="App.switchTab('webhooks')">
-        <span class="sidebar-icon">🪝</span>
-        <span class="sidebar-label">Webhooks</span>
-    </div>
+    <!-- API Токены и Webhooks скрыты по решению пользователя: их backend
+         не реализован вовсе (нет ни одного роута в app/api/) - показывать
+         вкладки, которые гарантированно падают с ошибкой, хуже, чем не
+         показывать их совсем. Вернуть, когда появится реализация. -->
 </nav>
