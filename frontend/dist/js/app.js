@@ -199,14 +199,18 @@ const App = {
 
     applyRoleBasedUI() {
         const isAdmin = this.state.userRole === 'admin';
-        
+
+        // .admin-only itself carries no display rule (see style.css) -
+        // toggle the .hidden utility class instead of style.display, since
+        // clearing an inline style can't override a CSS rule that already
+        // says display:none.
         document.querySelectorAll('.admin-only').forEach(el => {
-            el.style.display = isAdmin ? '' : 'none';
+            el.classList.toggle('hidden', !isAdmin);
         });
 
         const killSwitch = document.getElementById('killSwitchBtn');
         if (killSwitch) {
-            killSwitch.style.display = isAdmin ? '' : 'none';
+            killSwitch.classList.toggle('hidden', !isAdmin);
         }
     },
 

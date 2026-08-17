@@ -1567,7 +1567,13 @@ details .form-row {
 .h-full { height: 100%; }
 
 .hidden { display: none; }
-.admin-only { display: none; }
+/* Не display:none здесь напрямую - applyRoleBasedUI() (app.js) переключает
+   класс .hidden поверх .admin-only, а не инлайн-стиль. Раньше это правило
+   само скрывало элемент, а JS для админа только очищал el.style.display
+   (= ''), что НЕ отменяет правило из этого файла - .admin-only оставался
+   display:none даже у настоящего админа. Подтверждено вживую: бейдж роли
+   показывал Admin, а пункты меню Пользователи/Настройки/Аудит и кнопка
+   аварийной остановки не появлялись вообще. */
 
 .cursor-pointer { cursor: pointer; }
 
