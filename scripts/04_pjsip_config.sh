@@ -164,7 +164,11 @@ force_rport = yes
 ; Специфичные настройки для FreePBX
 from_user = ${FREEPBX_EXTENSION}
 from_domain = ${FREEPBX_IP}
-outbound_proxy = sip:${FREEPBX_IP}:5060
+; outbound_proxy убран - AOR уже указывает прямо на FreePBX (обычная
+; регистрация "как телефон"). С ним Asterisk строил INVITE с
+; Request-URI без номера получателя (номер уходил в отдельный Route),
+; и FreePBX отвечала "484 Address Incomplete" на любой звонок -
+; подтверждено живьём разбором SIP-трафика.
 
 ; Таймеры сессий
 timers = yes
@@ -296,7 +300,6 @@ aors = ${FREEPBX_EXTENSION}_backup_aor
 callerid = AutoDialer <${FREEPBX_EXTENSION}>
 from_user = ${FREEPBX_EXTENSION}
 from_domain = ${BACKUP_FREEPBX_IP}
-outbound_proxy = sip:${BACKUP_FREEPBX_IP}:5060
 EOF
     
     print_success "Резервный endpoint настроен для $BACKUP_FREEPBX_IP"

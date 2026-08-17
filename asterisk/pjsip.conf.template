@@ -143,7 +143,15 @@ force_rport = yes
 ; Эти параметры необходимы для корректной работы с FreePBX
 from_user = ${FREEPBX_EXTENSION}
 from_domain = ${FREEPBX_IP}
-outbound_proxy = sip:${FREEPBX_IP}:5060
+; outbound_proxy убран: AOR (${FREEPBX_EXTENSION}_aor) уже указывает
+; напрямую на FreePBX, так что endpoint и без него отправляет запросы
+; туда же - это обычная регистрация "как телефон", без отдельного прокси.
+; С outbound_proxy Asterisk строил INVITE так, что Request-URI оставался
+; БЕЗ номера получателя (только sip:${FREEPBX_IP}:5060), а сам номер
+; уходил в отдельный заголовок Route - FreePBX не находила номер там, где
+; ожидала, и отвечала "484 Address Incomplete" на любой звонок,
+; независимо от формата номера. Подтверждено живьём разбором сырого
+; SIP-трафика (pjsip set logger on).
 
 ; ========== ТАЙМЕРЫ СЕССИЙ ==========
 timers = yes
@@ -282,7 +290,6 @@ match_header = From: <sip:${FREEPBX_EXTENSION}@${FREEPBX_IP}>
 ; callerid = AutoDialer <${FREEPBX_EXTENSION}>
 ; from_user = ${FREEPBX_EXTENSION}
 ; from_domain = BACKUP_IP
-; outbound_proxy = sip:BACKUP_IP:5060
 
 
 ; =============================================
