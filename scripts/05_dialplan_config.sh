@@ -70,7 +70,12 @@ cat > /etc/asterisk/extensions.conf << EOF
 ; =============================================
 ; Глобальные переменные
 ; =============================================
-TRUNK_NAME = PJSIP/${FREEPBX_EXTENSION}_endpoint
+; Без префикса "PJSIP/" - Dial() ниже собирает PJSIP/<номер>@<транк>
+; (правильный синтаксис chan_pjsip); "PJSIP/<транк>/<номер>" - формат
+; легаси chan_sip, который chan_pjsip не поддерживает и валит каждый
+; исходящий звонок с "Could not create dialog to invalid URI" даже при
+; полностью рабочей регистрации/AOR - подтверждено живьём.
+TRUNK_NAME = ${FREEPBX_EXTENSION}_endpoint
 CALLER_ID = ${CALLER_ID}
 MAX_RETRIES = ${MAX_RETRIES}
 CALL_TIMEOUT = ${CALL_TIMEOUT}
@@ -94,7 +99,7 @@ same => n,Set(CDR(userfield)=campaign:\${CAMPAIGN_ID})
 ; переменная на этот новый канал не наследуется, и \${ORIGINAL_PHONE}
 ; во всех UserEvent(DialerResult,...) ниже был бы всегда пуст.
 same => n,Set(__ORIGINAL_PHONE=\${EXTEN})
-same => n,Dial(\${TRUNK_NAME}/\${EXTEN},\${CALL_TIMEOUT},U(sub-media^\${CAMPAIGN_ID}))
+same => n,Dial(PJSIP/\${EXTEN}@\${TRUNK_NAME},\${CALL_TIMEOUT},U(sub-media^\${CAMPAIGN_ID}))
 same => n,Goto(sub-dial-status,s,1)
 
 

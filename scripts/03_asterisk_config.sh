@@ -343,7 +343,9 @@ print_step "Creating basic extensions.conf..."
 
 cat > /etc/asterisk/extensions.conf << 'EOF'
 [globals]
-TRUNK_NAME = PJSIP/291_endpoint
+; Без префикса "PJSIP/" - см. Dial() в 05_dialplan_config.sh, который
+; заменяет этот файл-плейсхолдер, для объяснения формата.
+TRUNK_NAME = 291_endpoint
 CALL_TIMEOUT = 30
 DTMF_TIMEOUT = 10
 
