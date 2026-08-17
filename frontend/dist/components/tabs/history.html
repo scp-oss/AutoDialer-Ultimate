@@ -31,14 +31,25 @@
             
             <div class="filter-group">
                 <label>Статус</label>
+                <!-- Значения = CallResultStatus (app/models/call.py), то же
+                     самое пишет диалплан в UserEvent(DialerResult,...) -
+                     раньше тут были придуманные значения ('completed',
+                     'no_answer', 'cancelled' и т.п.), которых нет ни в этом
+                     enum'е, ни в диалплане, так что фильтр либо ничего не
+                     находил, либо ловил 422 от FastAPI. -->
                 <select id="historyFilterStatus" class="form-control">
                     <option value="">Все статусы</option>
-                    <option value="completed">Завершен</option>
-                    <option value="answered">Отвечен</option>
-                    <option value="no_answer">Нет ответа</option>
+                    <option value="agreed">Согласился</option>
+                    <option value="declined">Отказался</option>
                     <option value="busy">Занято</option>
+                    <option value="noanswer">Нет ответа</option>
                     <option value="failed">Ошибка</option>
-                    <option value="cancelled">Отменен</option>
+                    <option value="timeout">Таймаут</option>
+                    <option value="canceled">Отменён</option>
+                    <option value="machine">Автоответчик</option>
+                    <option value="congestion">Перегрузка</option>
+                    <option value="chanunavail">Канал недоступен</option>
+                    <option value="unknown">Неизвестно</option>
                 </select>
             </div>
             
@@ -297,16 +308,25 @@
         background: var(--color-bg-tertiary);
     }
     
-    .history-table tbody tr.answered {
+    /* Классы строк = call.status, реальные значения CallResultStatus
+       (app/models/call.py) - раньше здесь были 'answered'/'no_answer',
+       которые диалплан никогда не пишет ('agreed'/'declined' и 'noanswer'
+       без подчёркивания), так что подсветка строк по статусу не
+       срабатывала вообще. */
+    .history-table tbody tr.agreed,
+    .history-table tbody tr.declined {
         background: var(--color-success-bg);
     }
-    
-    .history-table tbody tr.no_answer {
+
+    .history-table tbody tr.noanswer,
+    .history-table tbody tr.timeout {
         background: var(--color-warning-bg);
     }
-    
+
     .history-table tbody tr.busy,
-    .history-table tbody tr.failed {
+    .history-table tbody tr.failed,
+    .history-table tbody tr.congestion,
+    .history-table tbody tr.chanunavail {
         background: var(--color-danger-bg);
     }
     
@@ -480,181 +500,16 @@
     }
 </style>
 
-<script>
-    (function() {
-        // Загрузка кампаний для фильтра
-        const originalInit = App.history?.init;
-        if (App.history) {
-            App.history.init = async function() {
-                await this.loadCampaignsForFilter();
-                if (originalInit) await originalInit.call(this);
-            };
-            
-            // Метод загрузки кампаний для фильтра
-            App.history.loadCampaignsForFilter = async function() {
-                try {
-                    const data = await App.apiGet('/campaigns?limit=100');
-                    const campaigns = data.items || data || [];
-                    
-                    const select = document.getElementById('historyFilterCampaign');
-                    if (select) {
-                        select.innerHTML = '<option value="">Все кампании</option>' +
-                            campaigns.map(c => `<option value="${c.id}">${this.escapeHtml(c.name)}</option>`).join('');
-                    }
-                } catch (error) {
-                    console.error('Failed to load campaigns for filter:', error);
-                }
-            };
-            
-            // Привязка событий фильтров
-            App.history.setupFilterEvents = function() {
-                document.getElementById('historyApplyFiltersBtn')?.addEventListener('click', () => {
-                    this.currentPage = 1;
-                    this.loadHistory();
-                });
-                
-                document.getElementById('historyResetFiltersBtn')?.addEventListener('click', () => {
-                    this.resetFilters();
-                });
-                
-                document.getElementById('historyFilterPhone')?.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter') {
-                        this.currentPage = 1;
-                        this.loadHistory();
-                    }
-                });
-                
-                // Сортировка
-                document.querySelectorAll('.history-table .sortable').forEach(th => {
-                    th.addEventListener('click', () => {
-                        const field = th.dataset.sort;
-                        if (this.sortField === field) {
-                            this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
-                        } else {
-                            this.sortField = field;
-                            this.sortOrder = 'asc';
-                        }
-                        this.loadHistory();
-                        this.updateSortIcons();
-                    });
-                });
-            };
-            
-            // Сброс фильтров
-            App.history.resetFilters = function() {
-                document.getElementById('historyFilterCampaign').value = '';
-                document.getElementById('historyFilterStatus').value = '';
-                document.getElementById('historyFilterDirection').value = '';
-                document.getElementById('historyFilterPhone').value = '';
-                document.getElementById('historyFilterDateFrom').value = '';
-                document.getElementById('historyFilterDateTo').value = '';
-                
-                this.currentPage = 1;
-                this.loadHistory();
-            };
-            
-            // Обновление иконок сортировки
-            App.history.updateSortIcons = function() {
-                document.querySelectorAll('.history-table .sortable').forEach(th => {
-                    const icon = th.querySelector('.sort-icon');
-                    if (icon) {
-                        if (th.dataset.sort === this.sortField) {
-                            icon.textContent = this.sortOrder === 'asc' ? '⬆️' : '⬇️';
-                        } else {
-                            icon.textContent = '↕️';
-                        }
-                    }
-                });
-            };
-            
-            // Закрытие модалки деталей
-            App.history.closeDetailModal = function() {
-                App.hideModal('historyDetailModal');
-            };
-            
-            // Показать статистику
-            App.history.showStatistics = async function() {
-                const modal = document.getElementById('historyStatsModal');
-                const content = document.getElementById('historyStatsContent');
-                
-                modal.style.display = 'flex';
-                content.innerHTML = '<div class="loading">Загрузка статистики...</div>';
-                
-                try {
-                    const data = await App.apiGet('/history/statistics');
-                    
-                    content.innerHTML = `
-                        <div class="statistics-panel">
-                            <div class="stats-grid-large">
-                                <div class="stat-card-large">
-                                    <div class="stat-value">${data.total || 0}</div>
-                                    <div class="stat-label">Всего звонков</div>
-                                </div>
-                                <div class="stat-card-large stat-success">
-                                    <div class="stat-value">${data.answered || 0}</div>
-                                    <div class="stat-label">Отвечено</div>
-                                </div>
-                                <div class="stat-card-large">
-                                    <div class="stat-value">${data.answer_rate || 0}%</div>
-                                    <div class="stat-label">Дозвон</div>
-                                </div>
-                                <div class="stat-card-large stat-warning">
-                                    <div class="stat-value">${data.no_answer || 0}</div>
-                                    <div class="stat-label">Нет ответа</div>
-                                </div>
-                                <div class="stat-card-large stat-danger">
-                                    <div class="stat-value">${data.busy || 0}</div>
-                                    <div class="stat-label">Занято</div>
-                                </div>
-                                <div class="stat-card-large">
-                                    <div class="stat-value">${App.formatDuration(data.avg_duration || 0)}</div>
-                                    <div class="stat-label">Ср. длительность</div>
-                                </div>
-                            </div>
-                            
-                            ${data.by_campaign && data.by_campaign.length > 0 ? `
-                                <h4>По кампаниям</h4>
-                                <table class="table campaign-stats-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Кампания</th>
-                                            <th>Всего</th>
-                                            <th>Отвечено</th>
-                                            <th>Дозвон</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${data.by_campaign.map(c => `
-                                            <tr>
-                                                <td>${this.escapeHtml(c.name)}</td>
-                                                <td>${c.total}</td>
-                                                <td>${c.answered}</td>
-                                                <td>${c.answer_rate}%</td>
-                                            </tr>
-                                        `).join('')}
-                                    </tbody>
-                                </table>
-                            ` : ''}
-                        </div>
-                    `;
-                } catch (error) {
-                    console.error('Failed to load statistics:', error);
-                    content.innerHTML = '<div class="error-message">Ошибка загрузки статистики</div>';
-                }
-            };
-            
-            // Привязка кнопки скачивания в модалке
-            document.getElementById('historyDownloadDetailBtn')?.addEventListener('click', () => {
-                const callId = App.history.currentCallId;
-                if (callId) {
-                    App.history.downloadCallDetails(callId);
-                }
-            });
-        }
-        
-        // Инициализация при загрузке вкладки
-        if (App.history) {
-            App.history.setupFilterEvents();
-        }
-    })();
-</script>
+<!-- Логика вкладки (загрузка кампаний для фильтра, привязка фильтров/
+     сортировки/кнопок, статистика) живёт в js/history.js. Раньше она была
+     здесь, во встроенном <script>, вставляемом через
+     `container.innerHTML = await response.text()` в App.switchTab
+     (app.js) - браузеры не выполняют <script>, вставленные через
+     innerHTML, так что этот блок целиком был мёртвым кодом: он никогда не
+     запускался, App.history.init/setupFilterEvents/showStatistics
+     оставались теми же (частично несовместимыми с этой разметкой)
+     заглушками, что определены в history.js напрямую. Подтверждено:
+     кнопки "Применить"/"Сбросить" не работали (не было ни одного
+     addEventListener), фильтр кампаний оставался пустым, а
+     App.history.showStatistics бил в несуществующий "/history/statistics"
+     вместо "/stats/calls". -->

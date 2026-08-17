@@ -1,183 +1,277 @@
 // history.js - Модуль истории звонков
-// Зависимости: app.js (AppState, authFetch, API_BASE, showToast, escapeHtml)
+// Зависимости: app.js (App.apiGet, App.showModal/hideModal, App.showToast, ...)
 
 const HistoryModule = {
     currentPage: 1,
     pageSize: 20,
-    
+    sortField: 'created_at',
+    sortOrder: 'desc',
+    currentCallId: null,
+
+    // Статусы, реально возвращаемые бэкендом (CallResultStatus в
+    // app/models/call.py, те же значения пишет диалплан в
+    // UserEvent(DialerResult,...)). Раньше здесь были придуманные значения
+    // ('completed', 'no_answer', 'cancelled' и т.п.), которых не существует
+    // ни в этом enum'е, ни в диалплане - фильтр по статусу либо ничего не
+    // находил, либо получал 422 от FastAPI на значении, которого нет в enum.
+    STATUS_LABELS: {
+        agreed: 'Согласился',
+        declined: 'Отказался',
+        busy: 'Занято',
+        noanswer: 'Нет ответа',
+        failed: 'Ошибка',
+        timeout: 'Таймаут',
+        canceled: 'Отменён',
+        machine: 'Автоответчик',
+        congestion: 'Перегрузка',
+        chanunavail: 'Канал недоступен',
+        unknown: 'Неизвестно'
+    },
+
+    // Инициализация вкладки (вызывается из App.switchTab через
+    // App.history.init(), см. app.js)
+    async init() {
+        await this.loadCampaignsForFilter();
+        this.setupFilterEvents();
+        await this.load(1);
+    },
+
+    setupFilterEvents() {
+        document.getElementById('historyRefreshBtn')
+            ?.addEventListener('click', () => this.load(this.currentPage));
+        document.getElementById('historyApplyFiltersBtn')
+            ?.addEventListener('click', () => this.applyFilters());
+        document.getElementById('historyResetFiltersBtn')
+            ?.addEventListener('click', () => this.resetFilters());
+        document.getElementById('historyFilterPhone')
+            ?.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') this.applyFilters();
+            });
+        document.getElementById('historyDownloadDetailBtn')
+            ?.addEventListener('click', () => {
+                if (this.currentCallId) this.downloadCallDetails(this.currentCallId);
+            });
+
+        // Сортировка по клику на заголовок - сервер (list_calls в
+        // app/api/calls.py) не принимает sort_by/sort_order как параметры
+        // запроса (сервис строит ORDER BY через f-string без валидации, так
+        // что открывать это поле на приём произвольного значения с фронта -
+        // SQL injection), так что клик только переключает иконку и
+        // перезагружает текущую страницу в стандартном порядке.
+        document.querySelectorAll('.history-table .sortable').forEach(th => {
+            th.addEventListener('click', () => {
+                const field = th.dataset.sort;
+                this.sortOrder = (this.sortField === field && this.sortOrder === 'asc') ? 'desc' : 'asc';
+                this.sortField = field;
+                this.updateSortIcons();
+                this.load(1);
+            });
+        });
+    },
+
+    updateSortIcons() {
+        document.querySelectorAll('.history-table .sortable').forEach(th => {
+            const icon = th.querySelector('.sort-icon');
+            if (!icon) return;
+            icon.textContent = th.dataset.sort === this.sortField
+                ? (this.sortOrder === 'asc' ? '⬆️' : '⬇️')
+                : '↕️';
+        });
+    },
+
+    async loadCampaignsForFilter() {
+        try {
+            const data = await App.apiGet('/campaigns?limit=100');
+            const campaigns = data.items || data || [];
+            const select = document.getElementById('historyFilterCampaign');
+            if (select) {
+                select.innerHTML = '<option value="">Все кампании</option>' +
+                    campaigns.map(c => `<option value="${c.id}">${this.escapeHtml(c.name)}</option>`).join('');
+            }
+        } catch (error) {
+            console.error('Failed to load campaigns for filter:', error);
+        }
+    },
+
     // Загрузка истории
     async load(page = 1) {
         this.currentPage = page;
-        
+
         const campaignId = document.getElementById('historyFilterCampaign')?.value;
         const status = document.getElementById('historyFilterStatus')?.value;
+        const direction = document.getElementById('historyFilterDirection')?.value;
         const phone = document.getElementById('historyFilterPhone')?.value;
         const dateFrom = document.getElementById('historyFilterDateFrom')?.value;
         const dateTo = document.getElementById('historyFilterDateTo')?.value;
-        
-        let url = `${API_BASE}/history?page=${page}&page_size=${this.pageSize}`;
+
+        // Роутер звонков в app/api/calls.py смонтирован с префиксом
+        // "/calls" (см. app/api/__init__.py), а сам маршрут списка объявлен
+        // как "/history" - т.е. реальный путь "/calls/history", а не
+        // "/history" - раньше здесь был ровно этот несуществующий путь,
+        // каждый запрос ловил 404 и история всегда показывала "Нет записей".
+        let url = `/calls/history?page=${page}&page_size=${this.pageSize}`;
         if (campaignId) url += `&campaign_id=${campaignId}`;
         if (status) url += `&status=${status}`;
+        if (direction) url += `&direction=${direction}`;
         if (phone) url += `&phone=${encodeURIComponent(phone)}`;
-        if (dateFrom) url += `&date_from=${dateFrom}`;
-        if (dateTo) url += `&date_to=${dateTo}`;
-        
+        // <input type="datetime-local"> отдаёт "YYYY-MM-DDTHH:MM", бэкенд
+        // (DateRangeParams) парсит from_date/to_date строго как "YYYY-MM-DD".
+        if (dateFrom) url += `&from_date=${dateFrom.slice(0, 10)}`;
+        if (dateTo) url += `&to_date=${dateTo.slice(0, 10)}`;
+
+        const tbody = document.getElementById('historyTableBody');
         try {
-            const response = await authFetch(url);
-            if (response.ok) {
-                const data = await response.json();
-                this.renderTable(data.items || data.history || []);
-                this.renderPagination(data.total_pages || 1);
-                this.updateStats(data.stats);
-            } else {
-                document.getElementById('historyTable').innerHTML = 
-                    '<tr><td colspan="8" class="text-center text-error">Ошибка загрузки</td></tr>';
-            }
+            const data = await App.apiGet(url);
+            this.renderTable(data.items || []);
+            this.renderPagination(data.total_pages || 1);
+            this.updateStats(data);
         } catch (error) {
             console.error('History load failed:', error);
-            document.getElementById('historyTable').innerHTML = 
-                '<tr><td colspan="8" class="text-center text-error">Ошибка сервера</td></tr>';
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-error">Ошибка загрузки</td></tr>';
+            }
         }
     },
-    
+
+    applyFilters() {
+        this.currentPage = 1;
+        this.load(1);
+    },
+
+    resetFilters() {
+        const ids = ['historyFilterCampaign', 'historyFilterStatus', 'historyFilterDirection',
+                      'historyFilterPhone', 'historyFilterDateFrom', 'historyFilterDateTo'];
+        ids.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        this.currentPage = 1;
+        this.load(1);
+    },
+
     // Рендер таблицы
-    renderTable(history) {
-        const tbody = document.getElementById('historyTable');
-        
-        if (!history || history.length === 0) {
+    renderTable(calls) {
+        const tbody = document.getElementById('historyTableBody');
+        if (!tbody) return;
+
+        if (!calls || calls.length === 0) {
             tbody.innerHTML = '<tr><td colspan="8" class="text-center">Нет записей</td></tr>';
             return;
         }
-        
-        const statusMap = {
-            'completed': 'Завершен',
-            'answered': 'Отвечен',
-            'no_answer': 'Нет ответа',
-            'busy': 'Занято',
-            'failed': 'Ошибка',
-            'cancelled': 'Отменен',
-            'pending': 'Ожидает',
-            'ringing': 'Звонок'
-        };
-        
-        tbody.innerHTML = history.map(call => `
+
+        tbody.innerHTML = calls.map(call => `
             <tr data-call-id="${call.id}" class="history-row ${call.status}">
-                <td>${this.formatDateTime(call.created_at)}</td>
+                <td>${App.formatDateTime(call.created_at)}</td>
                 <td>
-                    <span class="phone-number">${this.formatPhoneNumber(call.phone || call.to_number)}</span>
-                    ${call.direction === 'inbound' ? '<span class="badge badge-info">Вх.</span>' : ''}
+                    <span class="phone-number">${App.formatPhoneNumber(call.phone)}</span>
+                    ${call.direction === 'inbound' ? '<span class="direction-badge inbound">Вх.</span>' : ''}
                 </td>
-                <td>${this.escapeHtml(call.contact_name || call.contact || '—')}</td>
-                <td>${this.escapeHtml(call.campaign_name || call.campaign || '—')}</td>
+                <td>${this.escapeHtml(call.contact_name || '—')}</td>
+                <td>${this.escapeHtml(call.campaign_name || '—')}</td>
                 <td>
                     <span class="status-badge status-${call.status}">
-                        ${statusMap[call.status] || call.status}
+                        ${this.STATUS_LABELS[call.status] || call.status}
                     </span>
                 </td>
                 <td>${call.dtmf_result || '—'}</td>
-                <td>${this.formatDuration(call.duration)}</td>
+                <td>${call.duration_formatted || App.formatDuration(call.duration)}</td>
                 <td class="actions-cell">
                     <div class="action-buttons">
-                        <button class="btn btn-sm btn-outline view-details" 
-                                data-id="${call.id}" 
+                        <button class="btn btn-sm btn-outline view-details"
+                                data-id="${call.id}"
                                 title="Подробнее">👁️</button>
                         ${call.recording_url ? `
-                            <button class="btn btn-sm btn-outline play-recording" 
-                                    data-url="${call.recording_url}" 
+                            <button class="btn btn-sm btn-outline play-recording"
+                                    data-url="${call.recording_url}"
                                     title="Прослушать запись">🔊</button>
                         ` : ''}
-                        <button class="btn btn-sm btn-outline download-call" 
-                                data-id="${call.id}" 
+                        <button class="btn btn-sm btn-outline download-call"
+                                data-id="${call.id}"
                                 title="Скачать детали">📥</button>
                     </div>
                 </td>
             </tr>
         `).join('');
-        
+
         this.attachRowEventListeners();
     },
-    
-    // Привязка обработчиков к строкам
+
     attachRowEventListeners() {
         document.querySelectorAll('.history-row').forEach(row => {
             row.addEventListener('click', (e) => {
                 if (e.target.closest('button') || e.target.closest('a')) return;
-                const id = row.dataset.callId;
-                this.showCallDetails(id);
+                this.showCallDetails(row.dataset.callId);
             });
         });
-        
+
         document.querySelectorAll('.view-details').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const id = btn.dataset.id;
-                this.showCallDetails(id);
+                this.showCallDetails(btn.dataset.id);
             });
         });
-        
+
         document.querySelectorAll('.play-recording').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const url = btn.dataset.url;
-                this.playRecording(url);
+                this.playRecording(btn.dataset.url);
             });
         });
-        
+
         document.querySelectorAll('.download-call').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const id = btn.dataset.id;
-                this.downloadCallDetails(id);
+                this.downloadCallDetails(btn.dataset.id);
             });
         });
     },
-    
+
     // Показать детали звонка
     async showCallDetails(callId) {
+        this.currentCallId = callId;
+        const content = document.getElementById('historyDetailContent');
+        App.showModal('historyDetailModal');
+        if (content) content.innerHTML = '<div class="loading">Загрузка...</div>';
+
         try {
-            const response = await authFetch(`${API_BASE}/history/${callId}`);
-            if (!response.ok) throw new Error('Failed to load call details');
-            
-            const call = await response.json();
-            
+            const call = await App.apiGet(`/calls/${callId}`);
+
             const modalContent = `
-                <div class="call-details">
+                <div class="call-detail">
                     <div class="detail-section">
                         <h4>Основная информация</h4>
                         <table class="details-table">
                             <tr><td>ID звонка:</td><td>${call.id}</td></tr>
-                            <tr><td>Дата/время:</td><td>${this.formatDateTime(call.created_at)}</td></tr>
-                            <tr><td>Номер:</td><td>${this.formatPhoneNumber(call.phone || call.to_number)}</td></tr>
+                            <tr><td>Дата/время:</td><td>${App.formatDateTime(call.created_at)}</td></tr>
+                            <tr><td>Номер:</td><td>${App.formatPhoneNumber(call.phone)}</td></tr>
                             <tr><td>Контакт:</td><td>${this.escapeHtml(call.contact_name || '—')}</td></tr>
                             <tr><td>Кампания:</td><td>${this.escapeHtml(call.campaign_name || '—')}</td></tr>
-                            <tr><td>Статус:</td><td><span class="status-badge status-${call.status}">${call.status}</span></td></tr>
-                            <tr><td>Длительность:</td><td>${this.formatDuration(call.duration)}</td></tr>
-                            <tr><td>DTMF результат:</td><td>${call.dtmf_result || '—'}</td></tr>
+                            <tr><td>Статус:</td><td><span class="status-badge status-${call.status}">${this.STATUS_LABELS[call.status] || call.status}</span></td></tr>
+                            <tr><td>Длительность:</td><td>${call.duration_formatted || App.formatDuration(call.duration)}</td></tr>
+                            <tr><td>DTMF:</td><td>${call.dtmf_result || '—'}</td></tr>
+                            <tr><td>Причина завершения:</td><td>${call.hangup_cause || '—'}</td></tr>
+                            <tr><td>Попытка №:</td><td>${call.retry_count}</td></tr>
                         </table>
                     </div>
-                    
-                    ${call.answered_at ? `
-                        <div class="detail-section">
-                            <h4>Временные метки</h4>
-                            <table class="details-table">
-                                <tr><td>Начало:</td><td>${this.formatDateTime(call.created_at)}</td></tr>
-                                <tr><td>Ответ:</td><td>${this.formatDateTime(call.answered_at)}</td></tr>
-                                <tr><td>Завершение:</td><td>${this.formatDateTime(call.completed_at || call.ended_at)}</td></tr>
-                            </table>
-                        </div>
-                    ` : ''}
-                    
+
                     ${call.recording_url ? `
                         <div class="detail-section">
                             <h4>Запись разговора</h4>
-                            <audio controls src="${call.recording_url}" style="width: 100%;"></audio>
+                            <audio controls src="${call.recording_url}" class="audio-player"></audio>
                             <br>
                             <a href="${call.recording_url}" download class="btn btn-sm btn-primary" style="margin-top: 10px;">
                                 📥 Скачать запись
                             </a>
                         </div>
                     ` : ''}
-                    
+
+                    ${call.transcription ? `
+                        <div class="detail-section">
+                            <h4>Транскрипция</h4>
+                            <div class="transcription-box">${this.escapeHtml(call.transcription)}</div>
+                        </div>
+                    ` : ''}
+
                     ${call.notes ? `
                         <div class="detail-section">
                             <h4>Примечания</h4>
@@ -186,131 +280,90 @@ const HistoryModule = {
                     ` : ''}
                 </div>
             `;
-            
-            this.showModal('Детали звонка', modalContent);
-            
+
+            if (content) content.innerHTML = modalContent;
+
         } catch (error) {
             console.error('Failed to load call details:', error);
-            showToast('Не удалось загрузить детали звонка', 'error');
+            if (content) content.innerHTML = '<div class="error-message">Не удалось загрузить детали звонка</div>';
         }
     },
-    
+
+    closeDetailModal() {
+        App.hideModal('historyDetailModal');
+    },
+
     // Воспроизведение записи
     playRecording(url) {
         const audio = new Audio(url);
-        
         const modalContent = `
             <div class="audio-player-container">
-                <audio controls src="${url}" style="width: 100%;" autoplay></audio>
+                <audio controls autoplay src="${url}" style="width: 100%;"></audio>
             </div>
         `;
-        
-        this.showModal('Воспроизведение записи', modalContent, {
-            onClose: () => audio.pause()
-        });
-        
+        // Переиспользуем модалку деталей звонка под плеер, чтобы не плодить
+        // ещё один динамически создаваемый modal с собственной разметкой.
+        const content = document.getElementById('historyDetailContent');
+        if (content) content.innerHTML = modalContent;
+        App.showModal('historyDetailModal');
+
         audio.play().catch(e => {
             console.error('Audio playback failed:', e);
-            showToast('Ошибка воспроизведения', 'error');
+            App.showToast('Ошибка воспроизведения', 'error');
         });
     },
-    
-    // Скачать детали звонка
+
+    // Скачать детали звонка (JSON)
     async downloadCallDetails(callId) {
         try {
-            const response = await authFetch(`${API_BASE}/history/${callId}`);
-            if (!response.ok) throw new Error('Failed to load');
-            
-            const call = await response.json();
-            
+            const call = await App.apiGet(`/calls/${callId}`);
             const dataStr = JSON.stringify(call, null, 2);
             const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
-            
+
             const linkElement = document.createElement('a');
             linkElement.setAttribute('href', dataUri);
             linkElement.setAttribute('download', `call_${callId}_${new Date().toISOString().split('T')[0]}.json`);
             linkElement.click();
-            
-            showToast('Детали звонка скачаны', 'success');
+
+            App.showToast('Детали звонка скачаны', 'success');
         } catch (error) {
             console.error('Download failed:', error);
-            showToast('Не удалось скачать детали', 'error');
+            App.showToast('Не удалось скачать детали', 'error');
         }
     },
-    
-    // Экспорт в CSV
+
+    // Экспорт в CSV - бэкенд не предоставляет отдельный эндпоинт экспорта
+    // (в app/api/calls.py такого маршрута нет), поэтому строим CSV из уже
+    // доступного списка звонков на клиенте, а не бьёмся в несуществующий
+    // "/calls/export" на каждый клик.
     async exportToCSV() {
-        showToast('Подготовка экспорта...', 'info');
-        
-        const campaignId = document.getElementById('historyFilterCampaign')?.value;
-        const status = document.getElementById('historyFilterStatus')?.value;
-        const dateFrom = document.getElementById('historyFilterDateFrom')?.value;
-        const dateTo = document.getElementById('historyFilterDateTo')?.value;
-        
-        let url = `${API_BASE}/history/export?`;
-        const params = [];
-        if (campaignId) params.push(`campaign_id=${campaignId}`);
-        if (status) params.push(`status=${status}`);
-        if (dateFrom) params.push(`date_from=${dateFrom}`);
-        if (dateTo) params.push(`date_to=${dateTo}`);
-        url += params.join('&');
-        
+        App.showToast('Подготовка экспорта...', 'info');
         try {
-            const response = await authFetch(url);
-            if (response.ok) {
-                const blob = await response.blob();
-                const downloadUrl = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = downloadUrl;
-                a.download = `calls_export_${new Date().toISOString().split('T')[0]}.csv`;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(downloadUrl);
-                document.body.removeChild(a);
-                
-                showToast('Экспорт завершен', 'success');
-            } else {
-                throw new Error('Export failed');
-            }
-        } catch (error) {
-            console.error('Export failed:', error);
-            
-            // Fallback - клиентский экспорт
-            await this.exportToCSVClientSide();
-        }
-    },
-    
-    // Клиентский экспорт в CSV (fallback)
-    async exportToCSVClientSide() {
-        try {
-            const response = await authFetch(`${API_BASE}/history?page_size=10000`);
-            if (!response.ok) throw new Error('Failed to load data');
-            
-            const data = await response.json();
-            const calls = data.items || data.history || [];
-            
+            const data = await App.apiGet('/calls/history?page=1&page_size=10000');
+            const calls = data.items || [];
+
             if (!calls.length) {
-                showToast('Нет данных для экспорта', 'warning');
+                App.showToast('Нет данных для экспорта', 'warning');
                 return;
             }
-            
+
             const headers = ['ID', 'Дата/время', 'Номер', 'Контакт', 'Кампания', 'Статус', 'DTMF', 'Длительность'];
             const rows = calls.map(call => [
                 call.id,
-                this.formatDateTime(call.created_at),
-                call.phone || call.to_number,
+                App.formatDateTime(call.created_at),
+                call.phone,
                 call.contact_name || '',
                 call.campaign_name || '',
-                call.status,
+                this.STATUS_LABELS[call.status] || call.status,
                 call.dtmf_result || '',
                 call.duration || 0
             ]);
-            
+
             const csvContent = [
                 headers.join(','),
                 ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
             ].join('\n');
-            
+
             const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -318,239 +371,150 @@ const HistoryModule = {
             a.download = `calls_export_${new Date().toISOString().split('T')[0]}.csv`;
             a.click();
             window.URL.revokeObjectURL(url);
-            
-            showToast(`Экспортировано ${calls.length} записей`, 'success');
+
+            App.showToast(`Экспортировано ${calls.length} записей`, 'success');
         } catch (error) {
-            console.error('Client-side export failed:', error);
-            showToast('Не удалось выполнить экспорт', 'error');
+            console.error('Export failed:', error);
+            App.showToast('Не удалось выполнить экспорт', 'error');
         }
     },
-    
-    // Показать статистику
+
+    // Показать статистику - использует /api/stats/calls (см.
+    // stats_router в app/api/calls.py), а не несуществующий
+    // "/calls/statistics"; поля ответа - CallStatsResponse
+    // (total_calls/answered_calls/noanswer/... ), не "total"/"no_answer".
     async showStatistics() {
+        const content = document.getElementById('historyStatsContent');
+        App.showModal('historyStatsModal');
+        if (content) content.innerHTML = '<div class="loading">Загрузка статистики...</div>';
+
         try {
-            const response = await authFetch(`${API_BASE}/history/statistics`);
-            if (!response.ok) throw new Error('Failed to load statistics');
-            
-            const stats = await response.json();
-            
-            const modalContent = `
-                <div class="statistics-panel">
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <h4>Всего звонков</h4>
-                            <div class="stat-value">${stats.total || 0}</div>
-                        </div>
-                        <div class="stat-card stat-success">
-                            <h4>Отвечено</h4>
-                            <div class="stat-value">${stats.answered || 0}</div>
-                            <div class="stat-percent">${stats.answer_rate || 0}%</div>
-                        </div>
-                        <div class="stat-card stat-warning">
-                            <h4>Нет ответа</h4>
-                            <div class="stat-value">${stats.no_answer || 0}</div>
-                        </div>
-                        <div class="stat-card stat-danger">
-                            <h4>Занято</h4>
-                            <div class="stat-value">${stats.busy || 0}</div>
-                        </div>
-                        <div class="stat-card">
-                            <h4>Ср. длительность</h4>
-                            <div class="stat-value">${this.formatDuration(stats.avg_duration || 0)}</div>
+            const stats = await App.apiGet('/stats/calls');
+
+            if (content) {
+                content.innerHTML = `
+                    <div class="statistics-panel">
+                        <div class="stats-grid-large">
+                            <div class="stat-card-large">
+                                <div class="stat-value">${stats.total_calls || 0}</div>
+                                <div class="stat-label">Всего звонков</div>
+                            </div>
+                            <div class="stat-card-large stat-success">
+                                <div class="stat-value">${stats.answered_calls || 0}</div>
+                                <div class="stat-label">Отвечено</div>
+                            </div>
+                            <div class="stat-card-large">
+                                <div class="stat-value">${stats.answer_rate || 0}%</div>
+                                <div class="stat-label">Дозвон</div>
+                            </div>
+                            <div class="stat-card-large stat-warning">
+                                <div class="stat-value">${stats.noanswer || 0}</div>
+                                <div class="stat-label">Нет ответа</div>
+                            </div>
+                            <div class="stat-card-large stat-danger">
+                                <div class="stat-value">${stats.busy || 0}</div>
+                                <div class="stat-label">Занято</div>
+                            </div>
+                            <div class="stat-card-large">
+                                <div class="stat-value">${App.formatDuration(Math.round(stats.avg_duration || 0))}</div>
+                                <div class="stat-label">Ср. длительность</div>
+                            </div>
+                            <div class="stat-card-large stat-success">
+                                <div class="stat-value">${stats.agreed || 0}</div>
+                                <div class="stat-label">Согласились</div>
+                            </div>
+                            <div class="stat-card-large">
+                                <div class="stat-value">${stats.machine || 0}</div>
+                                <div class="stat-label">Автоответчик</div>
+                            </div>
+                            <div class="stat-card-large">
+                                <div class="stat-value">${stats.conversion_rate || 0}%</div>
+                                <div class="stat-label">Конверсия</div>
+                            </div>
                         </div>
                     </div>
-                </div>
-            `;
-            
-            this.showModal('📊 Статистика звонков', modalContent);
-            
+                `;
+            }
         } catch (error) {
             console.error('Failed to load statistics:', error);
-            showToast('Не удалось загрузить статистику', 'error');
+            if (content) content.innerHTML = '<div class="error-message">Ошибка загрузки статистики</div>';
         }
     },
-    
-    // Обновление статистики в шапке
-    updateStats(stats) {
-        if (!stats) return;
-        
+
+    // Обновление мини-статистики в шапке. CallListResponse (см.
+    // app/models/call.py) не содержит поле "stats" - есть только
+    // total/summary (агрегат по статусам для ТЕКУЩЕЙ страницы фильтров).
+    updateStats(data) {
         const totalEl = document.getElementById('historyTotalCalls');
         const answeredEl = document.getElementById('historyAnswered');
         const conversionEl = document.getElementById('historyConversion');
-        
-        if (totalEl) totalEl.textContent = stats.total || 0;
-        if (answeredEl) answeredEl.textContent = stats.answered || 0;
-        if (conversionEl) conversionEl.textContent = `${stats.answer_rate || 0}%`;
+        const avgDurationEl = document.getElementById('historyAvgDuration');
+
+        const total = data.total || 0;
+        const summary = data.summary || {};
+        const answered = (summary.agreed || 0) + (summary.declined || 0);
+
+        if (totalEl) totalEl.textContent = total;
+        if (answeredEl) answeredEl.textContent = answered;
+        if (conversionEl) conversionEl.textContent = total > 0 ? `${Math.round(answered / total * 100)}%` : '0%';
+
+        if (avgDurationEl) {
+            const durations = (data.items || []).map(c => c.duration).filter(d => d);
+            const avg = durations.length ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 0;
+            avgDurationEl.textContent = App.formatDuration(avg);
+        }
     },
-    
+
     // Рендер пагинации
     renderPagination(totalPages) {
         const container = document.getElementById('historyPagination');
         if (!container) return;
-        
+
         if (totalPages <= 1) {
             container.innerHTML = '';
             return;
         }
-        
+
         let html = '<div class="pagination">';
-        
-        // Предыдущая
-        if (this.currentPage > 1) {
-            html += `<button class="page-btn" data-page="${this.currentPage - 1}">←</button>`;
-        } else {
-            html += `<button class="page-btn" disabled>←</button>`;
-        }
-        
-        // Страницы
+
+        html += this.currentPage > 1
+            ? `<button class="page-btn" data-page="${this.currentPage - 1}">←</button>`
+            : `<button class="page-btn" disabled>←</button>`;
+
         const start = Math.max(1, this.currentPage - 2);
         const end = Math.min(totalPages, this.currentPage + 2);
-        
+
         if (start > 1) {
             html += `<button class="page-btn" data-page="1">1</button>`;
             if (start > 2) html += '<span class="page-dots">...</span>';
         }
-        
+
         for (let i = start; i <= end; i++) {
             html += `<button class="page-btn ${i === this.currentPage ? 'active' : ''}" data-page="${i}">${i}</button>`;
         }
-        
+
         if (end < totalPages) {
             if (end < totalPages - 1) html += '<span class="page-dots">...</span>';
             html += `<button class="page-btn" data-page="${totalPages}">${totalPages}</button>`;
         }
-        
-        // Следующая
-        if (this.currentPage < totalPages) {
-            html += `<button class="page-btn" data-page="${this.currentPage + 1}">→</button>`;
-        } else {
-            html += `<button class="page-btn" disabled>→</button>`;
-        }
-        
+
+        html += this.currentPage < totalPages
+            ? `<button class="page-btn" data-page="${this.currentPage + 1}">→</button>`
+            : `<button class="page-btn" disabled>→</button>`;
+
         html += '</div>';
-        
         container.innerHTML = html;
-        
-        // Привязка событий
+
         container.querySelectorAll('.page-btn[data-page]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const page = parseInt(btn.dataset.page);
-                this.load(page);
-            });
+            btn.addEventListener('click', () => this.load(parseInt(btn.dataset.page, 10)));
         });
     },
-    
-    // Сброс фильтров
-    resetFilters() {
-        const filterCampaign = document.getElementById('historyFilterCampaign');
-        const filterStatus = document.getElementById('historyFilterStatus');
-        const filterPhone = document.getElementById('historyFilterPhone');
-        const filterDateFrom = document.getElementById('historyFilterDateFrom');
-        const filterDateTo = document.getElementById('historyFilterDateTo');
-        
-        if (filterCampaign) filterCampaign.value = '';
-        if (filterStatus) filterStatus.value = '';
-        if (filterPhone) filterPhone.value = '';
-        if (filterDateFrom) filterDateFrom.value = '';
-        if (filterDateTo) filterDateTo.value = '';
-        
-        this.currentPage = 1;
-        this.load(1);
-    },
-    
-    // Применить фильтры
-    applyFilters() {
-        this.currentPage = 1;
-        this.load(1);
-    },
-    
-    // Показать модальное окно
-    showModal(title, content, options = {}) {
-        const modal = document.createElement('div');
-        modal.className = 'modal';
-        modal.style.display = 'flex';
-        modal.innerHTML = `
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h3>${title}</h3>
-                    <button class="close-modal">&times;</button>
-                </div>
-                <div class="modal-body">
-                    ${content}
-                </div>
-            </div>
-        `;
-        
-        document.body.appendChild(modal);
-        
-        const closeBtn = modal.querySelector('.close-modal');
-        closeBtn.addEventListener('click', () => {
-            if (options.onClose) options.onClose();
-            modal.remove();
-        });
-        
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                if (options.onClose) options.onClose();
-                modal.remove();
-            }
-        });
-    },
-    
-    // Вспомогательные функции
-    formatDateTime(dateStr) {
-        if (!dateStr) return '—';
-        const date = new Date(dateStr);
-        return date.toLocaleString('ru-RU', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-        }).replace(',', '');
-    },
-    
-    formatPhoneNumber(phone) {
-        return App.formatPhoneNumber(phone);
-    },
-    
-    formatDuration(seconds) {
-        if (!seconds || seconds === 0) return '0 сек';
-        const hours = Math.floor(seconds / 3600);
-        const minutes = Math.floor((seconds % 3600) / 60);
-        const secs = seconds % 60;
-        
-        const parts = [];
-        if (hours > 0) parts.push(`${hours} ч`);
-        if (minutes > 0) parts.push(`${minutes} мин`);
-        if (secs > 0 || parts.length === 0) parts.push(`${secs} сек`);
-        
-        return parts.join(' ');
-    },
-    
+
     escapeHtml(text) {
         if (!text) return '';
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
-    },
-    
-    // Инициализация модуля
-    init() {
-        // Обработчики фильтров
-        document.getElementById('historyApplyFilters')?.addEventListener('click', () => this.applyFilters());
-        document.getElementById('historyResetFilters')?.addEventListener('click', () => this.resetFilters());
-        document.getElementById('historyExportCsv')?.addEventListener('click', () => this.exportToCSV());
-        document.getElementById('historyShowStats')?.addEventListener('click', () => this.showStatistics());
-        
-        // Поиск по Enter
-        document.getElementById('historyFilterPhone')?.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') this.applyFilters();
-        });
-        
-        // Загрузка данных
-        this.load(1);
     }
 };
 

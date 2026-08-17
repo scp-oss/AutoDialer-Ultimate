@@ -14,7 +14,7 @@ from app.services import get_call_service
 from app.models.call import (
     CallHistoryFilterRequest, CallListResponse, CallDetailResponse,
     CallStatsResponse, DailyCallStatsResponse, CallAnalyticsResponse,
-    ActiveCallsResponse, CallResultStatus
+    ActiveCallsResponse, CallResultStatus, CallDirection
 )
 
 router = APIRouter()
@@ -30,17 +30,19 @@ async def list_calls(
     campaign_id: Optional[int] = None,
     contact_id: Optional[int] = None,
     status: Optional[List[CallResultStatus]] = None,
+    direction: Optional[CallDirection] = None,
     phone: Optional[str] = None,
     date_range: DateRangeParams = Depends(),
     user: TokenData = Depends(get_current_user)
 ):
     """Получить историю звонков"""
     call_service = get_call_service()
-    
+
     filter_params = CallHistoryFilterRequest(
         campaign_id=campaign_id,
         contact_id=contact_id,
         status=status,
+        direction=direction,
         phone=phone,
         from_date=date_range.from_date.date() if date_range.from_date else None,
         to_date=date_range.to_date.date() if date_range.to_date else None

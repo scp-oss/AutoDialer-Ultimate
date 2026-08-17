@@ -121,6 +121,13 @@ same => n,Hangup()
 ; Обработчик статусов звонка
 ; Вызывается после Dial()
 ; =============================================
+; Вызывается через Goto(sub-dial-status,s,1), а не Gosub - обычный
+; переход, без кадра стека Gosub. Return() на каждой ветке логировал
+; "ERROR: Return without Gosub: stack is unallocated" на каждом звонке -
+; подтверждено живьём. Hangup() корректен вместо этого: на
+; busy/noanswer/failed абонент не ответил, а на "answered" sub-media уже
+; сам завершил канал - повторный Hangup() на уже завершённом канале
+; ничего не делает.
 [sub-dial-status]
 exten => s,1,NoOp(=== Статус набора: \${DIALSTATUS} ===)
 same => n,GotoIf(\$["\${DIALSTATUS}"="BUSY"]?busy)
@@ -135,23 +142,23 @@ same => n,Hangup()
 same => n(busy),NoOp(=== Результат: BUSY (Занято) ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},status=busy)
 same => n,UserEvent(DialerResult,Status: busy,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)})
-same => n,Return()
+same => n,Hangup()
 
 ; Ветка "Нет ответа"
 same => n(noanswer),NoOp(=== Результат: NOANSWER (Нет ответа) ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},status=noanswer)
 same => n,UserEvent(DialerResult,Status: noanswer,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)})
-same => n,Return()
+same => n,Hangup()
 
 ; Ветка "Ошибка"
 same => n(failed),NoOp(=== Результат: FAILED (\${DIALSTATUS}) ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},status=failed)
 same => n,UserEvent(DialerResult,Status: failed,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)})
-same => n,Return()
+same => n,Hangup()
 
 ; Ветка "Ответил" (обрабатывается в sub-media)
 same => n(answered),NoOp(=== Абонент ответил, обработка в sub-media ===)
-same => n,Return()
+same => n,Hangup()
 
 
 ; =============================================
