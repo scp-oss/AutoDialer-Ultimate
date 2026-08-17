@@ -55,6 +55,26 @@ async def list_audit_logs(
     )
 
 
+@router.get("/actions")
+async def list_audit_actions(admin: TokenData = Depends(require_admin)):
+    """Получить список возможных действий аудита (для фильтра в UI)"""
+    return [a.value for a in AuditAction]
+
+
+@router.get("/stats", response_model=AuditStatsResponse)
+async def get_audit_stats(
+    days: int = 30,
+    admin: TokenData = Depends(require_admin)
+):
+    """Получить статистику аудита"""
+    audit_service = get_audit_service()
+    return await audit_service.get_stats(days=days)
+
+
+# NOTE: /actions and /stats must be registered before /{log_id} - same
+# FastAPI/Starlette route-ordering pitfall fixed elsewhere (contacts.py,
+# incoming.py): a literal "actions"/"stats" would otherwise get parsed as
+# log_id:int and 422 before ever reaching the real handler.
 @router.get("/{log_id}", response_model=AuditLogResponse)
 async def get_audit_log(
     log_id: int,
@@ -66,16 +86,6 @@ async def get_audit_log(
     if not log:
         raise HTTPException(404, "Audit log not found")
     return log
-
-
-@router.get("/stats", response_model=AuditStatsResponse)
-async def get_audit_stats(
-    days: int = 30,
-    admin: TokenData = Depends(require_admin)
-):
-    """Получить статистику аудита"""
-    audit_service = get_audit_service()
-    return await audit_service.get_stats(days=days)
 
 
 @router.get("/user/{user_id}")
