@@ -1473,16 +1473,29 @@ class DialerManager:
                 # честное 'unknown' вместо выдуманного результата.
                 asyncio.create_task(self._fallback_unknown_result(ctx, linked_id, unique_id))
             else:
-                status = self._map_hangup_cause_to_status(cause_txt)
-                await self._save_call_result(
-                    ctx.campaign_id,
-                    ctx.phone,
-                    status,
-                    linked_id,
-                    unique_id,
-                    ctx.retry_count,
-                    duration=ctx.duration
-                )
+                # Тот же ключ дедупликации, что и в _handle_user_event/
+                # _fallback_unknown_result - без него "мёртвая" половина
+                # Local-канала (та, что редиректится на duplicate,1 и
+                # вешает трубку без единого реального Dial()) могла всё
+                # равно прислать сюда собственное Hangup-событие на тот же
+                # linked_id и создать лишнюю строку в call_results
+                # (подтверждено живьём: "Ошибка" через ~3с после
+                # настоящего результата того же звонка). linked_id общий
+                # у обеих половин, так что этот SET NX гарантированно
+                # пропускает только первый результат на звонок, откуда бы
+                # он ни пришёл.
+                dedup_key = f"dialer_result_saved:{linked_id}"
+                if await self.redis.set(dedup_key, "1", ex=300, nx=True):
+                    status = self._map_hangup_cause_to_status(cause_txt)
+                    await self._save_call_result(
+                        ctx.campaign_id,
+                        ctx.phone,
+                        status,
+                        linked_id,
+                        unique_id,
+                        ctx.retry_count,
+                        duration=ctx.duration
+                    )
         
         logger.info(f"📴 Hangup: {action_id}, причина={cause_txt}, активно={active}")
 
