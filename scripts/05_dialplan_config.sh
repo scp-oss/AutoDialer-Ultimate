@@ -99,7 +99,12 @@ same => n,Set(CDR(userfield)=campaign:\${CAMPAIGN_ID})
 ; переменная на этот новый канал не наследуется, и \${ORIGINAL_PHONE}
 ; во всех UserEvent(DialerResult,...) ниже был бы всегда пуст.
 same => n,Set(__ORIGINAL_PHONE=\${EXTEN})
-same => n,Dial(PJSIP/\${EXTEN}@\${TRUNK_NAME},\${CALL_TIMEOUT},U(sub-media^\${CAMPAIGN_ID}))
+; Приложение хранит номера с кодом "7" (79991234567), но исходящий
+; маршрут FreePBX ждёт домашний формат с "8" и отвечает "484 Address
+; Incomplete" на любой номер с "7" - подтверждено живьём. Меняем только
+; для этого исходящего плеча.
+same => n,Set(DIAL_NUMBER=\${IF(\$["\${EXTEN:0:1}"="7"]?8\${EXTEN:1}:\${EXTEN})})
+same => n,Dial(PJSIP/\${DIAL_NUMBER}@\${TRUNK_NAME},\${CALL_TIMEOUT},U(sub-media^\${CAMPAIGN_ID}))
 same => n,Goto(sub-dial-status,s,1)
 
 
