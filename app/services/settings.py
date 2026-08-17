@@ -179,6 +179,13 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
     ),
 
     # Настройки дозвона
+    # requires_restart=True на всех пяти: с WORKERS>1 каждый gunicorn-воркер
+    # держит собственный DialerManager с собственным AMI-соединением и
+    # собственным self.max_calls/caller_id/... в памяти (см. комментарий в
+    # app/__init__.py, lifespan, шаг 5.5). on_change применяет новое
+    # значение живьём только к тому ОДНОМУ воркеру, который обработал
+    # именно этот HTTP-запрос - без рестарта остальные воркеры продолжают
+    # дозванивать по старому значению.
     "dialer.max_calls": SettingDefinition(
         key="dialer.max_calls",
         value_type="int",
@@ -187,7 +194,8 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         description="Максимальное количество одновременных звонков",
         min_value=1,
         max_value=500,
-        on_change="update_dialer_max_calls"
+        on_change="update_dialer_max_calls",
+        requires_restart=True
     ),
     "dialer.default_cps": SettingDefinition(
         key="dialer.default_cps",
@@ -197,7 +205,8 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         description="Звонков в секунду по умолчанию",
         min_value=1,
         max_value=100,
-        on_change="update_dialer_cps"
+        on_change="update_dialer_cps",
+        requires_restart=True
     ),
     "dialer.call_timeout": SettingDefinition(
         key="dialer.call_timeout",
@@ -206,7 +215,8 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         category=SettingCategory.DIALER,
         description="Таймаут звонка (секунд)",
         min_value=5,
-        max_value=300
+        max_value=300,
+        requires_restart=True
     ),
     "dialer.max_retries": SettingDefinition(
         key="dialer.max_retries",
@@ -215,14 +225,16 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         category=SettingCategory.DIALER,
         description="Максимальное количество повторных попыток",
         min_value=0,
-        max_value=10
+        max_value=10,
+        requires_restart=True
     ),
     "dialer.caller_id": SettingDefinition(
         key="dialer.caller_id",
         value_type="string",
         default_value="AutoDialer",
         category=SettingCategory.DIALER,
-        description="Caller ID по умолчанию"
+        description="Caller ID по умолчанию",
+        requires_restart=True
     ),
     "dialer.adaptive_cps": SettingDefinition(
         key="dialer.adaptive_cps",

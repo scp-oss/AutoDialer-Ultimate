@@ -173,6 +173,7 @@ from app.services import (
     get_tts_service,
     get_transcription_service,
     get_system_service,
+    get_settings_service,
 )
 
 
@@ -440,7 +441,35 @@ async def lifespan(app: FastAPI):
             transcription_service=transcription_service
         )
         logger.info(f"✅ Инициализировано {len(service_registry.list_services())} сервисов")
-        
+
+        # 5.5 Применяем настройки дозвона, сохранённые в БД (SettingsService),
+        # поверх статических .env-умолчаний, с которыми был сконструирован
+        # DialerManager - на момент init_dialer() (шаг 4, раньше этого)
+        # SettingsService ещё не существует. С WORKERS>1 (gunicorn) каждый
+        # воркер поднимает СВОЙ DialerManager с СОБСТВЕННЫМ AMI-соединением
+        # (app/services/dialer.py:242) и СВОИМ self.max_calls в памяти - без
+        # этого шага после рестарта все воркеры снова берут MAX_CALLS из
+        # .env, даже если админ через веб поменял значение в БД. Изменение
+        # через веб само по себе (см. SettingsService.update_setting) живьём
+        # применяется только к тому ОДНОМУ воркеру, который обработал этот
+        # конкретный HTTP-запрос - остальные не узнают об изменении до
+        # своего следующего рестарта, когда как раз и подхватят его отсюда.
+        try:
+            settings_service = get_settings_service()
+            dialer_manager.max_calls = await settings_service.get_setting_value("dialer.max_calls")
+            dialer_manager.caller_id = await settings_service.get_setting_value("dialer.caller_id")
+            dialer_manager.call_timeout = await settings_service.get_setting_value("dialer.call_timeout")
+            dialer_manager.max_retries = await settings_service.get_setting_value("dialer.max_retries")
+            cps = await settings_service.get_setting_value("dialer.default_cps")
+            dialer_manager.cps_limiter.update_rate(cps)
+            logger.info(
+                f"Настройки дозвона применены из БД: max_calls={dialer_manager.max_calls}, "
+                f"cps={cps}, call_timeout={dialer_manager.call_timeout}, "
+                f"max_retries={dialer_manager.max_retries}"
+            )
+        except Exception as e:
+            logger.warning(f"Не удалось применить сохранённые настройки дозвона, использованы значения из .env: {e}")
+
         # 6. Запуск системного сервиса
         system_service = get_system_service()
         await system_service.start()
