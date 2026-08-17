@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from fastapi.responses import FileResponse
 
 from app.core.dependencies import get_current_user, require_admin, TokenData, PaginationParams
-from app.services import get_incoming_call_service
+from app.services import get_incoming_call_service, get_settings_service, get_audio_service
 from app.models.incoming import (
     IncomingCallWebhookRequest, IncomingCallUpdateRequest,
     IncomingCallResponse, IncomingCallDetailResponse, IncomingCallListResponse,
@@ -28,11 +28,55 @@ async def incoming_call_webhook(
 ):
     """Webhook для приёма уведомлений от Asterisk"""
     data = await request.json()
-    
+
     webhook_request = IncomingCallWebhookRequest(**data)
     incoming_service = get_incoming_call_service()
-    
+
     return await incoming_service.process_webhook(webhook_request, background_tasks)
+
+
+# =============================================
+# Приветствие для входящих (dialplan на стороне FreePBX)
+# =============================================
+# Без авторизации - как и /webhook выше, эти маршруты вызывает не браузер,
+# а dialplan/AGI на стороне Asterisk/FreePBX (Answer -> запрос сюда, узнать
+# что играть -> Playback -> Record -> POST /webhook как раньше). Отдаваемое
+# аудио не приватные данные (это просто голосовое приветствие), так что тот
+# же уровень доверия по сетевому расположению, что и у /webhook, достаточен.
+@router.get("/greeting")
+async def get_incoming_greeting_config():
+    """
+    Узнать, включено ли приветствие и какой ID аудио сейчас выбран
+    (настраивается в веб-интерфейсе: Настройки -> Входящие).
+    """
+    settings_service = get_settings_service()
+    enabled = await settings_service.get_setting_value("incoming.greeting_enabled")
+    audio_id = await settings_service.get_setting_value("incoming.greeting_audio_id")
+    return {"enabled": bool(enabled), "audio_id": audio_id or None}
+
+
+@router.get("/greeting/audio")
+async def download_incoming_greeting_audio():
+    """
+    Скачать текущий аудиофайл приветствия. Дialplan должен сохранить его
+    локально на сервере Asterisk и проиграть через Playback() - Asterisk не
+    умеет проигрывать звук напрямую по URL.
+    """
+    settings_service = get_settings_service()
+    enabled = await settings_service.get_setting_value("incoming.greeting_enabled")
+    audio_id = await settings_service.get_setting_value("incoming.greeting_audio_id")
+
+    if not enabled or not audio_id:
+        raise HTTPException(404, "Greeting is not configured or disabled")
+
+    audio_service = get_audio_service()
+    path = await audio_service.get_playable_audio_path(int(audio_id))
+
+    return FileResponse(
+        path,
+        media_type="audio/wav",
+        filename=f"greeting{path.suffix}"
+    )
 
 
 @router.get("/", response_model=IncomingCallListResponse)
@@ -61,6 +105,19 @@ async def list_incoming_calls(
     )
 
 
+@router.get("/stats", response_model=IncomingCallStatsResponse)
+async def get_incoming_stats(
+    days: Optional[int] = 30,
+    user: TokenData = Depends(get_current_user)
+):
+    """Получить статистику входящих звонков"""
+    incoming_service = get_incoming_call_service()
+    return await incoming_service.get_stats(days=days)
+
+
+# NOTE: /stats must be registered before /{call_id} - same
+# FastAPI/Starlette route-ordering pitfall fixed elsewhere in contacts.py:
+# a literal "stats" would otherwise get parsed as call_id:int and 422.
 @router.get("/{call_id}", response_model=IncomingCallDetailResponse)
 async def get_incoming_call(
     call_id: int,
@@ -130,16 +187,6 @@ async def transcribe_incoming_call(
     """Запустить транскрибацию входящего звонка"""
     incoming_service = get_incoming_call_service()
     return await incoming_service.start_transcription(call_id, language, background_tasks)
-
-
-@router.get("/stats", response_model=IncomingCallStatsResponse)
-async def get_incoming_stats(
-    days: Optional[int] = 30,
-    user: TokenData = Depends(get_current_user)
-):
-    """Получить статистику входящих звонков"""
-    incoming_service = get_incoming_call_service()
-    return await incoming_service.get_stats(days=days)
 
 
 @router.post("/batch-delete")

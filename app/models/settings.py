@@ -24,12 +24,14 @@ from app.models.common import BaseSchema, TimestampSchema
 class SettingCategory(str, Enum):
     """Категории настроек"""
     GENERAL = "general"           # Общие настройки
+    ASTERISK = "asterisk"         # Подключение к Asterisk/FreePBX (AMI)
     DIALER = "dialer"             # Настройки дозвона
     AUDIO = "audio"               # Настройки аудио
     TTS = "tts"                   # Настройки TTS
     TRANSCRIPTION = "transcription"  # Настройки транскрибации
     SECURITY = "security"         # Настройки безопасности
     NOTIFICATIONS = "notifications"  # Настройки уведомлений
+    INCOMING = "incoming"         # Настройки входящих звонков (приветствие)
     API = "api"                   # Настройки API
     LOGGING = "logging"           # Настройки логирования
     ADVANCED = "advanced"         # Расширенные настройки

@@ -112,6 +112,72 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         allowed_values=["ru", "en"]
     ),
     
+    # Подключение к Asterisk/FreePBX (AMI) - параметры соединения, которое
+    # AutoDialer открывает к серверу Asterisk/FreePBX для управления
+    # звонками. Это НЕ настройка SIP-транков/провайдеров - те настраиваются
+    # в самой FreePBX. Читаются AMI-клиентом только при подключении, поэтому
+    # requires_restart=True: сохранение значения не переподключает AMI само
+    # по себе, нужен перезапуск сервиса (см. кнопку "Перезагрузить сервисы").
+    "asterisk.ami_host": SettingDefinition(
+        key="asterisk.ami_host",
+        value_type="string",
+        default_value=app_settings.AMI_HOST,
+        category=SettingCategory.ASTERISK,
+        description="Хост AMI (адрес сервера Asterisk/FreePBX)",
+        requires_restart=True
+    ),
+    "asterisk.ami_port": SettingDefinition(
+        key="asterisk.ami_port",
+        value_type="int",
+        default_value=app_settings.AMI_PORT,
+        category=SettingCategory.ASTERISK,
+        description="Порт AMI",
+        min_value=1,
+        max_value=65535,
+        requires_restart=True
+    ),
+    "asterisk.ami_user": SettingDefinition(
+        key="asterisk.ami_user",
+        value_type="string",
+        default_value=app_settings.AMI_USER,
+        category=SettingCategory.ASTERISK,
+        description="Имя пользователя AMI (manager.conf на стороне Asterisk)",
+        requires_restart=True
+    ),
+    "asterisk.ami_password": SettingDefinition(
+        key="asterisk.ami_password",
+        value_type="string",
+        default_value=app_settings.AMI_PASSWORD,
+        category=SettingCategory.ASTERISK,
+        description="Пароль AMI",
+        is_public=False,
+        requires_restart=True
+    ),
+
+    # Настройки входящих звонков - приветствие, которое проигрывается перед
+    # записью (см. app/api/incoming.py: GET /incoming/greeting и
+    # /incoming/greeting/audio). Само проигрывание выполняет дialplan на
+    # стороне FreePBX - эти настройки только говорят ему, ЧТО играть.
+    "incoming.greeting_enabled": SettingDefinition(
+        key="incoming.greeting_enabled",
+        value_type="bool",
+        default_value=False,
+        category=SettingCategory.INCOMING,
+        description="Проигрывать приветствие перед записью входящего звонка"
+    ),
+    # value_type="string" (not "int") on purpose: settings.js's select
+    # renderer compares `value === opt.value` (strict equality) between the
+    # raw setting value and the string option values built in
+    # _render_metadata() below - an int value would never strict-equal a
+    # string option and the dropdown would never show a selection.
+    "incoming.greeting_audio_id": SettingDefinition(
+        key="incoming.greeting_audio_id",
+        value_type="string",
+        default_value="0",
+        category=SettingCategory.INCOMING,
+        description="Аудио из библиотеки (вкладка «Аудио»), которое проигрывается как приветствие"
+    ),
+
     # Настройки дозвона
     "dialer.max_calls": SettingDefinition(
         key="dialer.max_calls",
@@ -466,29 +532,70 @@ class SettingsService:
     async def get_settings(self, include_private: bool = False) -> Dict[str, Any]:
         """
         Получить все настройки.
-        
+
         Args:
             include_private: Включать приватные настройки
-        
+
         Returns:
             Словарь настроек
         """
         result = {}
-        
+
         for key, definition in SYSTEM_SETTINGS.items():
             if not include_private and not definition.is_public:
                 continue
-            
+
             value = await self.get_setting_value(key)
             result[key] = {
                 "value": value,
                 "description": definition.description,
                 "category": definition.category.value,
                 "is_public": definition.is_public,
-                "is_readonly": definition.is_readonly
+                "is_readonly": definition.is_readonly,
+                **await self._render_metadata(definition)
             }
-        
+
         return result
+
+    async def _render_metadata(self, definition: "SettingDefinition") -> Dict[str, Any]:
+        """
+        Метаданные для рендера поля во фронтенде (settings.js:
+        renderSettingField() / detectType()) - раньше get_settings()/
+        get_settings_by_category() отдавали только {value, description,
+        category, is_public, is_readonly}, из-за чего фронт был вынужден
+        угадывать тип поля по значению (detectType()), а select-настройки
+        с allowed_values (voice/model/timezone и т.п.) всегда рендерились
+        обычным текстовым полем без вариантов выбора.
+        """
+        type_map = {"bool": "boolean", "int": "number", "float": "number", "list": "json"}
+        ui_type = type_map.get(definition.value_type, "text")
+
+        options = None
+        if definition.key == "incoming.greeting_audio_id":
+            # Список вариантов для этого поля не статичен (зависит от
+            # содержимого библиотеки аудио), поэтому не хранится в
+            # SettingDefinition.allowed_values, а собирается здесь.
+            try:
+                from app.services import get_audio_service
+                audio_service = get_audio_service()
+                audio_list = await audio_service.list_audio(page=1, page_size=200)
+                options = [{"value": "0", "label": "— не выбрано —"}] + [
+                    {"value": str(a.id), "label": a.name} for a in audio_list.items
+                ]
+                ui_type = "select"
+            except Exception as e:
+                logger.warning(f"Не удалось загрузить список аудио для incoming.greeting_audio_id: {e}")
+        elif definition.allowed_values:
+            options = [{"value": str(v), "label": str(v)} for v in definition.allowed_values]
+            ui_type = "select"
+
+        return {
+            "type": ui_type,
+            "min": definition.min_value,
+            "max": definition.max_value,
+            "options": options,
+            "requires_restart": definition.requires_restart
+        }
     
     async def get_setting_value(self, key: str) -> Any:
         """
@@ -579,18 +686,19 @@ class SettingsService:
         for key, definition in SYSTEM_SETTINGS.items():
             if definition.category.value != category:
                 continue
-            
+
             if not include_private and not definition.is_public:
                 continue
-            
+
             value = await self.get_setting_value(key)
             result[key] = {
                 "value": value,
                 "description": definition.description,
                 "is_public": definition.is_public,
-                "is_readonly": definition.is_readonly
+                "is_readonly": definition.is_readonly,
+                **await self._render_metadata(definition)
             }
-        
+
         return result
     
     async def get_categories(self) -> List[Dict[str, Any]]:
@@ -783,12 +891,14 @@ class SettingsService:
         """Получить описание категории"""
         descriptions = {
             SettingCategory.GENERAL: "Общие настройки системы",
+            SettingCategory.ASTERISK: "Подключение к Asterisk/FreePBX (AMI)",
             SettingCategory.DIALER: "Настройки дозвона",
             SettingCategory.AUDIO: "Настройки аудиофайлов",
             SettingCategory.TTS: "Настройки синтеза речи",
             SettingCategory.TRANSCRIPTION: "Настройки транскрибации",
             SettingCategory.SECURITY: "Настройки безопасности",
             SettingCategory.NOTIFICATIONS: "Настройки уведомлений",
+            SettingCategory.INCOMING: "Входящие звонки (приветствие)",
             SettingCategory.API: "Настройки API",
             SettingCategory.LOGGING: "Настройки логирования",
         }

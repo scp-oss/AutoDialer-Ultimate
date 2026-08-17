@@ -349,35 +349,29 @@ const SettingsModule = {
     
     // Форматирование ключа
     formatKey(key) {
+        // Ключи настроек - полные, с префиксом категории (см.
+        // SYSTEM_SETTINGS в app/services/settings.py, например
+        // "asterisk.ami_host", не просто "ami_host").
         const labels = {
-            'system_name': 'Название системы',
-            'max_calls': 'Максимум одновременных звонков',
-            'default_cps': 'CPS по умолчанию',
-            'ami_host': 'AMI хост',
-            'ami_port': 'AMI порт',
-            'ami_user': 'AMI пользователь',
-            'ami_password': 'AMI пароль',
-            'sip_port': 'SIP порт',
-            'rtp_port_min': 'RTP порт (мин)',
-            'rtp_port_max': 'RTP порт (макс)',
-            'tts_provider': 'Провайдер TTS',
-            'tts_voice': 'Голос TTS',
-            'tts_speed': 'Скорость речи',
-            'incoming_greeting': 'Приветствие для входящих',
-            'recording_format': 'Формат записи',
-            'recording_keep_days': 'Хранить записи (дней)',
-            'jwt_expire_minutes': 'JWT время жизни',
-            'refresh_expire_days': 'Refresh токен (дней)',
-            'max_login_attempts': 'Максимум попыток входа',
-            'lockout_duration': 'Блокировка (минут)',
-            'email_notifications': 'Email уведомления',
-            'webhook_url': 'Webhook URL',
-            'webhook_events': 'События Webhook',
-            'enable_monitoring': 'Мониторинг',
-            'log_level': 'Уровень логирования',
-            'debug_mode': 'Режим отладки'
+            'system.name': 'Название системы',
+            'dialer.max_calls': 'Максимум одновременных звонков',
+            'dialer.default_cps': 'CPS по умолчанию',
+            'asterisk.ami_host': 'AMI хост',
+            'asterisk.ami_port': 'AMI порт',
+            'asterisk.ami_user': 'AMI пользователь',
+            'asterisk.ami_password': 'AMI пароль',
+            'tts.default_voice': 'Голос TTS',
+            'tts.speed': 'Скорость речи',
+            'incoming.greeting_enabled': 'Проигрывать приветствие',
+            'incoming.greeting_audio_id': 'Аудио приветствия',
+            'audio.retention_days': 'Хранить записи (дней)',
+            'security.session_timeout': 'Таймаут сессии (сек)',
+            'security.max_login_attempts': 'Максимум попыток входа',
+            'security.block_duration': 'Блокировка (сек)',
+            'notifications.email_enabled': 'Email уведомления',
+            'logging.level': 'Уровень логирования'
         };
-        return labels[key] || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        return labels[key] || key.split('.').pop().replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     },
     
     // ============ ДЕЙСТВИЯ ============
@@ -386,9 +380,14 @@ const SettingsModule = {
         try {
             const response = await authFetch(`${API_BASE}/settings/${key}`, {
                 method: 'PUT',
-                body: JSON.stringify({ value })
+                // SettingUpdateRequest.value is typed str on the backend
+                // (app/models/settings.py) - it stores/parses everything
+                // as text internally regardless of value_type. Sending the
+                // raw JS boolean/number as-is risks a 422 depending on
+                // Pydantic's coercion mode; stringify explicitly instead.
+                body: JSON.stringify({ value: String(value) })
             });
-            
+
             if (response.ok) {
                 this.settings[key].value = value;
                 this.updateValueIndicator(key, value);
