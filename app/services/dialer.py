@@ -1303,7 +1303,7 @@ class DialerManager:
         if not action_id:
             logger.warning(f"DialBegin без ActionID: {unique_id}")
             return
-        
+
         # Проверка reservation
         reservation = await self.redis.hget("reservations_data", action_id)
         if reservation:
@@ -1311,13 +1311,36 @@ class DialerManager:
             data['state'] = 'confirmed'
             await self.redis.hset("reservations_data", action_id, json.dumps(data))
             logger.debug(f"Reservation подтверждена: {action_id}")
-        
+
         # Обновление ZSET
         await self.redis.zadd(self.active_channels_ts_key, {action_id: time.time()})
-        
+
         # Обновление mapping
         self._add_mapping(action_id, unique_id, channel)
         self.call_start_times[unique_id] = datetime.utcnow()
+
+        # Регистрируем linkedid -> action_id отдельно от uniqueid. Дальше
+        # по звонку UserEvent(DialerResult,...) и DTMF-события прилетают
+        # уже на СОВСЕМ ДРУГОМ канале - PJSIP-леге, который Dial() создаёт
+        # (channel здесь - Local-канал, инициировавший Dial()), у него
+        # свой uniqueid, который никогда не регистрируется в
+        # unique_to_action напрямую. Без этой записи _resolve_action_id
+        # для тех событий проваливался (unique_id не найден, channel-
+        # префикс "Local/..." не совпадает с "PJSIP/...", а linked_id
+        # совпадал бы с уже зарегистрированным ключом только случайно) -
+        # из-за этого _handle_user_event не мог получить ctx.answered_at и
+        # длительность звонка (DialerResult приходит раньше Hangup, когда
+        # ctx.duration ещё не посчитан) сохранялась пустой, подтверждено
+        # живьём: агрит/таймаут с реальным разговором в несколько секунд
+        # сохранялись с длительностью 0:00.
+        linked_id = event.get('linkedid')
+        if linked_id and linked_id != unique_id:
+            self.unique_to_action[linked_id] = action_id
+            # В action_to_uniques[action_id], а не только unique_to_action,
+            # чтобы _cleanup_mappings() (который проходит именно по этому
+            # набору при завершении звонка) снял и эту запись тоже, а не
+            # оставил её висеть в памяти после каждого звонка навсегда.
+            self.action_to_uniques[action_id].add(linked_id)
         
         # Обновление контекста
         if action_id in self.call_contexts:
