@@ -106,7 +106,20 @@ minimum_expiration = 60
 [${FREEPBX_EXTENSION}_endpoint]
 type = endpoint
 transport = transport-udp
-context = dialer_bridge
+; ВНИМАНИЕ: context здесь - это контекст для ВХОДЯЩИХ INVITE НА этот
+; endpoint (т.е. когда кто-то реально звонит на номер ${FREEPBX_EXTENSION}
+; со стороны FreePBX), а не для звонков, которые сам AutoDialer исходящим
+; образом инициирует через Local/<номер>@dialer_bridge/n (у Local-канала
+; контекст задаётся прямо в строке канала, от этой настройки не зависит).
+; Раньше здесь стоял dialer_bridge - и любой входящий звонок НА 291 (кто-то
+; набрал номер AutoDialer со своего телефона) исполнял _X. с EXTEN=291 и
+; тут же сам себе набирал Dial(PJSIP/291@291_endpoint) - то есть звонил
+; сам себе, что создавало НОВЫЙ входящий INVITE на тот же endpoint,
+; который делал то же самое - подтверждено живьём: один входящий звонок
+; на 291 породил бесконечный шторм из десятков каналов в секунду.
+; incoming - специально существующий в дальплане контекст для настоящих
+; входящих звонков (приветствие + запись), это и есть правильное место.
+context = incoming
 
 ; ========== КОДЕКИ ==========
 ; Приоритет: ulaw, alaw, g722
@@ -281,7 +294,7 @@ match_header = From: <sip:${FREEPBX_EXTENSION}@${FREEPBX_IP}>
 ; [${FREEPBX_EXTENSION}_backup_endpoint]
 ; type = endpoint
 ; transport = transport-udp
-; context = dialer_bridge
+; context = incoming
 ; disallow = all
 ; allow = ulaw
 ; allow = alaw
