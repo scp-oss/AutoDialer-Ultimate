@@ -450,13 +450,24 @@ setup_systemd() {
     
     mkdir -p /etc/systemd/system/asterisk.service.d
     
+    # ВНИМАНИЕ: намеренно НЕ указываем здесь User=/Group=asterisk.
+    # asterisk.conf уже содержит runuser=asterisk/rungroup=asterisk -
+    # это заставляет сам процесс Asterisk (запущенный systemd от root)
+    # самостоятельно chown'ить /var/run/asterisk и понижать привилегии
+    # через capabilities. Если ЗДЕСЬ тоже задать User=asterisk, systemd
+    # стартует процесс уже НЕ от root - и тогда собственная попытка
+    # Asterisk сделать chown/setuid/capset проваливается с ошибками
+    # "Unable to chown run directory" / "Unable to install capabilities",
+    # из-за чего control-сокет /var/run/asterisk/asterisk.ctl вообще не
+    # создаётся (asterisk -r перестаёт подключаться). Подтверждено
+    # живьём: с User=asterisk здесь процесс формально "active (running)",
+    # но asterisk.ctl отсутствует. Один-единственный механизм понижения
+    # привилегий должен использоваться - через runuser/rungroup.
     cat > /etc/systemd/system/asterisk.service.d/limits.conf << 'EOF'
 [Service]
 LimitNOFILE=65535
 LimitMEMLOCK=infinity
 LimitNPROC=65535
-User=asterisk
-Group=asterisk
 CPUQuota=200%
 MemoryMax=2G
 TasksMax=infinity

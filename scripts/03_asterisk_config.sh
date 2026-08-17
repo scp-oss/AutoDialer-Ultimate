@@ -493,13 +493,18 @@ print_success "Permissions set"
 # =============================================
 print_step "Creating systemd override for Asterisk..."
 
+# ВНИМАНИЕ: намеренно НЕ указываем здесь User=/Group=asterisk - см.
+# runuser/rungroup в asterisk.conf выше. Если systemd сам стартует
+# процесс от asterisk (не root), собственная попытка Asterisk понизить
+# привилегии через chown/capabilities проваливается ("Unable to chown
+# run directory", "Unable to install capabilities"), и control-сокет
+# /var/run/asterisk/asterisk.ctl не создаётся вообще - подтверждено
+# живьём. Единственный механизм понижения привилегий - runuser/rungroup.
 cat > /etc/systemd/system/asterisk.service.d/limits.conf << 'EOF'
 [Service]
 LimitNOFILE=655350
 LimitMEMLOCK=infinity
 LimitNPROC=655350
-User=asterisk
-Group=asterisk
 CPUQuota=200%
 MemoryMax=2G
 TasksMax=infinity
