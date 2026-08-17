@@ -1264,7 +1264,7 @@ class DialerManager:
             elif event_name == 'Hangup':
                 await self._handle_hangup(event, channel, unique_id, linked_id)
             elif event_name == 'UserEvent':
-                await self._handle_user_event(event, linked_id)
+                await self._handle_user_event(event, linked_id, unique_id)
             elif event_name == 'DTMF':
                 await self._handle_dtmf(event, unique_id)
         except Exception as e:
@@ -1459,7 +1459,8 @@ class DialerManager:
                     status,
                     linked_id,
                     unique_id,
-                    ctx.retry_count
+                    ctx.retry_count,
+                    duration=ctx.duration
                 )
         
         logger.info(f"📴 Hangup: {action_id}, причина={cause_txt}, активно={active}")
@@ -1477,7 +1478,7 @@ class DialerManager:
 
         asyncio.create_task(self._cleanup_terminated(action_id))
     
-    async def _handle_user_event(self, event, linked_id: str):
+    async def _handle_user_event(self, event, linked_id: str, unique_id: Optional[str] = None):
         """Обработка UserEvent"""
         userevent = event.get('userevent')
 
@@ -1500,13 +1501,26 @@ class DialerManager:
 
             logger.info(f"🎯 DialerResult: кампания={campaign_id}, телефон={phone}, статус={status}")
 
+            # DialerResult обычно приходит ДО Hangup (dialplan шлёт его
+            # прямо перед своим Hangup()), так что ctx.duration (считается
+            # в _handle_hangup) тут ещё не установлен - берём длительность
+            # "на текущий момент" от ctx.answered_at, иначе результат
+            # сохранялся вообще без длительности (подтверждено живьём:
+            # 0:00 у явно отвеченных и разговорных звонков).
+            duration = None
+            action_id = self._resolve_action_id(unique_id, linked_id)
+            ctx = self.call_contexts.get(action_id) if action_id else None
+            if ctx and ctx.answered_at:
+                duration = int((datetime.utcnow() - ctx.answered_at).total_seconds())
+
             await self._save_call_result(
                 int(campaign_id) if campaign_id else 0,
                 phone,
                 status,
                 linked_id,
                 None,
-                retry_count
+                retry_count,
+                duration=duration
             )
 
             if status in ['noanswer', 'busy', 'failed']:
@@ -1525,7 +1539,8 @@ class DialerManager:
         if not await self.redis.set(dedup_key, "1", ex=300, nx=True):
             return  # DialerResult успел прийти первым
         await self._save_call_result(
-            ctx.campaign_id, ctx.phone, 'unknown', linked_id, unique_id, ctx.retry_count
+            ctx.campaign_id, ctx.phone, 'unknown', linked_id, unique_id, ctx.retry_count,
+            duration=ctx.duration
         )
     
     async def _handle_dtmf(self, event, unique_id: str):
@@ -1576,22 +1591,24 @@ class DialerManager:
         status: str,
         linked_id: Optional[str],
         unique_id: Optional[str],
-        retry: int
+        retry: int,
+        duration: Optional[int] = None
     ):
         """Сохранение результата звонка"""
         if self.call_result_service:
             try:
                 from app.models.call import CallResultCreateRequest, CallResultStatus
-                
+
                 request = CallResultCreateRequest(
                     campaign_id=campaign_id if campaign_id > 0 else None,
                     phone=phone,
                     status=CallResultStatus(status) if status in [s.value for s in CallResultStatus] else CallResultStatus.FAILED,
                     unique_id=unique_id,
                     linked_id=linked_id,
-                    retry_count=retry
+                    retry_count=retry,
+                    duration=duration
                 )
-                
+
                 await self.call_result_service.save_call_result(request)
             except Exception as e:
                 logger.error(f"Ошибка сохранения результата звонка: {e}")
@@ -1601,7 +1618,7 @@ class DialerManager:
                 normalized = self.normalize_phone(phone)
                 if not normalized:
                     return
-                
+
                 async with self.db_pool.acquire() as conn:
                     # idx_contacts_phone_active - единственный unique-индекс
                     # на contacts.phone - частичный (`WHERE NOT
@@ -1616,13 +1633,13 @@ class DialerManager:
                         DO UPDATE SET phone = EXCLUDED.phone
                         RETURNING id
                     """, normalized)
-                    
+
                     await conn.execute("""
-                        INSERT INTO call_results 
-                        (campaign_id, contact_id, linked_id, unique_id, status, retry_count)
-                        VALUES ($1, $2, $3, $4, $5, $6)
-                    """, campaign_id if campaign_id > 0 else None, contact_id, linked_id, unique_id, status, retry)
-                    
+                        INSERT INTO call_results
+                        (campaign_id, contact_id, linked_id, unique_id, status, retry_count, duration)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    """, campaign_id if campaign_id > 0 else None, contact_id, linked_id, unique_id, status, retry, duration)
+
                     logger.debug(f"Результат сохранён: {normalized} -> {status}")
                     
             except Exception as e:
