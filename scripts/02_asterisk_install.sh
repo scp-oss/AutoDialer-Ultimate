@@ -409,10 +409,21 @@ setup_permissions() {
         /usr/sbin/useradd -r -m -d /var/lib/asterisk -s /sbin/nologin -c "Asterisk PBX" asterisk
         log_success "Пользователь asterisk создан"
     fi
-    
+
+    # /var/run (он же /run) - это tmpfs, который полностью очищается при
+    # КАЖДОЙ перезагрузке сервера (в отличие от простого restart сервиса).
+    # Без systemd-tmpfiles.d правила /var/run/asterisk создаётся только
+    # один раз здесь, при установке, и переживает лишь до первого reboot -
+    # после чего Asterisk не может стартовать: "mkdir: невозможно создать
+    # каталог «/var/run/asterisk»: Отказано в доступе". Подтверждено живьём
+    # на тестовом сервере после реального перезапуска железа.
+    mkdir -p /var/run/asterisk
+    echo 'd /var/run/asterisk 0755 asterisk asterisk -' > /etc/tmpfiles.d/asterisk.conf
+    systemd-tmpfiles --create /etc/tmpfiles.d/asterisk.conf 2>/dev/null || true
+
     chown -R asterisk:asterisk /etc/asterisk /var/lib/asterisk /var/log/asterisk /var/spool/asterisk /var/run/asterisk /usr/lib/asterisk
     chmod 755 /etc/asterisk /var/lib/asterisk /var/log/asterisk /var/spool/asterisk
-    
+
     log_success "Права установлены"
 }
 
