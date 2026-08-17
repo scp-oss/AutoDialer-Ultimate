@@ -177,20 +177,20 @@ same => n,Wait(0.2)
 ; AMD должен отработать (и дослушать) ДО того, как начнём проигрывать
 ; своё TTS - он различает живого человека и автоответчика по тому, что
 ; говорит ДАЛЬНЯЯ сторона первой, а наш же Background() заглушил бы это,
-; если бы шёл одновременно. [sub-amd] сам публикует
-; UserEvent(DialerResult,Status: machine,...) при вердикте MACHINE, так
-; что результат уже записан к моменту возврата сюда - остаётся только
-; прервать IVR и положить трубку, а не тратить питч на автоответчик.
+; если бы шёл одновременно. Раньше при вердикте MACHINE звонок сразу
+; вешался вместо проигрывания питча - но вердикт строится только на
+; initialSilence (2500мс) молчания после ответа, и живой человек, который
+; просто не сказал "Алло" сразу, неотличим на этом этапе от автоответчика
+; - подтверждено живьём (взяли трубку, промолчали - звонок обрывался до
+; проигрывания сообщения). Раз звонок всё равно отвечен - теперь всегда
+; проигрываем питч; AMDSTATUS по-прежнему пишется в CDR(userfield) внутри
+; sub-amd для статистики, но больше не завершает звонок раньше времени.
 same => n,Gosub(sub-amd,s,1)
-same => n,GotoIf(\$["\${AMDSTATUS}"="MACHINE"]?amd_hangup)
 
 same => n,Set(TIMEOUT(digit)=\${DTMF_TIMEOUT})
 same => n,Set(TIMEOUT(response)=\${DTMF_TIMEOUT})
 same => n,Background(\${AUDIO_FILE})
 same => n,WaitExten(\${DTMF_TIMEOUT})
-
-same => n(amd_hangup),NoOp(=== Автоответчик - питч пропущен, кладём трубку ===)
-same => n,Hangup()
 
 
 ; =============================================
@@ -311,7 +311,13 @@ same => n,Return()
 
 same => n(machine),NoOp(=== Обнаружен автоответчик ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},amd=machine)
-same => n,UserEvent(DialerResult,Status: machine,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},LinkedID: \${CHANNEL(linkedid)})
+; Без UserEvent(DialerResult,Status: machine,...) здесь - sub-media теперь
+; всё равно проигрывает питч и ждёт DTMF при любом вердикте AMD, так что
+; отправка результата "machine" сразу заблокировала бы реальный
+; "agreed"/"declined" через Redis-дедупликацию в
+; DialerManager._handle_user_event. AMDSTATUS остаётся в CDR(userfield)
+; для аудита; итоговый DialerResult теперь всегда приходит из обработчиков
+; DTMF или из ветки таймаута.
 same => n,Return()
 
 same => n(human),NoOp(=== Обнаружен человек ===)
