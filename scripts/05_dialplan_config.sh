@@ -92,8 +92,18 @@ exten => _X.,1,NoOp(=== AutoDialer: Вызов \${EXTEN} ===)
 ; независимо на обеих половинах пары - подтверждено живьём (двойной
 ; звонок абоненту). linkedid общий у обеих половин, используем как ключ
 ; разовой блокировки в astdb, снятой в [hangup-handler].
+;
+; ПРОВЕРКА-ЗАТЕМ-ЗАПИСЬ (GotoIf(DB_EXISTS)+Set(DB(...)=1)) сама по себе не
+; атомарна - обе половины Local-канала могут выполняться параллельно, и
+; обе могут проверить DB_EXISTS ДО того, как любая успеет записать ключ -
+; подтверждено живьём: два "Занято" почти одновременно на один номер при
+; быстром отказе. LOCK()/UNLOCK() (func_lock) делает проверку+запись
+; настоящей критической секцией.
+same => n,Set(DIALER_LOCK_NAME=dialer_bridge_\${CHANNEL(linkedid)})
+same => n,Set(DIALER_LOCK_OK=\${LOCK(\${DIALER_LOCK_NAME})})
 same => n,GotoIf(\$[\${DB_EXISTS(dialer_bridge_lock/\${CHANNEL(linkedid)})}]?duplicate,1)
 same => n,Set(DB(dialer_bridge_lock/\${CHANNEL(linkedid)})=1)
+same => n,Set(UNLOCK(\${DIALER_LOCK_NAME})=)
 same => n,Set(CAMPAIGN_ID=\${CAMPAIGN_ID})
 same => n,Set(RETRY_COUNT=\${RETRY_COUNT})
 same => n,Set(CALLERID(num)=\${CALLER_ID})
@@ -114,6 +124,7 @@ same => n,Dial(PJSIP/\${DIAL_NUMBER}@\${TRUNK_NAME},\${CALL_TIMEOUT},U(sub-media
 same => n,Goto(sub-dial-status,s,1)
 
 exten => duplicate,1,NoOp(=== Повторный запуск dialer_bridge для linkedid \${CHANNEL(linkedid)} - пропускаем ===)
+same => n,Set(UNLOCK(\${DIALER_LOCK_NAME})=)
 same => n,Hangup()
 
 
