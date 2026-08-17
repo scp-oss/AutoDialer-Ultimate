@@ -88,6 +88,12 @@ DTMF_TIMEOUT = ${DTMF_TIMEOUT}
 ; =============================================
 [dialer_bridge]
 exten => _X.,1,NoOp(=== AutoDialer: Вызов \${EXTEN} ===)
+; Local/\${EXTEN}@dialer_bridge/n иногда запускает этот extension
+; независимо на обеих половинах пары - подтверждено живьём (двойной
+; звонок абоненту). linkedid общий у обеих половин, используем как ключ
+; разовой блокировки в astdb, снятой в [hangup-handler].
+same => n,GotoIf(\$[\${DB_EXISTS(dialer_bridge_lock/\${CHANNEL(linkedid)})}]?duplicate,1)
+same => n,Set(DB(dialer_bridge_lock/\${CHANNEL(linkedid)})=1)
 same => n,Set(CAMPAIGN_ID=\${CAMPAIGN_ID})
 same => n,Set(RETRY_COUNT=\${RETRY_COUNT})
 same => n,Set(CALLERID(num)=\${CALLER_ID})
@@ -106,6 +112,9 @@ same => n,Set(__ORIGINAL_PHONE=\${EXTEN})
 same => n,Set(DIAL_NUMBER=\${IF(\$["\${EXTEN:0:1}"="7"]?8\${EXTEN:1}:\${EXTEN})})
 same => n,Dial(PJSIP/\${DIAL_NUMBER}@\${TRUNK_NAME},\${CALL_TIMEOUT},U(sub-media^\${CAMPAIGN_ID}))
 same => n,Goto(sub-dial-status,s,1)
+
+exten => duplicate,1,NoOp(=== Повторный запуск dialer_bridge для linkedid \${CHANNEL(linkedid)} - пропускаем ===)
+same => n,Hangup()
 
 
 ; =============================================
@@ -284,6 +293,7 @@ exten => s,1,NoOp(=== Канал \${CHANNEL} завершён ===)
 ; \`channel.startswith(...)\` на стороне приложения падает с
 ; AttributeError - подтверждено живьём на Docker-сборке того же дозвона.
 same => n,UserEvent(DialerHangup,LinkedID: \${CHANNEL(linkedid)},Status: \${DIALSTATUS},Duration: \${CDR(duration)},BillSec: \${CDR(billsec)})
+same => n,DBdel(dialer_bridge_lock/\${CHANNEL(linkedid)})
 same => n,Return()
 
 
