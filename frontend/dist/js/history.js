@@ -14,13 +14,17 @@ const HistoryModule = {
     // ('completed', 'no_answer', 'cancelled' и т.п.), которых не существует
     // ни в этом enum'е, ни в диалплане - фильтр по статусу либо ничего не
     // находил, либо получал 422 от FastAPI на значении, которого нет в enum.
+    // agreed/timeout переименованы под смысл "подтвердил прослушивание /
+    // прослушал» вместо «согласился на предложение" - технический код
+    // статуса (enum-значение "agreed"/"timeout" в БД и в диалплане) не
+    // менялся, поменялась только подпись, которую видит оператор.
     STATUS_LABELS: {
-        agreed: 'Согласился',
+        agreed: 'Подтвердил (нажал 1)',
         declined: 'Отказался',
         busy: 'Занято',
         noanswer: 'Нет ответа',
         failed: 'Ошибка',
-        timeout: 'Таймаут',
+        timeout: 'Прослушал, не подтвердил',
         canceled: 'Отменён',
         machine: 'Автоответчик',
         congestion: 'Перегрузка',
@@ -421,7 +425,7 @@ const HistoryModule = {
                             </div>
                             <div class="stat-card-large stat-success">
                                 <div class="stat-value">${stats.agreed || 0}</div>
-                                <div class="stat-label">Согласились</div>
+                                <div class="stat-label">Подтвердили прослушивание</div>
                             </div>
                             <div class="stat-card-large">
                                 <div class="stat-value">${stats.machine || 0}</div>
