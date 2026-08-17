@@ -1243,17 +1243,38 @@ class DialerManager:
             channel = channel[0] if channel else ''
         unique_id = event.get('uniqueid')
         linked_id = event.get('linkedid')
-        
-        # Пропускаем не наши каналы
-        if channel and not channel.startswith('Local/'):
+
+        # Пропускаем не наши каналы - но ТОЛЬКО для DialBegin/DialEnd/
+        # BridgeEnter/Hangup, которые в принципе могут прилететь по
+        # каналам, не связанным с AutoDialer вообще. UserEvent и DTMF
+        # ВСЕГДА фактически происходят на канале, который создал Dial() -
+        # т.е. на PJSIP-леге ("PJSIP/291_endpoint-..."), а не на
+        # Local/<номер>@dialer_bridge: [sub-media] (весь AMD/DTMF/
+        # UserEvent(DialerResult,...) код) запускается через опцию U() у
+        # Dial() ИМЕННО на этом новом канале, не на исходном Local. Фильтр
+        # "не наши каналы" из-за этого молча дропал АБСОЛЮТНО ВСЕ
+        # UserEvent(DialerResult,...) с реальным результатом
+        # (agreed/declined/machine/custom.../timeout) и все DTMF-события -
+        # единственное, что вообще когда-либо сохранялось для отвеченного
+        # звонка, было честное, но всегда неверное 'unknown' из
+        # 3-секундного fallback в _handle_hangup. Подтверждено живьём:
+        # статус "Неизвестно" на каждом звонке с реальным DTMF=1, при том
+        # что UserEvent(DialerResult,Status: agreed,...) исполнялся в
+        # консоли Asterisk корректно каждый раз - событие просто никогда
+        # не доходило до _handle_user_event. UserEvent/DTMF уже безопасно
+        # само-скоуплены: UserEvent проверяет userevent=='DialerResult' и
+        # dedup по linked_id внутри _handle_user_event, а DTMF проверяет
+        # action_id in self.call_contexts внутри _handle_dtmf - фильтр по
+        # каналу для них не только лишний, но и вредный.
+        if event_name not in ('UserEvent', 'DTMF') and channel and not channel.startswith('Local/'):
             return
-        
+
         # Дедупликация
         event_key = f"{event_name}_{unique_id}"
         if event_key in self.processed_events:
             return
         self.processed_events[event_key] = True
-        
+
         try:
             if event_name == 'DialBegin':
                 await self._handle_dial_begin(event, channel, unique_id)
