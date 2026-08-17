@@ -1430,17 +1430,28 @@ class DialerManager:
         
         # Сохраняем результат
         if ctx:
-            status = self._map_hangup_cause_to_status(cause_txt)
             if ctx.answered_at:
-                status = 'agreed'  # Упрощённо, в реальности зависит от DTMF
-            await self._save_call_result(
-                ctx.campaign_id,
-                ctx.phone,
-                status,
-                linked_id,
-                unique_id,
-                ctx.retry_count
-            )
+                # Реальный статус отвеченного звонка (согласие/отказ/
+                # автоответчик/...) считает dialplan по DTMF и присылает
+                # отдельным UserEvent(DialerResult) - см. _handle_user_event.
+                # Раньше здесь СВЕРХУ жёстко писалось 'agreed' для ЛЮБОГО
+                # отвеченного звонка, независимо от реального результата
+                # (подтверждено живьём: отказ/автоответчик/тишина - всё
+                # считалось "согласием"). UserEvent обычно приходит раньше
+                # или почти одновременно с Hangup - даём ему 3 секунды,
+                # прежде чем считать, что он не придёт вовсе, и сохранять
+                # честное 'unknown' вместо выдуманного результата.
+                asyncio.create_task(self._fallback_unknown_result(ctx, linked_id, unique_id))
+            else:
+                status = self._map_hangup_cause_to_status(cause_txt)
+                await self._save_call_result(
+                    ctx.campaign_id,
+                    ctx.phone,
+                    status,
+                    linked_id,
+                    unique_id,
+                    ctx.retry_count
+                )
         
         logger.info(f"📴 Hangup: {action_id}, причина={cause_txt}, активно={active}")
 
@@ -1460,15 +1471,26 @@ class DialerManager:
     async def _handle_user_event(self, event, linked_id: str):
         """Обработка UserEvent"""
         userevent = event.get('userevent')
-        
+
         if userevent == 'DialerResult':
             status = event.get('status', 'unknown')
             campaign_id = event.get('campaign', '0')
             phone = event.get('phone', '')
             retry_count = int(event.get('retrycount', '0'))
-            
+
+            # Тот же dialplan-контекст выполняется дважды на звонок (по разу
+            # на каждую половину Local-канала из-за флага /n - см. комментарий
+            # в call_result.py про гонку на contacts.phone) - без этой
+            # блокировки сюда прилетало два DialerResult на один звонок,
+            # каждый писал свою строку в call_results. Тот же ключ читает
+            # _handle_hangup, чтобы не дублировать результат ещё и оттуда.
+            dedup_key = f"dialer_result_saved:{linked_id}"
+            if not await self.redis.set(dedup_key, "1", ex=300, nx=True):
+                logger.debug(f"DialerResult для linked_id={linked_id} уже обработан, пропускаем дубликат")
+                return
+
             logger.info(f"🎯 DialerResult: кампания={campaign_id}, телефон={phone}, статус={status}")
-            
+
             await self._save_call_result(
                 int(campaign_id) if campaign_id else 0,
                 phone,
@@ -1477,9 +1499,25 @@ class DialerManager:
                 None,
                 retry_count
             )
-            
+
             if status in ['noanswer', 'busy', 'failed']:
                 await self._schedule_retry(int(campaign_id) if campaign_id else 0, phone, retry_count + 1, status)
+
+    async def _fallback_unknown_result(self, ctx, linked_id: str, unique_id: str, delay: float = 3.0):
+        """
+        Подстраховка для отвеченных звонков: если UserEvent(DialerResult) с
+        реальным результатом (см. _handle_user_event) не пришёл за delay
+        секунд после Hangup, сохраняем честное 'unknown' - лучше явно
+        неизвестный результат, чем выдуманный "agreed" или полное отсутствие
+        строки в call_results.
+        """
+        await asyncio.sleep(delay)
+        dedup_key = f"dialer_result_saved:{linked_id}"
+        if not await self.redis.set(dedup_key, "1", ex=300, nx=True):
+            return  # DialerResult успел прийти первым
+        await self._save_call_result(
+            ctx.campaign_id, ctx.phone, 'unknown', linked_id, unique_id, ctx.retry_count
+        )
     
     async def _handle_dtmf(self, event, unique_id: str):
         """Обработка DTMF"""
