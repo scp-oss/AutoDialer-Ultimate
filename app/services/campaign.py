@@ -423,6 +423,26 @@ class CampaignService:
         logger.info(f"Кампания {campaign_id} удалена")
         return True
     
+    async def get_summary(self) -> Dict[str, int]:
+        """
+        Сводка по количеству кампаний в каждом статусе - для виджета
+        "Сводка по кампаниям" на дашборде (App.dashboard.loadCampaignsSummary).
+        """
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT status, COUNT(*) AS cnt FROM campaigns GROUP BY status"
+            )
+
+        by_status = {row['status']: row['cnt'] for row in rows}
+        total = sum(by_status.values())
+
+        return {
+            "total": total,
+            "running": by_status.get(CampaignStatus.RUNNING.value, 0),
+            "completed": by_status.get(CampaignStatus.COMPLETED.value, 0),
+            "draft": by_status.get(CampaignStatus.DRAFT.value, 0)
+        }
+
     async def list_campaigns(
         self,
         page: int = 1,

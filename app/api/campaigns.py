@@ -52,6 +52,32 @@ async def create_campaign(
     return {"campaign_id": campaign_id}
 
 
+@router.get("/summary")
+async def get_campaigns_summary(
+    user: TokenData = Depends(get_current_user)
+):
+    """
+    Сводка по количеству кампаний в каждом статусе (для дашборда).
+    Должен стоять ДО /{campaign_id} - иначе "summary" пытается
+    распарситься как campaign_id:int и падает с 422 (тот же порядок
+    роутов, что уже пофикшен в contacts.py/incoming.py).
+    """
+    campaign_service = get_campaign_service()
+    return await campaign_service.get_summary()
+
+
+@router.get("/active")
+async def get_active_campaigns(user: TokenData = Depends(get_current_user)):
+    """
+    Получить активные кампании. Была зарегистрирована ПОСЛЕ /{campaign_id}
+    (см. ниже) - каждый вызов /campaigns/active падал с тем же 422, пытаясь
+    распарсить "active" как campaign_id:int. Никогда не работала, поэтому
+    никто не заметил - тот же класс бага, что и /summary выше.
+    """
+    campaign_service = get_campaign_service()
+    return await campaign_service.get_active_campaigns()
+
+
 @router.get("/{campaign_id}", response_model=CampaignDetailResponse)
 async def get_campaign(
     campaign_id: int,
@@ -156,10 +182,3 @@ async def get_campaign_progress(
     if not progress:
         raise HTTPException(404, "Campaign not found")
     return progress
-
-
-@router.get("/active")
-async def get_active_campaigns(user: TokenData = Depends(get_current_user)):
-    """Получить активные кампании"""
-    campaign_service = get_campaign_service()
-    return await campaign_service.get_active_campaigns()

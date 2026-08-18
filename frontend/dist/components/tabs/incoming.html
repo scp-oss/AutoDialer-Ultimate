@@ -432,137 +432,18 @@
     }
 </style>
 
-<script>
-    (function() {
-        // Адаптация мобильного вида
-        const checkMobileView = () => {
-            const isMobile = window.innerWidth < 768;
-            const tableContainer = document.querySelector('.incoming-table-container');
-            const cardsContainer = document.getElementById('incomingCards');
-            
-            if (tableContainer) tableContainer.style.display = isMobile ? 'none' : 'block';
-            if (cardsContainer) cardsContainer.style.display = isMobile ? 'block' : 'none';
-        };
-        
-        window.addEventListener('resize', checkMobileView);
-        
-        // Расширение модуля incoming
-        const incomingModule = App.incoming;
-        if (incomingModule) {
-            // Сохраняем оригинальные методы
-            const originalRender = incomingModule.renderIncoming;
-            const originalLoadStats = incomingModule.loadStats;
-            
-            // Метод загрузки статистики
-            incomingModule.loadStats = async function() {
-                try {
-                    const data = await App.apiGet('/incoming-calls/stats');
-                    
-                    document.getElementById('incomingTotal').textContent = data.total || 0;
-                    document.getElementById('incomingProcessed').textContent = data.completed || 0;
-                    document.getElementById('incomingProcessing').textContent = data.processing || 0;
-                    document.getElementById('incomingFailed').textContent = data.failed || 0;
-                    
-                } catch (error) {
-                    console.error('Failed to load incoming stats:', error);
-                }
-            };
-            
-            // Обновление пагинации
-            incomingModule.renderPagination = function() {
-                const container = document.getElementById('incomingPagination');
-                if (!container) return;
-                
-                if (this.totalPages <= 1) {
-                    container.innerHTML = '';
-                    return;
-                }
-                
-                let html = '<div class="pagination">';
-                
-                if (this.currentPage > 1) {
-                    html += `<button class="page-btn" data-page="${this.currentPage - 1}">←</button>`;
-                } else {
-                    html += `<button class="page-btn" disabled>←</button>`;
-                }
-                
-                const start = Math.max(1, this.currentPage - 2);
-                const end = Math.min(this.totalPages, this.currentPage + 2);
-                
-                if (start > 1) {
-                    html += `<button class="page-btn" data-page="1">1</button>`;
-                    if (start > 2) html += '<span class="page-dots">...</span>';
-                }
-                
-                for (let i = start; i <= end; i++) {
-                    html += `<button class="page-btn ${i === this.currentPage ? 'active' : ''}" data-page="${i}">${i}</button>`;
-                }
-                
-                if (end < this.totalPages) {
-                    if (end < this.totalPages - 1) html += '<span class="page-dots">...</span>';
-                    html += `<button class="page-btn" data-page="${this.totalPages}">${this.totalPages}</button>`;
-                }
-                
-                if (this.currentPage < this.totalPages) {
-                    html += `<button class="page-btn" data-page="${this.currentPage + 1}">→</button>`;
-                } else {
-                    html += `<button class="page-btn" disabled>→</button>`;
-                }
-                
-                html += '</div>';
-                
-                container.innerHTML = html;
-                
-                container.querySelectorAll('.page-btn[data-page]').forEach(btn => {
-                    btn.addEventListener('click', () => {
-                        this.loadIncomingCalls(parseInt(btn.dataset.page));
-                    });
-                });
-            };
-            
-            // Закрытие модалки деталей
-            incomingModule.closeDetailModal = function() {
-                App.hideModal('incomingDetailModal');
-                if (this.currentAudio) {
-                    this.currentAudio.pause();
-                    this.currentAudio = null;
-                }
-            };
-            
-            // Сохранение заметок
-            incomingModule.saveNotes = async function() {
-                const callId = this.currentCallId;
-                const notes = document.getElementById('incomingCallNotes')?.value;
-                
-                if (!callId) return;
-                
-                try {
-                    await App.apiPut(`/incoming-calls/${callId}/notes`, { notes });
-                    App.showToast('Заметка сохранена', 'success');
-                    
-                    // Обновить данные
-                    const call = this.incomingCalls.find(c => c.id === callId);
-                    if (call) call.notes = notes;
-                    
-                } catch (error) {
-                    console.error('Failed to save notes:', error);
-                    App.showToast('Ошибка сохранения', 'error');
-                }
-            };
-            
-            // Привязка кнопки сохранения заметок
-            document.getElementById('incomingSaveNotesBtn')?.addEventListener('click', () => {
-                incomingModule.saveNotes();
-            });
-            
-            // Кнопка обновления
-            document.getElementById('incomingRefreshBtn')?.addEventListener('click', () => {
-                incomingModule.loadIncomingCalls();
-                incomingModule.loadStats();
-            });
-        }
-        
-        // Инициализация
-        checkMobileView();
-    })();
-</script>
+<!--
+    Инлайновый <script> здесь раньше пытался расширить App.incoming - но
+    (а) эта вкладка вставляется через container.innerHTML в app.js, а
+    innerHTML не исполняет вложенные <script> теги (тот же баг, что был
+    в history.html/dashboard.html), и (б) даже если бы он выполнился,
+    App.incoming тогда не существовал вовсе - js/incoming.js определял
+    отдельный, никуда не подключённый window.IncomingPage с другими ID
+    элементов (incoming-tbody вместо incomingTableBody и т.п.). Вкладка
+    была полностью нерабочей - подтверждено живьём (пустая таблица,
+    вечная "Загрузка..."). js/incoming.js переписан как App.incoming,
+    использует реальные ID из разметки выше и вызывается из
+    App.switchTab через App.incoming.init(), как и остальные вкладки
+    (это включает адаптацию под мобильный вид - см. checkMobileView()
+    там же, по той же причине, по которой этот <script> не годится).
+-->
