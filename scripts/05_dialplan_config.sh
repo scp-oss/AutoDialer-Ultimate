@@ -332,6 +332,16 @@ same => n,Return()
 exten => s,1,NoOp(=== Входящий звонок с \${CALLERID(num)} ===)
 same => n,Set(CALLER_NUM=\${CALLERID(num)})
 same => n,Set(FILENAME=incoming_\${STRFTIME(\${EPOCH},,%Y%m%d_%H%M%S)}_\${CALLERID(num)})
+same => n,Set(REC_START=\${EPOCH})
+; Регистрация звонка в бэкенде (StopMixMonitor + POST /webhook) вынесена в
+; hangup handler, а не оставлена в линейном потоке ниже - большинство
+; звонящих вешают трубку задолго до Wait(30), а выполнение диалплана на
+; канале обрывается сразу на хендапе (никакого "h" extension здесь нет),
+; так что StopMixMonitor()/дальнейшие строки после Wait() просто никогда бы
+; не выполнились для типичного короткого звонка. hangup handler гарантированно
+; исполняется при любом сценарии завершения - тот же приём, что уже
+; используется в [dialer_bridge] (CHANNEL(hangup_handler_push)=hangup-handler).
+same => n,Set(CHANNEL(hangup_handler_push)=incoming-hangup,s,1)
 
 ; Выбор приветствия: настраивается в веб-интерфейсе (Настройки -> Входящие).
 ; SettingsService._apply_incoming_greeting (app/services/settings.py)
@@ -347,15 +357,33 @@ same => n,Goto(record)
 
 same => n(default_greeting),Background(tts/incoming_welcome)
 
-; Запись сообщения
+; Запись сообщения (StopMixMonitor - в hangup handler [incoming-hangup]
+; ниже, см. комментарий у CHANNEL(hangup_handler_push) выше)
 same => n(record),MixMonitor(/var/spool/asterisk/monitor/incoming/\${FILENAME}.wav,b)
 same => n,Wait(30)  ; Максимальная длительность записи 30 секунд
-same => n,StopMixMonitor()
 
 ; Прощальное сообщение
 same => n,Background(tts/thank_you)
 same => n,Wait(1)
 same => n,Hangup()
+
+
+; =============================================
+; Hangup handler для [incoming] - гарантированно останавливает запись и
+; регистрирует звонок в бэкенде (POST /api/incoming-calls/webhook,
+; auto_transcribe=True по умолчанию запускает расшифровку) независимо от
+; того, чем закончился звонок - без этого файл записи оставался бы только
+; на диске, без строки в БД и без возможности прослушать/расшифровать его
+; через веб-интерфейс.
+; =============================================
+[incoming-hangup]
+exten => s,1,NoOp(=== Входящий звонок \${CHANNEL} завершён - фиксируем запись ===)
+; Идемпотентно: если MixMonitor уже не запущен, StopMixMonitor() ничего не делает.
+same => n,StopMixMonitor()
+same => n,Set(REC_DURATION=\$[\${EPOCH}-\${REC_START}])
+same => n,GotoIf(\$["\${FILENAME}"=""]?done)
+same => n,System(curl -s --max-time 5 -X POST http://127.0.0.1:8000/api/incoming-calls/webhook -H "Content-Type: application/json" -d '{"caller_number":"\${CALLER_NUM}","recording_path":"/var/spool/asterisk/monitor/incoming/\${FILENAME}.wav","duration":\${REC_DURATION},"unique_id":"\${UNIQUEID}","linked_id":"\${CHANNEL(linkedid)}"}' &)
+same => n(done),Return()
 
 
 ; =============================================
