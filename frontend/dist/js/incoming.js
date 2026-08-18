@@ -295,10 +295,10 @@ App.incoming = {
                         <h4>📄 Транскрибация</h4>
                         <div class="transcription-box">${this.escapeHtml(call.transcription)}</div>
                     </div>
-                ` : status === 'failed' ? `
+                ` : status === 'failed' || status === 'completed' ? `
                     <div class="detail-section">
                         <h4>📄 Транскрибация</h4>
-                        <p>Расшифровка не удалась.
+                        <p>${status === 'failed' ? 'Расшифровка не удалась.' : 'Текст пуст (движок распознавания был недоступен на момент обработки).'}
                             <button class="btn btn-sm btn-outline" id="incomingRetryTranscribeBtn" data-id="${call.id}">
                                 🔁 Повторить
                             </button>

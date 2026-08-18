@@ -282,7 +282,12 @@ class TranscriptionService:
         
         if self.engine == TranscriptionEngine.NONE:
             logger.warning("Нет доступного движка транскрибации")
-            return ""
+            # None, а не "" - _transcribe_call (incoming.py) считает
+            # результат успешным по "text is not None", а "" не None:
+            # звонки без установленного движка (whisper/vosk не
+            # сконфигурированы) сохранялись как "завершено" с пустым
+            # текстом вместо честного "ошибка" - подтверждено живьём.
+            return None
         
         self._ensure_initialized()
         
