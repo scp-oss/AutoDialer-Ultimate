@@ -13,7 +13,9 @@ App.incoming = {
         totalRecords: 0,
         autoRefreshInterval: null,
         currentCallId: null,
-        currentAudio: null
+        currentAudio: null,
+        // callId -> blob: URL, so a call played twice doesn't re-fetch
+        recordingUrlCache: {}
     },
 
     // =============================================
@@ -184,7 +186,7 @@ App.incoming = {
                             `}
                         </div>
                         <div class="card-audio">
-                            <button class="play-pause-btn mobile" data-audio-url="${this.audioUrl(call)}">
+                            <button class="play-pause-btn mobile" data-call-id="${call.id}">
                                 ▶️ ${this.formatDuration(call.duration)}
                             </button>
                         </div>
@@ -255,7 +257,6 @@ App.incoming = {
         if (!content) return;
 
         const status = call.transcription_status || 'pending';
-        const audioUrl = this.audioUrl(call);
 
         content.innerHTML = `
             <div class="call-detail">
@@ -286,7 +287,7 @@ App.incoming = {
 
                 <div class="detail-section">
                     <h4>🎵 Запись</h4>
-                    <audio controls src="${audioUrl}" class="audio-player-full"></audio>
+                    <audio controls id="incomingDetailAudio" class="audio-player-full"></audio>
                 </div>
 
                 ${status === 'completed' && call.transcription ? `
@@ -317,6 +318,18 @@ App.incoming = {
         });
 
         App.showModal('incomingDetailModal');
+
+        // Плеер получает src отдельно, асинхронно - см. getRecordingBlobUrl():
+        // эндпоинт защищён Bearer-токеном в заголовке, а <audio src="..."> шлёт
+        // обычный GET без заголовков и всегда падает с 401.
+        this.getRecordingBlobUrl(call.id).then(url => {
+            const audioEl = document.getElementById('incomingDetailAudio');
+            if (audioEl && this.state.currentCallId === call.id) {
+                audioEl.src = url;
+            }
+        }).catch(error => {
+            console.error('Failed to load recording:', error);
+        });
     },
 
     closeDetailModal() {
@@ -358,14 +371,21 @@ App.incoming = {
     // =============================================
     // Действия со звонком
     // =============================================
-    downloadRecording(id) {
-        const url = `${App.API_BASE || '/api'}/incoming-calls/${id}/recording`;
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `incoming_${id}.wav`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+    async downloadRecording(id) {
+        // Same reason as getRecordingBlobUrl() below - a plain <a href>
+        // to a Bearer-protected endpoint sends no auth header and 401s.
+        try {
+            const url = await this.getRecordingBlobUrl(id);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `incoming_${id}.wav`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        } catch (error) {
+            console.error('Failed to download recording:', error);
+            App.showToast('Ошибка скачивания записи', 'error');
+        }
     },
 
     async deleteCall(id) {
@@ -387,6 +407,41 @@ App.incoming = {
         } catch (error) {
             console.error('Failed to delete call:', error);
             App.showToast('Ошибка удаления записи', 'error');
+        }
+    },
+
+    // Эндпоинт /incoming-calls/{id}/recording защищён Bearer-токеном в
+    // заголовке Authorization (см. get_current_user) - обычный GET без
+    // заголовков (как делает <audio src="...">/<a href="...">) на него
+    // всегда падает с 401. Тянем запись авторизованным fetch'ем и отдаём
+    // blob: URL, который уже можно свободно подставлять в src. Кешируем
+    // по call.id, чтобы повторное воспроизведение/скачивание не тянуло
+    // файл заново.
+    async getRecordingBlobUrl(callId) {
+        if (this.state.recordingUrlCache[callId]) {
+            return this.state.recordingUrlCache[callId];
+        }
+
+        const response = await fetch(`${App.API_BASE}/incoming-calls/${callId}/recording`, {
+            headers: { 'Authorization': `Bearer ${App.state.accessToken}` }
+        });
+        if (!response.ok) {
+            throw new Error(`Recording fetch failed: ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        this.state.recordingUrlCache[callId] = url;
+        return url;
+    },
+
+    async handlePlayClick(callId, button) {
+        try {
+            const url = await this.getRecordingBlobUrl(callId);
+            this.playAudio(url, button);
+        } catch (error) {
+            console.error('Failed to load recording:', error);
+            App.showToast('Ошибка загрузки записи', 'error');
         }
     },
 
@@ -460,7 +515,7 @@ App.incoming = {
         document.querySelectorAll('#incomingTableBody .play-pause-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                this.playAudio(btn.dataset.audioUrl, btn);
+                this.handlePlayClick(parseInt(btn.dataset.callId, 10), btn);
             });
         });
 
@@ -492,7 +547,7 @@ App.incoming = {
         document.querySelectorAll('.incoming-card .play-pause-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                this.playAudio(btn.dataset.audioUrl, btn);
+                this.handlePlayClick(parseInt(btn.dataset.callId, 10), btn);
             });
         });
 
@@ -517,10 +572,6 @@ App.incoming = {
     setText(id, value) {
         const el = document.getElementById(id);
         if (el) el.textContent = value;
-    },
-
-    audioUrl(call) {
-        return `${App.API_BASE || '/api'}/incoming-calls/${call.id}/recording`;
     },
 
     getTranscriptionDisplay(call) {
@@ -548,7 +599,7 @@ App.incoming = {
         if (!call.recording_path) return '<span class="no-recording">—</span>';
         return `
             <div class="mini-audio-player">
-                <button class="play-pause-btn" data-audio-url="${this.audioUrl(call)}" title="Воспроизвести">▶️</button>
+                <button class="play-pause-btn" data-call-id="${call.id}" title="Воспроизвести">▶️</button>
                 <span class="audio-duration">${this.formatDuration(call.duration)}</span>
             </div>
         `;
@@ -573,7 +624,7 @@ App.incoming = {
 
     formatDateTime(dateStr) {
         if (!dateStr) return '—';
-        return new Date(dateStr).toLocaleString('ru-RU', {
+        return App.parseServerDate(dateStr).toLocaleString('ru-RU', {
             day: '2-digit', month: '2-digit', year: 'numeric',
             hour: '2-digit', minute: '2-digit', second: '2-digit'
         }).replace(',', '');
@@ -581,7 +632,7 @@ App.incoming = {
 
     formatDateShort(dateStr) {
         if (!dateStr) return '—';
-        return new Date(dateStr).toLocaleString('ru-RU', {
+        return App.parseServerDate(dateStr).toLocaleString('ru-RU', {
             day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
         }).replace(',', '');
     },

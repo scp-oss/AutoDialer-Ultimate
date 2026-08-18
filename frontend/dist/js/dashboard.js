@@ -541,7 +541,7 @@ App.dashboard = {
 
     formatTime(isoString) {
         if (!isoString) return '—';
-        const date = new Date(isoString);
+        const date = App.parseServerDate(isoString);
         return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
     },
 

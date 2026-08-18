@@ -372,9 +372,24 @@ const App = {
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     },
 
+    // Postgres TIMESTAMP (no tz) + Python's datetime.utcnow() (used
+    // throughout the backend) means the API serializes timestamps like
+    // "2026-08-18T06:20:52.397300" - no 'Z'/offset. Per the ECMAScript
+    // date-time spec, a date string WITHOUT a timezone designator is
+    // parsed as LOCAL time, not UTC - so the browser showed the raw UTC
+    // value unshifted (e.g. 06:20 instead of 09:20 for MSK/UTC+3, exactly
+    // as reported live). Every timestamp this backend emits is UTC -
+    // append 'Z' when one isn't already present so Date parses it as UTC
+    // and converts to the browser's real local time.
+    parseServerDate(isoString) {
+        if (!isoString) return null;
+        const normalized = /[Zz]|[+-]\d{2}:?\d{2}$/.test(isoString) ? isoString : `${isoString}Z`;
+        return new Date(normalized);
+    },
+
     formatDateTime(isoString) {
         if (!isoString) return '-';
-        const date = new Date(isoString);
+        const date = this.parseServerDate(isoString);
         return date.toLocaleString('ru-RU');
     },
 
