@@ -325,6 +325,40 @@ same => n,Return()
 
 
 ; =============================================
+; Контекст incoming - обработка настоящих входящих звонков
+; (PJSIP endpoint context = incoming - см. 04_pjsip_config.sh)
+; =============================================
+[incoming]
+exten => s,1,NoOp(=== Входящий звонок с \${CALLERID(num)} ===)
+same => n,Set(CALLER_NUM=\${CALLERID(num)})
+same => n,Set(FILENAME=incoming_\${STRFTIME(\${EPOCH},,%Y%m%d_%H%M%S)}_\${CALLERID(num)})
+
+; Выбор приветствия: настраивается в веб-интерфейсе (Настройки -> Входящие).
+; SettingsService._apply_incoming_greeting (app/services/settings.py)
+; симлинкует выбранный файл под tts/incoming_custom.sln при каждом
+; сохранении настройки - тот же приём, что campaign.py использует для
+; tts/main_<id>.sln (см. [sub-media] выше).
+same => n,Set(GREETING_FILE=tts/incoming_custom)
+same => n,GotoIf(\$[\${STAT(e,\${GREETING_FILE})} = 1]?play_greeting)
+same => n,Goto(default_greeting)
+
+same => n(play_greeting),Background(\${GREETING_FILE})
+same => n,Goto(record)
+
+same => n(default_greeting),Background(tts/incoming_welcome)
+
+; Запись сообщения
+same => n(record),MixMonitor(/var/spool/asterisk/monitor/incoming/\${FILENAME}.wav,b)
+same => n,Wait(30)  ; Максимальная длительность записи 30 секунд
+same => n,StopMixMonitor()
+
+; Прощальное сообщение
+same => n,Background(tts/thank_you)
+same => n,Wait(1)
+same => n,Hangup()
+
+
+; =============================================
 ; AMD - Определение автоответчика (опционально)
 ; =============================================
 [sub-amd]

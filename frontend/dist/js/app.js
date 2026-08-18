@@ -141,8 +141,12 @@ const App = {
         // Специфичные для вкладки обновления
         switch (this.state.currentTab) {
             case 'dashboard':
+                // loadAll(), не refresh() - refresh() всегда показывает тост
+                // "Данные обновлены" (нужен только для ручного нажатия кнопки
+                // "Обновить"), а автообновление раз в 5с спамило им постоянно,
+                // пока открыта вкладка "Дашборд". Подтверждено живьём.
                 this.intervals.dashboard = setInterval(() => {
-                    this.dashboard?.refresh();
+                    this.dashboard?.loadAll();
                 }, 5000);
                 break;
             case 'campaigns':

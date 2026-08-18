@@ -158,12 +158,24 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
     # записью (см. app/api/incoming.py: GET /incoming/greeting и
     # /incoming/greeting/audio). Само проигрывание выполняет дialplan на
     # стороне FreePBX - эти настройки только говорят ему, ЧТО играть.
+    # on_change="update_incoming_greeting" на обоих: раньше эти два ключа
+    # писались в БД, но ничего в дialplan'е их не читало - [incoming] в
+    # asterisk/asterisk.conf проверял ${GLOBAL(INCOMING_GREETING)}, который
+    # никогда и нигде не устанавливался (ни здесь, ни через AMI Setvar), так
+    # что выбор приветствия в веб-интерфейсе не влиял на реальный звонок на
+    # свой собственный extension - только на отдельный HTTP-эндпоинт
+    # /incoming/greeting(/audio), рассчитанный на то, что его дёргает
+    # дialplan НА СТОРОНЕ FreePBX. on_change симлинкует выбранный файл под
+    # tts/incoming_custom.sln - тем же приёмом, что campaign.py делает для
+    # tts/main_<id>.sln (_link_campaign_audio) - a [incoming] теперь
+    # проверяет его существование через STAT(), как и остальные контексты.
     "incoming.greeting_enabled": SettingDefinition(
         key="incoming.greeting_enabled",
         value_type="bool",
         default_value=False,
         category=SettingCategory.INCOMING,
-        description="Проигрывать приветствие перед записью входящего звонка"
+        description="Проигрывать приветствие перед записью входящего звонка",
+        on_change="update_incoming_greeting"
     ),
     # value_type="string" (not "int") on purpose: settings.js's select
     # renderer compares `value === opt.value` (strict equality) between the
@@ -175,7 +187,8 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         value_type="string",
         default_value="0",
         category=SettingCategory.INCOMING,
-        description="Аудио из библиотеки (вкладка «Аудио»), которое проигрывается как приветствие"
+        description="Аудио из библиотеки (вкладка «Аудио»), которое проигрывается как приветствие",
+        on_change="update_incoming_greeting"
     ),
 
     # Настройки дозвона
@@ -534,6 +547,7 @@ class SettingsService:
             "update_dialer_max_calls": self._apply_dialer_max_calls,
             "update_dialer_cps": self._apply_dialer_cps,
             "update_log_level": self._apply_log_level,
+            "update_incoming_greeting": self._apply_incoming_greeting,
         }
         
         logger.info("SettingsService инициализирован")
@@ -936,6 +950,60 @@ class SettingsService:
         if self.system_service:
             from app.models.system import LogLevel
             await self.system_service.set_log_level(LogLevel(value))
+
+    async def _apply_incoming_greeting(self, value) -> None:
+        """
+        Симлинкует выбранное в веб-интерфейсе аудио под tts/incoming_custom.sln -
+        [incoming] в asterisk/asterisk.conf проверяет наличие именно этого
+        файла через STAT() (тот же приём, что campaign.py::_link_campaign_audio
+        использует для tts/main_<id>.sln). value здесь не используется - оба
+        ключа (greeting_enabled/greeting_audio_id) вызывают этот же колбек, а
+        нужное действие зависит от актуального состояния ОБОИХ сразу, а не
+        только того, который только что изменился.
+        """
+        from pathlib import Path
+
+        enabled = await self.get_setting_value("incoming.greeting_enabled")
+        audio_id_raw = await self.get_setting_value("incoming.greeting_audio_id")
+
+        target = app_settings.TTS_DIR / "incoming_custom.sln"
+        source: Optional[Path] = None
+
+        try:
+            audio_id = int(audio_id_raw) if audio_id_raw else None
+        except (TypeError, ValueError):
+            audio_id = None
+
+        if enabled and audio_id:
+            async with self.db_pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT file_path FROM audio_files WHERE id = $1",
+                    audio_id
+                )
+            if row and row['file_path']:
+                candidate = Path(row['file_path'])
+                if candidate.exists():
+                    source = candidate
+                else:
+                    logger.warning(
+                        f"Приветствие входящих: аудиофайл audio_id={audio_id} "
+                        f"не найден на диске ({candidate})"
+                    )
+
+        try:
+            if target.is_symlink() or target.exists():
+                target.unlink()
+            if source:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.symlink_to(source)
+                logger.info(f"Приветствие входящих звонков обновлено: {source}")
+            else:
+                logger.info(
+                    "Приветствие входящих звонков отключено или не выбрано - "
+                    "используется tts/incoming_welcome по умолчанию"
+                )
+        except OSError as e:
+            logger.error(f"Не удалось обновить приветствие входящих звонков ({target}): {e}")
     
     # =============================================
     # Экспорт/Импорт

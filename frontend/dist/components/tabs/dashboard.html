@@ -516,46 +516,12 @@
     }
 </style>
 
-<script>
-    (function() {
-        // Загружаем сводку по кампаниям после рендера
-        setTimeout(async () => {
-            if (App.dashboard && typeof App.dashboard.loadCampaignsSummary === 'function') {
-                await App.dashboard.loadCampaignsSummary();
-            } else {
-                // Простая загрузка если метод не определён
-                try {
-                    const data = await App.apiGet('/campaigns/summary');
-                    const container = document.getElementById('campaignsSummary');
-                    if (container && data) {
-                        container.innerHTML = `
-                            <div class="summary-item">
-                                <span>Всего кампаний</span>
-                                <strong>${data.total || 0}</strong>
-                            </div>
-                            <div class="summary-item">
-                                <span>Активных</span>
-                                <strong style="color: var(--color-success);">${data.running || 0}</strong>
-                            </div>
-                            <div class="summary-item">
-                                <span>Завершено</span>
-                                <strong>${data.completed || 0}</strong>
-                            </div>
-                            <div class="summary-item">
-                                <span>Черновиков</span>
-                                <strong style="color: var(--color-text-muted);">${data.draft || 0}</strong>
-                            </div>
-                        `;
-                    }
-                } catch (e) {
-                    console.error('Failed to load campaigns summary:', e);
-                }
-            }
-            
-            // Загружаем системный виджет
-            if (App.dashboard && typeof App.dashboard.loadSystemWidget === 'function') {
-                await App.dashboard.loadSystemWidget();
-            }
-        }, 100);
-    })();
-</script>
+<!--
+    Инлайновый <script> здесь раньше грузил сводку по кампаниям и системный
+    виджет - но эта вкладка вставляется через container.innerHTML в app.js,
+    а innerHTML НЕ исполняет вложенные <script> теги (тот же баг, что был
+    в history.html). Подтверждено живьём: "Состояние системы" и "Сводка по
+    кампаниям" вечно висели на "Загрузка...". Логика перенесена в
+    App.dashboard.loadCampaignsSummary()/loadSystemWidget() (dashboard.js),
+    вызываются из loadAll() при инициализации вкладки.
+-->

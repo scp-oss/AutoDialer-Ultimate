@@ -76,11 +76,13 @@ App.dashboard = {
             await Promise.all([
                 this.loadStats(),
                 this.loadActiveCampaigns(),
-                this.loadRecentCalls()
+                this.loadRecentCalls(),
+                this.loadCampaignsSummary(),
+                this.loadSystemWidget()
             ]);
-            
+
             await this.loadChart();
-            
+
         } catch (error) {
             console.error('Failed to load dashboard data:', error);
             App.showToast('Ошибка загрузки данных дашборда', 'error');
@@ -428,6 +430,38 @@ App.dashboard = {
             const importBtn = document.querySelector('[onclick*="importContacts"]');
             if (importBtn) importBtn.click();
         }, 100);
+    },
+
+    // =============================================
+    // Сводка по кампаниям
+    // =============================================
+    async loadCampaignsSummary() {
+        try {
+            const data = await App.apiGet('/campaigns/summary');
+            const container = document.getElementById('campaignsSummary');
+            if (container && data) {
+                container.innerHTML = `
+                    <div class="summary-item">
+                        <span>Всего кампаний</span>
+                        <strong>${data.total || 0}</strong>
+                    </div>
+                    <div class="summary-item">
+                        <span>Активных</span>
+                        <strong style="color: var(--color-success);">${data.running || 0}</strong>
+                    </div>
+                    <div class="summary-item">
+                        <span>Завершено</span>
+                        <strong>${data.completed || 0}</strong>
+                    </div>
+                    <div class="summary-item">
+                        <span>Черновиков</span>
+                        <strong style="color: var(--color-text-muted);">${data.draft || 0}</strong>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Failed to load campaigns summary:', error);
+        }
     },
 
     // =============================================
