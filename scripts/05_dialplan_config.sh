@@ -379,7 +379,8 @@ same => n(default_greeting),Background(tts/incoming_welcome)
 ; контексте никогда никуда не мостится (нет Dial()/Bridge()), так что с
 ; "b" MixMonitor не писал ни байта звука - подтверждено живьём (все .wav
 ; ровно 44 байта, пустой RIFF-заголовок).
-same => n(record),MixMonitor(/var/spool/asterisk/monitor/incoming/\${FILENAME}.wav)
+same => n(record),Playback(beep)
+same => n,MixMonitor(/var/spool/asterisk/monitor/incoming/\${FILENAME}.wav)
 same => n,Wait(30)  ; Максимальная длительность записи 30 секунд
 
 ; Прощальное сообщение
