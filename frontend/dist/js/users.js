@@ -55,7 +55,7 @@ const UsersModule = {
                 
                 <p class="text-muted">
                     Управление пользователями системы. Администраторы имеют полный доступ,
-                    операторы могут управлять кампаниями и контактами, наблюдатели — только просмотр.
+                    операторы могут управлять обзвонами и контактами, наблюдатели — только просмотр.
                 </p>
                 
                 <!-- Панель поиска -->
@@ -183,7 +183,7 @@ const UsersModule = {
                                     <label>Роль <span class="required">*</span></label>
                                     <select id="userRole" class="form-control" required>
                                         <option value="viewer">Наблюдатель (только просмотр)</option>
-                                        <option value="operator">Оператор (управление кампаниями)</option>
+                                        <option value="operator">Оператор (управление обзвонами)</option>
                                         <option value="admin">Администратор (полный доступ)</option>
                                     </select>
                                 </div>
@@ -617,8 +617,8 @@ const UsersModule = {
                         <div class="detail-section">
                             <h4>Статистика</h4>
                             <table class="details-table">
-                                <tr><td>Кампаний создано:</td><td>${user.stats.campaigns_created || 0}</td></tr>
-                                <tr><td>Кампаний запущено:</td><td>${user.stats.campaigns_started || 0}</td></tr>
+                                <tr><td>Обзвонов создано:</td><td>${user.stats.campaigns_created || 0}</td></tr>
+                                <tr><td>Обзвонов запущено:</td><td>${user.stats.campaigns_started || 0}</td></tr>
                                 <tr><td>Контактов добавлено:</td><td>${user.stats.contacts_added || 0}</td></tr>
                             </table>
                         </div>

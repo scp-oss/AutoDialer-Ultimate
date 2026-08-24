@@ -417,12 +417,12 @@ const AuditModule = {
             'user_create': 'Создание пользователя',
             'user_update': 'Обновление пользователя',
             'user_delete': 'Удаление пользователя',
-            'campaign_create': 'Создание кампании',
-            'campaign_start': 'Запуск кампании',
-            'campaign_stop': 'Остановка кампании',
-            'campaign_pause': 'Пауза кампании',
-            'campaign_resume': 'Возобновление кампании',
-            'campaign_delete': 'Удаление кампании',
+            'campaign_create': 'Создание обзвона',
+            'campaign_start': 'Запуск обзвона',
+            'campaign_stop': 'Остановка обзвона',
+            'campaign_pause': 'Пауза обзвона',
+            'campaign_resume': 'Возобновление обзвона',
+            'campaign_delete': 'Удаление обзвона',
             'contact_create': 'Создание контакта',
             'contact_update': 'Обновление контакта',
             'contact_delete': 'Удаление контакта',
@@ -469,7 +469,7 @@ const AuditModule = {
             }
             
             if (action.includes('campaign')) {
-                return `Кампания: ${obj.campaign_name || obj.campaign_id || '—'}`;
+                return `Обзвон: ${obj.campaign_name || obj.campaign_id || '—'}`;
             }
             
             if (action.includes('user')) {

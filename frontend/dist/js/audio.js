@@ -187,7 +187,7 @@ const AudioModule = {
                                 </div>
                                 
                                 <div class="form-group">
-                                    <label>Привязать к кампании (опционально)</label>
+                                    <label>Привязать к обзвону (опционально)</label>
                                     <select id="ttsCampaign" class="form-control">
                                         <option value="">Нет</option>
                                     </select>
@@ -249,7 +249,7 @@ const AudioModule = {
                         <input type="text" id="audioUploadName" class="form-control" required>
                     </div>
                     <div class="form-group">
-                        <label>Привязать к кампании (опционально)</label>
+                        <label>Привязать к обзвону (опционально)</label>
                         <select id="audioUploadCampaign" class="form-control">
                             <option value="">Нет</option>
                         </select>
@@ -533,7 +533,7 @@ const AudioModule = {
 
                 <div class="modal-actions">
                     <button class="btn btn-primary" onclick="document.querySelector('.close-modal').click()">Закрыть</button>
-                    <button class="btn btn-success" id="useInCampaignBtn">Использовать в кампании</button>
+                    <button class="btn btn-success" id="useInCampaignBtn">Использовать в обзвоне</button>
                 </div>
             </div>
         `;

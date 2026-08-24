@@ -374,12 +374,12 @@ App.contacts = {
         }
         
         // Открываем модалку быстрого звонка
-        const campaignId = prompt('Введите ID кампании для звонка (или оставьте пустым для тестового):');
-        
+        const campaignId = prompt('Введите ID обзвона для звонка (или оставьте пустым для тестового):');
+
         try {
             if (campaignId) {
                 await App.apiPost(`/campaigns/${campaignId}/call`, { phone });
-                App.showToast(`Звонок на ${phone} запущен в кампании ${campaignId}`, 'success');
+                App.showToast(`Звонок на ${phone} запущен в обзвоне ${campaignId}`, 'success');
             } else {
                 // Тестовый звонок
                 await App.apiPost('/system/test-call', { phone });
@@ -453,7 +453,7 @@ App.contacts = {
             if (!data.history || data.history.length === 0) {
                 html += '<p>Нет истории звонков</p>';
             } else {
-                html += '<table class="table"><thead><tr><th>Дата</th><th>Кампания</th><th>Статус</th><th>DTMF</th><th>Длит.</th></tr></thead><tbody>';
+                html += '<table class="table"><thead><tr><th>Дата</th><th>Обзвон</th><th>Статус</th><th>DTMF</th><th>Длит.</th></tr></thead><tbody>';
                 
                 for (const call of data.history) {
                     html += `<tr>

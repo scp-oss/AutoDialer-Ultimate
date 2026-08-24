@@ -5,13 +5,13 @@
     
     <!-- Заголовок с действиями -->
     <div class="page-header">
-        <h2>📋 Кампании</h2>
+        <h2>📋 Обзвон</h2>
         <div class="header-actions">
             <button class="btn btn-outline" id="campaignsRefreshBtn" title="Обновить">
                 🔄 Обновить
             </button>
             <button class="btn btn-primary" onclick="App.campaigns.openCampaignModal()">
-                ➕ Новая кампания
+                ➕ Новый обзвон
             </button>
         </div>
     </div>
@@ -76,7 +76,7 @@
 <div id="campaignModal" class="modal" style="display: none;">
     <div class="modal-content modal-large">
         <div class="modal-header">
-            <h3 id="campaignModalTitle">Новая кампания</h3>
+            <h3 id="campaignModalTitle">Новый обзвон</h3>
             <button class="modal-close" onclick="App.campaigns.closeCampaignModal()">&times;</button>
         </div>
         <div class="modal-body">
@@ -285,7 +285,7 @@
 <div id="campaignDetailModal" class="modal" style="display: none;">
     <div class="modal-content modal-large">
         <div class="modal-header">
-            <h3 id="campaignDetailTitle">Детали кампании</h3>
+            <h3 id="campaignDetailTitle">Детали обзвона</h3>
             <button class="modal-close" onclick="App.campaigns.closeCampaignDetailModal()">&times;</button>
         </div>
         <div class="modal-body">

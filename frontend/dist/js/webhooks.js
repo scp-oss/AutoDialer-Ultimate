@@ -17,11 +17,11 @@ const WebhooksModule = {
         { value: 'call.no_answer', label: 'Нет ответа', category: 'calls' },
         { value: 'call.busy', label: 'Занято', category: 'calls' },
         { value: 'call.dtmf', label: 'DTMF нажатие', category: 'calls' },
-        { value: 'campaign.started', label: 'Кампания запущена', category: 'campaigns' },
-        { value: 'campaign.paused', label: 'Кампания приостановлена', category: 'campaigns' },
-        { value: 'campaign.resumed', label: 'Кампания возобновлена', category: 'campaigns' },
-        { value: 'campaign.stopped', label: 'Кампания остановлена', category: 'campaigns' },
-        { value: 'campaign.completed', label: 'Кампания завершена', category: 'campaigns' },
+        { value: 'campaign.started', label: 'Обзвон запущен', category: 'campaigns' },
+        { value: 'campaign.paused', label: 'Обзвон приостановлен', category: 'campaigns' },
+        { value: 'campaign.resumed', label: 'Обзвон возобновлён', category: 'campaigns' },
+        { value: 'campaign.stopped', label: 'Обзвон остановлен', category: 'campaigns' },
+        { value: 'campaign.completed', label: 'Обзвон завершён', category: 'campaigns' },
         { value: 'contact.created', label: 'Контакт создан', category: 'contacts' },
         { value: 'contact.updated', label: 'Контакт обновлён', category: 'contacts' },
         { value: 'contact.deleted', label: 'Контакт удалён', category: 'contacts' },
@@ -203,7 +203,7 @@ const WebhooksModule = {
                                         <select id="eventCategoryFilter" class="form-control form-control-sm">
                                             <option value="">Все категории</option>
                                             <option value="calls">Звонки</option>
-                                            <option value="campaigns">Кампании</option>
+                                            <option value="campaigns">Обзвон</option>
                                             <option value="contacts">Контакты</option>
                                             <option value="blacklist">Чёрный список</option>
                                             <option value="incoming">Входящие</option>
@@ -216,9 +216,9 @@ const WebhooksModule = {
                             
                             <div class="form-row">
                                 <div class="form-group">
-                                    <label>Фильтр по кампании (опционально)</label>
+                                    <label>Фильтр по обзвону (опционально)</label>
                                     <select id="webhookCampaignFilter" class="form-control">
-                                        <option value="">Все кампании</option>
+                                        <option value="">Все обзвоны</option>
                                     </select>
                                 </div>
                                 
@@ -371,7 +371,7 @@ const WebhooksModule = {
         
         const categoryNames = {
             'calls': '📞 Звонки',
-            'campaigns': '📊 Кампании',
+            'campaigns': '📊 Обзвон',
             'contacts': '👥 Контакты',
             'blacklist': '🚫 Чёрный список',
             'incoming': '📥 Входящие',
@@ -413,7 +413,7 @@ const WebhooksModule = {
                     const options = campaigns.map(c => 
                         `<option value="${c.id}">${this.escapeHtml(c.name)}</option>`
                     ).join('');
-                    select.innerHTML = '<option value="">Все кампании</option>' + options;
+                    select.innerHTML = '<option value="">Все обзвоны</option>' + options;
                 }
             }
         } catch (error) {

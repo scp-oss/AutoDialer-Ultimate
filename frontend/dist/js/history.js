@@ -89,7 +89,7 @@ const HistoryModule = {
             const campaigns = data.items || data || [];
             const select = document.getElementById('historyFilterCampaign');
             if (select) {
-                select.innerHTML = '<option value="">Все кампании</option>' +
+                select.innerHTML = '<option value="">Все обзвоны</option>' +
                     campaigns.map(c => `<option value="${c.id}">${this.escapeHtml(c.name)}</option>`).join('');
             }
         } catch (error) {
@@ -249,7 +249,7 @@ const HistoryModule = {
                             <tr><td>Дата/время:</td><td>${App.formatDateTime(call.created_at)}</td></tr>
                             <tr><td>Номер:</td><td>${App.formatPhoneNumber(call.phone)}</td></tr>
                             <tr><td>Контакт:</td><td>${this.escapeHtml(call.contact_name || '—')}</td></tr>
-                            <tr><td>Кампания:</td><td>${this.escapeHtml(call.campaign_name || '—')}</td></tr>
+                            <tr><td>Обзвон:</td><td>${this.escapeHtml(call.campaign_name || '—')}</td></tr>
                             <tr><td>Статус:</td><td><span class="status-badge status-${call.status}">${this.STATUS_LABELS[call.status] || call.status}</span></td></tr>
                             <tr><td>Длительность:</td><td>${call.duration_formatted || App.formatDuration(call.duration)}</td></tr>
                             <tr><td>DTMF:</td><td>${call.dtmf_result || '—'}</td></tr>
@@ -351,7 +351,7 @@ const HistoryModule = {
                 return;
             }
 
-            const headers = ['ID', 'Дата/время', 'Номер', 'Контакт', 'Кампания', 'Статус', 'DTMF', 'Длительность'];
+            const headers = ['ID', 'Дата/время', 'Номер', 'Контакт', 'Обзвон', 'Статус', 'DTMF', 'Длительность'];
             const rows = calls.map(call => [
                 call.id,
                 App.formatDateTime(call.created_at),

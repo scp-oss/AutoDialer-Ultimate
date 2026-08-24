@@ -89,7 +89,7 @@ App.campaigns = {
             if (tbody) {
                 tbody.innerHTML = '<tr><td colspan="9" class="text-center text-error">Ошибка загрузки</td></tr>';
             }
-            App.showToast('Ошибка загрузки кампаний', 'error');
+            App.showToast('Ошибка загрузки обзвонов', 'error');
         }
     },
 
@@ -108,10 +108,10 @@ App.campaigns = {
                     <td colspan="9" class="text-center">
                         <div class="empty-state">
                             <div class="empty-icon">📋</div>
-                            <p>Нет кампаний</p>
+                            <p>Нет обзвонов</p>
                             ${App.auth.isOperator() ? `
                                 <button class="btn btn-primary" onclick="App.campaigns.openCampaignModal()">
-                                    Создать первую кампанию
+                                    Создать первый обзвон
                                 </button>
                             ` : ''}
                         </div>
@@ -272,7 +272,7 @@ App.campaigns = {
         const isEdit = !!campaign;
         
         if (isEdit) {
-            title.textContent = 'Редактировать кампанию';
+            title.textContent = 'Редактировать обзвон';
             deleteBtn.style.display = 'inline-block';
             
             this.state.selectedCampaign = campaign;
@@ -304,7 +304,7 @@ App.campaigns = {
             }
             
         } else {
-            title.textContent = 'Новая кампания';
+            title.textContent = 'Новый обзвон';
             deleteBtn.style.display = 'none';
             
             this.state.selectedCampaign = null;
@@ -357,7 +357,7 @@ App.campaigns = {
         
         // Валидация
         if (!name) {
-            App.showToast('Введите название кампании', 'warning');
+            App.showToast('Введите название обзвона', 'warning');
             return;
         }
         
@@ -422,10 +422,10 @@ App.campaigns = {
         try {
             if (id) {
                 await App.apiPut(`/campaigns/${id}`, data);
-                App.showToast('Кампания обновлена', 'success');
+                App.showToast('Обзвон обновлён', 'success');
             } else {
                 await App.apiPost('/campaigns/', data);
-                App.showToast('Кампания создана', 'success');
+                App.showToast('Обзвон создан', 'success');
             }
             
             this.closeCampaignModal();
@@ -453,7 +453,7 @@ App.campaigns = {
         
         try {
             await App.apiPost(`/campaigns/${id}/start`, {});
-            App.showToast('Кампания запущена', 'success');
+            App.showToast('Обзвон запущен', 'success');
             await this.loadCampaigns(this.state.currentPage);
         } catch (error) {
             console.error('Failed to start campaign:', error);
@@ -469,7 +469,7 @@ App.campaigns = {
         
         try {
             await App.apiPost(`/campaigns/${id}/pause`, {});
-            App.showToast('Кампания приостановлена', 'success');
+            App.showToast('Обзвон приостановлен', 'success');
             await this.loadCampaigns(this.state.currentPage);
         } catch (error) {
             console.error('Failed to pause campaign:', error);
@@ -485,7 +485,7 @@ App.campaigns = {
         
         try {
             await App.apiPost(`/campaigns/${id}/resume`, {});
-            App.showToast('Кампания возобновлена', 'success');
+            App.showToast('Обзвон возобновлён', 'success');
             await this.loadCampaigns(this.state.currentPage);
         } catch (error) {
             console.error('Failed to resume campaign:', error);
@@ -495,17 +495,17 @@ App.campaigns = {
 
     async stopCampaign(id) {
         if (!App.auth.isAdmin()) {
-            App.showToast('Только администратор может остановить кампанию', 'error');
+            App.showToast('Только администратор может остановить обзвон', 'error');
             return;
         }
-        
-        if (!App.confirm('Остановить кампанию? Все активные звонки будут завершены.')) {
+
+        if (!App.confirm('Остановить обзвон? Все активные звонки будут завершены.')) {
             return;
         }
-        
+
         try {
             await App.apiPost(`/campaigns/${id}/stop`, {});
-            App.showToast('Кампания остановлена', 'success');
+            App.showToast('Обзвон остановлен', 'success');
             await this.loadCampaigns(this.state.currentPage);
         } catch (error) {
             console.error('Failed to stop campaign:', error);
@@ -515,17 +515,17 @@ App.campaigns = {
 
     async deleteCampaign(id) {
         if (!App.auth.isAdmin()) {
-            App.showToast('Только администратор может удалить кампанию', 'error');
+            App.showToast('Только администратор может удалить обзвон', 'error');
             return;
         }
-        
-        if (!App.confirm('Удалить кампанию? Это действие нельзя отменить.')) {
+
+        if (!App.confirm('Удалить обзвон? Это действие нельзя отменить.')) {
             return;
         }
-        
+
         try {
             await App.apiDelete(`/campaigns/${id}`);
-            App.showToast('Кампания удалена', 'success');
+            App.showToast('Обзвон удалён', 'success');
             
             if (this.state.selectedCampaign?.id === id) {
                 this.closeCampaignModal();

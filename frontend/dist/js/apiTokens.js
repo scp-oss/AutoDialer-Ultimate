@@ -156,8 +156,8 @@ const ApiTokensModule = {
                             <div class="form-group">
                                 <label>Разрешения (опционально)</label>
                                 <div class="permissions-grid">
-                                    <label><input type="checkbox" name="permission" value="campaigns:read"> Чтение кампаний</label>
-                                    <label><input type="checkbox" name="permission" value="campaigns:write"> Управление кампаниями</label>
+                                    <label><input type="checkbox" name="permission" value="campaigns:read"> Чтение обзвонов</label>
+                                    <label><input type="checkbox" name="permission" value="campaigns:write"> Управление обзвонами</label>
                                     <label><input type="checkbox" name="permission" value="contacts:read"> Чтение контактов</label>
                                     <label><input type="checkbox" name="permission" value="contacts:write"> Управление контактами</label>
                                     <label><input type="checkbox" name="permission" value="history:read"> Чтение истории</label>

@@ -205,9 +205,9 @@ App.dashboard = {
         if (container) {
             container.innerHTML = `
                 <div class="loading">
-                    <p>Нет активных кампаний</p>
+                    <p>Нет активных обзвонов</p>
                     <button class="btn btn-primary btn-sm" onclick="App.switchTab('campaigns')">
-                        Перейти к кампаниям
+                        Перейти к обзвонам
                     </button>
                 </div>
             `;
@@ -442,7 +442,7 @@ App.dashboard = {
             if (container && data) {
                 container.innerHTML = `
                     <div class="summary-item">
-                        <span>Всего кампаний</span>
+                        <span>Всего обзвонов</span>
                         <strong>${data.total || 0}</strong>
                     </div>
                     <div class="summary-item">
