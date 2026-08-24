@@ -371,8 +371,22 @@ EOF
     
     mkdir -p /opt/autodialer/logs/backend
     chown -R autodialer:autodialer /opt/autodialer/logs
-    
+
     systemctl daemon-reload
+
+    # Узко ограниченное sudo-правило: разрешить пользователю autodialer
+    # ТОЛЬКО перезапускать сам сервис autodialer, без пароля - и больше
+    # ничего. Нужно для кнопки "Перезагрузить" в веб-интерфейсе
+    # (Настройки -> модалка после сохранения настройки с
+    # requires_restart=True - app/services/system.py::restart_workers).
+    # Backend работает от непривилегированного пользователя autodialer,
+    # у которого иначе нет способа перезапустить свой же systemd-сервис.
+    cat > /etc/sudoers.d/autodialer-restart << 'EOF'
+autodialer ALL=(root) NOPASSWD: /usr/bin/systemctl restart autodialer
+EOF
+    chmod 440 /etc/sudoers.d/autodialer-restart
+    visudo -c -f /etc/sudoers.d/autodialer-restart || { log_error "Некорректный sudoers файл /etc/sudoers.d/autodialer-restart"; exit 1; }
+
     log_success "Systemd сервис создан"
 }
 

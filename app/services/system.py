@@ -931,32 +931,49 @@ class SystemService:
     async def restart_workers(self, user_id: Optional[int] = None) -> Dict[str, Any]:
         """
         "Перезагрузка сервисов" из веб-интерфейса (кнопка в модалке после
-        сохранения настройки с requires_restart=True).
+        сохранения настройки с requires_restart=True) - у settings с
+        on_change (dialer.max_calls и т.п.) обновляется только ТОТ ОДИН
+        воркер, который обработал конкретный HTTP PUT /settings/{key},
+        остальные продолжают работать со старым значением в памяти до
+        перезапуска.
 
-        Не делает systemctl restart - backend работает от пользователя
-        autodialer без root, а давать sudo/polkit-права только ради этой
-        кнопки было бы лишним риском. Вместо этого шлёт SIGHUP
-        gunicorn-мастеру (os.getppid() из воркера - это и есть master,
-        стандартная модель процессов gunicorn) - это его штатный сигнал
-        "мягкой перезагрузки": все воркеры пересоздаются, каждый заново
-        проходит lifespan-startup и подхватывает настройки из БД с нуля.
-        Именно в этом и был смысл кнопки - у settings с on_change
-        (dialer.max_calls и т.п.) обновляется только ТОТ ОДИН воркер,
-        который обработал конкретный HTTP PUT /settings/{key}, остальные
-        продолжают работать со старым значением в памяти до следующего
-        перезапуска. Запрос, который вызвал этот метод, не переживёт
-        рестарт своего воркера - это ожидаемо, кнопка это учитывает.
+        Раньше здесь слался SIGHUP gunicorn-мастеру (его штатный сигнал
+        "мягкой перезагрузки" воркеров, без systemctl/sudo) - но
+        подтверждено живьём, что это ненадёжно именно для этого
+        приложения: если в момент SIGHUP в фоновом потоке шла
+        транскрибация Whisper (self.transcription_service использует
+        loop.run_in_executor - CPU-задача в ThreadPoolExecutor), процесс
+        не мог полноценно завершиться - Python по умолчанию блокирует
+        выход интерпретатора, пока не отработают все потоки пула. Старый
+        воркер уже прошёл lifespan-shutdown (БД/Redis отключены), но сам
+        процесс завис на многие минуты, продолжая при этом формально
+        значиться в CGroup и получать новые запросы - "База данных не
+        инициализирована" на каждый из них. Восстановилось только после
+        полного systemctl restart, который жёстко убивает всё по
+        таймауту сервиса независимо от зависших потоков.
+
+        Теперь просит именно systemctl restart - через ограниченное sudo
+        правило (см. scripts/02_asterisk_install.sh /
+        README-инструкцию), а не пытается справиться сам через сигналы.
         """
-        import signal
+        import subprocess
 
-        master_pid = os.getppid()
-        logger.info(f"Перезагрузка воркеров (SIGHUP -> master pid {master_pid})")
+        logger.info("Перезагрузка сервиса autodialer (sudo systemctl restart)")
 
-        await self._log_audit(user_id, 'workers_restart_requested', {
-            'master_pid': master_pid
-        })
+        await self._log_audit(user_id, 'workers_restart_requested', {})
 
-        os.kill(master_pid, signal.SIGHUP)
+        result = subprocess.run(
+            ["sudo", "-n", "/usr/bin/systemctl", "restart", "autodialer"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode != 0:
+            logger.error(f"systemctl restart autodialer не удался: {result.stderr}")
+            raise SystemError(
+                "Не удалось перезапустить сервис - проверьте sudo-правило "
+                "для 'systemctl restart autodialer' (см. документацию по установке)"
+            )
 
         return {
             "success": True,
