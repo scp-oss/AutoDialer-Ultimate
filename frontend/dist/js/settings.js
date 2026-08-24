@@ -205,6 +205,20 @@ const SettingsModule = {
         const settings = this.categories[category] || [];
 
         if (settings.length === 0) {
+            // ВРЕМЕННАЯ диагностика: не удаётся стабильно воспроизвести
+            // пустую категорию для реально существующих настроек -
+            // логируем полное состояние, чтобы понять, действительно ли
+            // this.settings/this.categories пусты в этот момент, или
+            // дело в чём-то ещё.
+            console.warn('[SettingsModule] Пустая категория', {
+                category,
+                settingsLoaded: this.settingsLoaded,
+                totalKeysInThisSettings: Object.keys(this.settings || {}).length,
+                allCategoryCounts: Object.fromEntries(
+                    Object.entries(this.categories).map(([k, v]) => [k, v.length])
+                ),
+                keysForThisCategory: (this.categories[category] || []).map(s => s.key)
+            });
             content.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-icon">⚙️</div>
