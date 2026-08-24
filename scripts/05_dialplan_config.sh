@@ -372,7 +372,11 @@ same => n(default_greeting),Background(tts/incoming_welcome)
 
 ; Запись сообщения (StopMixMonitor - в hangup handler [incoming-hangup]
 ; ниже, см. комментарий у CHANNEL(hangup_handler_push) выше)
-same => n(record),MixMonitor(/var/spool/asterisk/monitor/incoming/\${FILENAME}.wav,b)
+; Опция "b" ("только пока канал в мосте") здесь НЕ нужна - канал в этом
+; контексте никогда никуда не мостится (нет Dial()/Bridge()), так что с
+; "b" MixMonitor не писал ни байта звука - подтверждено живьём (все .wav
+; ровно 44 байта, пустой RIFF-заголовок).
+same => n(record),MixMonitor(/var/spool/asterisk/monitor/incoming/\${FILENAME}.wav)
 same => n,Wait(30)  ; Максимальная длительность записи 30 секунд
 
 ; Прощальное сообщение
