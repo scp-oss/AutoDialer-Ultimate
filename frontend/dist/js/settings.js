@@ -253,16 +253,28 @@ const SettingsModule = {
     
     // Рендер поля настройки
     renderSettingField(setting) {
+        // ВАЖНО: data-key="${setting.key}" должен стоять РОВНО на одном
+        // элементе - реальном поле ввода (input/select/checkbox), а не
+        // ещё и на обёртке <div>. saveCategory()/saveAllSettings() делают
+        // querySelectorAll('[data-key]') и читают .value/.checked с
+        // КАЖДОГО найденного элемента - div ничего такого не имеет, так
+        // что для него value получался undefined, отправлялся как
+        // буквальная строка "undefined" и либо падал с 422 (числа - int()
+        // не парсит "undefined"), либо ТИХО портил значение на "undefined"
+        // без единой ошибки (строки/bool) - подтверждено живьём (422 на
+        // все dialer.* сразу после сохранения). Раньше data-key стоял и на
+        // div, и на самом поле - вторая копия сохранения на div и была
+        // причиной.
         const value = setting.value;
         const type = setting.type || this.detectType(value, setting.key);
         const description = setting.description || '';
-        
+
         let fieldHtml = '';
         
         switch (type) {
             case 'boolean':
                 fieldHtml = `
-                    <div class="setting-item setting-boolean" data-key="${setting.key}">
+                    <div class="setting-item setting-boolean">
                         <div class="setting-info">
                             <label>
                                 <input type="checkbox" 
@@ -284,7 +296,7 @@ const SettingsModule = {
                 
             case 'number':
                 fieldHtml = `
-                    <div class="setting-item setting-number" data-key="${setting.key}">
+                    <div class="setting-item setting-number">
                         <div class="setting-info">
                             <label><strong>${this.formatKey(setting.key)}</strong></label>
                             ${description ? `<small class="setting-description">${description}</small>` : ''}
@@ -307,7 +319,7 @@ const SettingsModule = {
             case 'select':
                 const options = setting.options || [];
                 fieldHtml = `
-                    <div class="setting-item setting-select" data-key="${setting.key}">
+                    <div class="setting-item setting-select">
                         <div class="setting-info">
                             <label><strong>${this.formatKey(setting.key)}</strong></label>
                             ${description ? `<small class="setting-description">${description}</small>` : ''}
@@ -327,7 +339,7 @@ const SettingsModule = {
                 
             case 'json':
                 fieldHtml = `
-                    <div class="setting-item setting-json" data-key="${setting.key}">
+                    <div class="setting-item setting-json">
                         <div class="setting-info">
                             <label><strong>${this.formatKey(setting.key)}</strong></label>
                             ${description ? `<small class="setting-description">${description}</small>` : ''}
@@ -346,7 +358,7 @@ const SettingsModule = {
                 
             default: // text, string
                 fieldHtml = `
-                    <div class="setting-item setting-text" data-key="${setting.key}">
+                    <div class="setting-item setting-text">
                         <div class="setting-info">
                             <label><strong>${this.formatKey(setting.key)}</strong></label>
                             ${description ? `<small class="setting-description">${description}</small>` : ''}
