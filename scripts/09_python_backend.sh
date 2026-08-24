@@ -389,9 +389,17 @@ EOF
     # sudo просто отказывает без пароля, независимо от NOPASSWD.
     # Подтверждено живьём: ручной тест в SSH проходил (exit 0), тот же
     # вызов из кода backend'а стабильно проваливался.
+    #
+    # systemd-run --no-block, а не голый systemctl restart - сам процесс,
+    # который это выполняет, является частью cgroup сервиса autodialer.
+    # Прямой "systemctl restart autodialer" синхронно ждёт, пока
+    # systemd остановит сервис - а остановка убивает ВСЕ процессы cgroup,
+    # включая наш же воркер и его ещё не завершившийся дочерний процесс
+    # (returncode -15, подтверждено живьём). systemd-run выносит команду
+    # в отдельный transient-юнит вне cgroup и не ждёт её завершения.
     cat > /etc/sudoers.d/autodialer-restart << 'EOF'
 Defaults:autodialer !requiretty
-autodialer ALL=(root) NOPASSWD: /usr/bin/systemctl restart autodialer
+autodialer ALL=(root) NOPASSWD: /usr/bin/systemd-run --no-block /usr/bin/systemctl restart autodialer
 EOF
     chmod 440 /etc/sudoers.d/autodialer-restart
     visudo -c -f /etc/sudoers.d/autodialer-restart || { log_error "Некорректный sudoers файл /etc/sudoers.d/autodialer-restart"; exit 1; }

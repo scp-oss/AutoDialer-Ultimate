@@ -958,20 +958,30 @@ class SystemService:
         """
         import subprocess
 
-        logger.info("Перезагрузка сервиса autodialer (sudo systemctl restart)")
+        logger.info("Перезагрузка сервиса autodialer (systemd-run --no-block systemctl restart)")
 
         await self._log_audit(user_id, 'workers_restart_requested', {})
 
-        # Абсолютный путь к sudo, а не просто "sudo" - убирает зависимость
-        # от того, что именно попадёт в PATH процесса. И сообщение об
-        # ошибке ниже намеренно включает stderr/returncode напрямую в текст
-        # исключения, а не только в logger.error(...) - тот факт, что
-        # exit code sudo различался между ручным тестом в SSH-сессии и тем
-        # же вызовом из воркера backend'а (без tty), подтверждён живьём, и
-        # logger.error по какой-то причине не попадал в error.log вообще -
-        # так хотя бы причина видна прямо в ответе API/трейсбеке.
+        # НЕ просто "sudo systemctl restart autodialer" напрямую - этот
+        # самый Python-процесс САМ является частью cgroup сервиса
+        # autodialer, который мы просим перезапустить. Когда systemd
+        # начинает его останавливать, он убивает ВСЕ процессы в этой
+        # cgroup, включая наш воркер и, вместе с ним, ещё не завершившийся
+        # дочерний sudo/systemctl - подтверждено живьём (returncode -15,
+        # то есть сам процесс убит SIGTERM'ом раньше, чем успел
+        # доработать). "Рубим сук, на котором сидим".
+        #
+        # systemd-run --no-block запускает systemctl restart как ОТДЕЛЬНЫЙ
+        # transient-юнит вне cgroup текущего сервиса и не ждёт его
+        # завершения - возвращается почти мгновенно, до того, как вообще
+        # начнётся остановка autodialer.service, и сам restart-юнит потом
+        # переживает смерть воркера, который его запустил.
         result = subprocess.run(
-            ["/usr/bin/sudo", "-n", "/usr/bin/systemctl", "restart", "autodialer"],
+            [
+                "/usr/bin/sudo", "-n",
+                "/usr/bin/systemd-run", "--no-block",
+                "/usr/bin/systemctl", "restart", "autodialer"
+            ],
             capture_output=True,
             text=True,
             timeout=10
