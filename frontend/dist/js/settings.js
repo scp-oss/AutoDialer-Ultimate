@@ -205,20 +205,6 @@ const SettingsModule = {
         const settings = this.categories[category] || [];
 
         if (settings.length === 0) {
-            // ВРЕМЕННАЯ диагностика: не удаётся стабильно воспроизвести
-            // пустую категорию для реально существующих настроек -
-            // логируем полное состояние, чтобы понять, действительно ли
-            // this.settings/this.categories пусты в этот момент, или
-            // дело в чём-то ещё.
-            console.warn('[SettingsModule] Пустая категория', {
-                category,
-                settingsLoaded: this.settingsLoaded,
-                totalKeysInThisSettings: Object.keys(this.settings || {}).length,
-                allCategoryCounts: Object.fromEntries(
-                    Object.entries(this.categories).map(([k, v]) => [k, v.length])
-                ),
-                keysForThisCategory: (this.categories[category] || []).map(s => s.key)
-            });
             content.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-icon">⚙️</div>
@@ -688,9 +674,18 @@ const SettingsModule = {
         // Вкладки
         document.querySelectorAll('.settings-tab').forEach(tab => {
             tab.addEventListener('click', (e) => {
+                // e.currentTarget (the <button> the listener is attached to),
+                // не e.target - каждая кнопка содержит дочерние <span> для
+                // иконки и текста, и клик по ним (то есть почти по всей
+                // видимой площади кнопки) делал e.target этим span'ом, у
+                // которого нет data-category. renderCategory(undefined)
+                // тихо показывал "Нет настроек в этой категории" для
+                // категорий, где данные были на месте - подтверждено
+                // живьём (console.warn показал category: undefined при
+                // totalKeysInThisSettings: 45).
                 document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-                e.target.classList.add('active');
-                this.renderCategory(e.target.dataset.category);
+                e.currentTarget.classList.add('active');
+                this.renderCategory(e.currentTarget.dataset.category);
             });
         });
         
