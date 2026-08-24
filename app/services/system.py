@@ -962,17 +962,24 @@ class SystemService:
 
         await self._log_audit(user_id, 'workers_restart_requested', {})
 
+        # Абсолютный путь к sudo, а не просто "sudo" - убирает зависимость
+        # от того, что именно попадёт в PATH процесса. И сообщение об
+        # ошибке ниже намеренно включает stderr/returncode напрямую в текст
+        # исключения, а не только в logger.error(...) - тот факт, что
+        # exit code sudo различался между ручным тестом в SSH-сессии и тем
+        # же вызовом из воркера backend'а (без tty), подтверждён живьём, и
+        # logger.error по какой-то причине не попадал в error.log вообще -
+        # так хотя бы причина видна прямо в ответе API/трейсбеке.
         result = subprocess.run(
-            ["sudo", "-n", "/usr/bin/systemctl", "restart", "autodialer"],
+            ["/usr/bin/sudo", "-n", "/usr/bin/systemctl", "restart", "autodialer"],
             capture_output=True,
             text=True,
             timeout=10
         )
         if result.returncode != 0:
-            logger.error(f"systemctl restart autodialer не удался: {result.stderr}")
             raise SystemError(
-                "Не удалось перезапустить сервис - проверьте sudo-правило "
-                "для 'systemctl restart autodialer' (см. документацию по установке)"
+                f"systemctl restart не удался (код {result.returncode}): "
+                f"{result.stderr.strip() or result.stdout.strip() or 'нет вывода'}"
             )
 
         return {

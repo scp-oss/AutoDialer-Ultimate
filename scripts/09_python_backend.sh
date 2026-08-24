@@ -381,7 +381,16 @@ EOF
     # requires_restart=True - app/services/system.py::restart_workers).
     # Backend работает от непривилегированного пользователя autodialer,
     # у которого иначе нет способа перезапустить свой же systemd-сервис.
+    #
+    # !requiretty обязателен: без него sudo с этим правилом отрабатывает
+    # из интерактивной SSH-сессии (есть tty), но молча проваливается,
+    # когда его вызывает сам backend (gunicorn-воркер под systemd, tty
+    # нет) - если где-то в системе включён общий Defaults requiretty,
+    # sudo просто отказывает без пароля, независимо от NOPASSWD.
+    # Подтверждено живьём: ручной тест в SSH проходил (exit 0), тот же
+    # вызов из кода backend'а стабильно проваливался.
     cat > /etc/sudoers.d/autodialer-restart << 'EOF'
+Defaults:autodialer !requiretty
 autodialer ALL=(root) NOPASSWD: /usr/bin/systemctl restart autodialer
 EOF
     chmod 440 /etc/sudoers.d/autodialer-restart
