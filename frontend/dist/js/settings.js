@@ -5,6 +5,14 @@ const SettingsModule = {
     settings: {},
     categories: {},
     originalSettings: {},
+    currentCategory: 'general',
+    // Категория-кнопки кликабельны сразу после render(), но реальные данные
+    // приходят асинхронно из loadSettings() - клик ДО того, как fetch
+    // завершится, видел пустой this.categories[category] и навсегда
+    // показывал "Нет настроек в этой категории" (ничего не перерисовывало
+    // вкладку заново, когда данные наконец приходили) - подтверждено
+    // живьём ("не с первого раза вкладка корректно отображается").
+    settingsLoaded: false,
     
     // Инициализация модуля
     init() {
@@ -13,7 +21,14 @@ const SettingsModule = {
             this.renderAccessDenied();
             return;
         }
-        
+
+        // render() ниже всегда рисует кнопку "Общие" как активную -
+        // сбрасываем currentCategory здесь же, иначе при повторном заходе
+        // на вкладку он мог остаться от прошлого визита (например,
+        // "incoming") и разойтись с тем, что подсвечено визуально.
+        this.currentCategory = 'general';
+        this.settingsLoaded = false;
+
         this.render();
         this.attachEventListeners();
         this.loadSettings();
@@ -133,9 +148,12 @@ const SettingsModule = {
                 
                 // Группировка по категориям
                 this.categorizeSettings();
-                
-                // Рендер активной категории
-                this.renderCategory('general');
+                this.settingsLoaded = true;
+
+                // Рендер той категории, что реально выбрана сейчас (пользователь
+                // мог успеть кликнуть по другой вкладке, пока шёл запрос) -
+                // не жёстко 'general'.
+                this.renderCategory(this.currentCategory);
             } else {
                 document.getElementById('settingsContent').innerHTML = 
                     '<div class="error-message">Ошибка загрузки настроек</div>';
@@ -173,8 +191,19 @@ const SettingsModule = {
     // Рендер категории
     renderCategory(category) {
         const content = document.getElementById('settingsContent');
+        this.currentCategory = category;
+
+        if (!this.settingsLoaded) {
+            // Настройки ещё не пришли с сервера - НЕ "Нет настроек в этой
+            // категории" (это означало бы, что категория реально пуста).
+            // loadSettings() перерисует this.currentCategory сам, как
+            // только данные придут.
+            content.innerHTML = '<div class="loading">Загрузка настроек...</div>';
+            return;
+        }
+
         const settings = this.categories[category] || [];
-        
+
         if (settings.length === 0) {
             content.innerHTML = `
                 <div class="empty-state">

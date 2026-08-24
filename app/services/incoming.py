@@ -753,13 +753,22 @@ class IncomingCallService:
         """
         async with self.db_pool.acquire() as conn:
             row = await conn.fetchrow("""
-                SELECT recording_path, transcription_status FROM incoming_calls WHERE id = $1
+                SELECT recording_path, transcription_status, updated_at FROM incoming_calls WHERE id = $1
             """, call_id)
-            
+
             if not row:
                 raise IncomingCallNotFoundError(f"Звонок {call_id} не найден")
-            
-            if row['transcription_status'] in [TranscriptionStatus.PROCESSING.value]:
+
+            # "processing" зависает навсегда, если воркер, который его
+            # обрабатывал, умер до финального UPDATE (например, backend
+            # убило OOM killer'ом посреди транскрибации - подтверждено
+            # живьём) - ничто и никогда не переводит такую запись в
+            # failed/completed самостоятельно. Блокируем повтор только
+            # если задача реально может быть ещё активна (обновлялась
+            # недавно) - иначе разрешаем, иначе застрявшую запись было
+            # бы вообще невозможно когда-либо повторить.
+            processing_age = (datetime.utcnow() - row['updated_at']).total_seconds()
+            if row['transcription_status'] == TranscriptionStatus.PROCESSING.value and processing_age < 300:
                 raise TranscriptionAlreadyInProgressError("Транскрибация уже выполняется")
             
             if not os.path.exists(row['recording_path']):

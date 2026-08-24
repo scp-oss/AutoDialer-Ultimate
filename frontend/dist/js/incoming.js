@@ -295,16 +295,21 @@ App.incoming = {
                         <h4>📄 Транскрибация</h4>
                         <div class="transcription-box">${this.escapeHtml(call.transcription)}</div>
                     </div>
-                ` : status === 'failed' || status === 'completed' ? `
+                ` : `
                     <div class="detail-section">
                         <h4>📄 Транскрибация</h4>
-                        <p>${status === 'failed' ? 'Расшифровка не удалась.' : 'Текст пуст (движок распознавания был недоступен на момент обработки).'}
+                        <p>${{
+                            failed: 'Расшифровка не удалась.',
+                            completed: 'Текст пуст (движок распознавания был недоступен на момент обработки).',
+                            processing: 'В обработке - если висит так долго, что похоже на зависшую задачу (например, после перезапуска backend), нажмите повтор.',
+                            pending: 'Расшифровка ещё не запускалась.'
+                        }[status] || 'Текст расшифровки недоступен.'}
                             <button class="btn btn-sm btn-outline" id="incomingRetryTranscribeBtn" data-id="${call.id}">
                                 🔁 Повторить
                             </button>
                         </p>
                     </div>
-                ` : ''}
+                `}
 
                 <div class="detail-section">
                     <h4>📋 Заметки</h4>
