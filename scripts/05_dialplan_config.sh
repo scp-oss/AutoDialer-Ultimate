@@ -337,6 +337,12 @@ same => n,Return()
 ; набранный номер и просто передаёт управление в общую логику ниже.
 exten => _X.,1,Goto(s,1)
 exten => s,1,NoOp(=== Входящий звонок с \${CALLERID(num)} ===)
+; Явный Answer() - без него MixMonitor не получает надёжного
+; двустороннего аудиопотока для записи - подтверждено живьём: все .wav
+; получались ровно 44 байта (пустой RIFF-заголовок) независимо от
+; реальной длительности звонка. [sub-media] (исходящие, выше) всегда
+; делает Answer() первым делом - здесь этого не было.
+same => n,Answer()
 same => n,Set(CALLER_NUM=\${CALLERID(num)})
 same => n,Set(FILENAME=incoming_\${STRFTIME(\${EPOCH},,%Y%m%d_%H%M%S)}_\${CALLERID(num)})
 same => n,Set(REC_START=\${EPOCH})
