@@ -362,7 +362,10 @@ same => n,Set(CHANNEL(hangup_handler_push)=incoming-hangup,s,1)
 ; сохранении настройки - тот же приём, что campaign.py использует для
 ; tts/main_<id>.sln (см. [sub-media] выше).
 same => n,Set(GREETING_FILE=tts/incoming_custom)
-same => n,GotoIf(\$[\${STAT(e,\${GREETING_FILE})} = 1]?play_greeting)
+; STAT() делает буквальный stat() и не ищет расширения/форматы, как это
+; делает Background() - без абсолютного пути и .sln проверка никогда не
+; находила реально существующий файл (подтверждено живьём).
+same => n,GotoIf(\$[\${STAT(e,/var/lib/asterisk/sounds/\${GREETING_FILE}.sln)} = 1]?play_greeting)
 same => n,Goto(default_greeting)
 
 same => n(play_greeting),Background(\${GREETING_FILE})
