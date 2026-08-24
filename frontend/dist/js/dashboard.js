@@ -469,9 +469,14 @@ App.dashboard = {
     // =============================================
     async loadSystemWidget() {
         try {
-            const health = await App.system.getHealth();
-            const info = await App.system.getSystemInfo();
-            
+            // Состояние (asteriskConnected/redisConnected/databaseConnected/
+            // cpuUsage/memoryUsage/uptime/version) уже приходит из
+            // App.system.state, которое заполняет refreshStatus() одним
+            // запросом на /system/status - отдельные вызовы getHealth()/
+            // getSystemInfo() тут были лишними (и второй вообще дёргал
+            // несуществующий /system/info, который всегда 404-ил).
+            await App.system.refreshStatus();
+
             const container = document.getElementById('systemWidget');
             if (!container) return;
             
@@ -497,18 +502,16 @@ App.dashboard = {
                         </div>
                         <div class="status-item">
                             <span>CPU</span>
-                            <span>${App.system.state.cpuUsage}%</span>
+                            <span>${App.system.state.cpuUsage.toFixed(1)}%</span>
                         </div>
                         <div class="status-item">
                             <span>Память</span>
-                            <span>${App.system.state.memoryUsage}%</span>
+                            <span>${App.system.state.memoryUsage.toFixed(1)}%</span>
                         </div>
                     </div>
-                    ${info ? `
-                        <div class="system-info">
-                            <small>Версия: ${info.version || '—'}</small>
-                        </div>
-                    ` : ''}
+                    <div class="system-info">
+                        <small>Версия: ${App.system.state.version || '—'}</small>
+                    </div>
                 </div>
             `;
         } catch (error) {

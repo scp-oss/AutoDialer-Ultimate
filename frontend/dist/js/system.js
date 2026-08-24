@@ -16,7 +16,8 @@ App.system = {
         databaseConnected: false,
         cpuUsage: 0,
         memoryUsage: 0,
-        uptime: 0
+        uptime: 0,
+        version: null
     },
 
     // WebSocket соединение
@@ -46,9 +47,10 @@ App.system = {
             this.state.asteriskConnected = data.ami_connected || false;
             this.state.redisConnected = data.redis_connected || false;
             this.state.databaseConnected = data.database_connected || false;
-            this.state.cpuUsage = data.cpu_usage || 0;
-            this.state.memoryUsage = data.memory_usage || 0;
-            this.state.uptime = data.uptime || 0;
+            this.state.cpuUsage = data.cpu_usage_percent || 0;
+            this.state.memoryUsage = data.memory_usage_percent || 0;
+            this.state.uptime = data.uptime_seconds || 0;
+            this.state.version = data.version || null;
             
             this.updateUI();
             
@@ -393,7 +395,10 @@ App.system = {
 
     async getHealth() {
         try {
-            return await App.apiGet('/system/health');
+            // Реальный health-эндпоинт живёт на /api/health (app/api/health.py,
+            // без префикса /system) - раньше здесь был запрос на несуществующий
+            // /system/health, который всегда падал в 404.
+            return await App.apiGet('/health');
         } catch (error) {
             console.error('Failed to get health:', error);
             return { status: 'unhealthy' };
@@ -472,15 +477,6 @@ App.system = {
     // =============================================
     // Информация о системе
     // =============================================
-    async getSystemInfo() {
-        try {
-            return await App.apiGet('/system/info');
-        } catch (error) {
-            console.error('Failed to get system info:', error);
-            return null;
-        }
-    },
-
     getUptimeFormatted() {
         const seconds = this.state.uptime;
         const days = Math.floor(seconds / 86400);

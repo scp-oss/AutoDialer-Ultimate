@@ -603,6 +603,7 @@ class SystemService:
             ami_connected=ami_connected,
             components=health.components,
             memory_usage_mb=resource_usage.memory_used_mb,
+            memory_usage_percent=resource_usage.memory_percent,
             cpu_usage_percent=resource_usage.cpu_percent,
             hostname=self._system_info['hostname'],
             instance_id=self._system_info['instance_id'],

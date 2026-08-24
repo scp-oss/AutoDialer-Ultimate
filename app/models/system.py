@@ -219,6 +219,7 @@ class SystemStatusResponse(BaseSchema):
     
     # Ресурсы
     memory_usage_mb: Optional[float] = Field(None, description="Использование памяти (МБ)")
+    memory_usage_percent: Optional[float] = Field(None, description="Использование памяти (%)")
     cpu_usage_percent: Optional[float] = Field(None, description="Использование CPU (%)")
     
     # Метаданные
