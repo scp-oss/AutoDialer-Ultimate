@@ -67,6 +67,18 @@ async def get_resource_usage(admin: TokenData = Depends(require_admin)):
     return await system_service.get_resource_usage()
 
 
+@router.post("/restart")
+async def restart_services(admin: TokenData = Depends(require_admin)):
+    """
+    Перезагрузка воркеров backend'а (кнопка в модалке "Требуется
+    перезагрузка" в Настройках). Фронтенд (settings.js restartServices())
+    уже дёргал этот маршрут, но его не существовало вообще - 405 Method
+    Not Allowed на каждый клик, подтверждено живьём.
+    """
+    system_service = get_system_service()
+    return await system_service.restart_workers(admin.user_id)
+
+
 @router.post("/test-call")
 async def test_call(
     phone: str = Body(..., embed=True),

@@ -928,6 +928,41 @@ class SystemService:
             "new_level": level.value
         }
     
+    async def restart_workers(self, user_id: Optional[int] = None) -> Dict[str, Any]:
+        """
+        "Перезагрузка сервисов" из веб-интерфейса (кнопка в модалке после
+        сохранения настройки с requires_restart=True).
+
+        Не делает systemctl restart - backend работает от пользователя
+        autodialer без root, а давать sudo/polkit-права только ради этой
+        кнопки было бы лишним риском. Вместо этого шлёт SIGHUP
+        gunicorn-мастеру (os.getppid() из воркера - это и есть master,
+        стандартная модель процессов gunicorn) - это его штатный сигнал
+        "мягкой перезагрузки": все воркеры пересоздаются, каждый заново
+        проходит lifespan-startup и подхватывает настройки из БД с нуля.
+        Именно в этом и был смысл кнопки - у settings с on_change
+        (dialer.max_calls и т.п.) обновляется только ТОТ ОДИН воркер,
+        который обработал конкретный HTTP PUT /settings/{key}, остальные
+        продолжают работать со старым значением в памяти до следующего
+        перезапуска. Запрос, который вызвал этот метод, не переживёт
+        рестарт своего воркера - это ожидаемо, кнопка это учитывает.
+        """
+        import signal
+
+        master_pid = os.getppid()
+        logger.info(f"Перезагрузка воркеров (SIGHUP -> master pid {master_pid})")
+
+        await self._log_audit(user_id, 'workers_restart_requested', {
+            'master_pid': master_pid
+        })
+
+        os.kill(master_pid, signal.SIGHUP)
+
+        return {
+            "success": True,
+            "message": "Отправлен сигнал перезагрузки воркерам"
+        }
+
     # =============================================
     # Вспомогательные методы
     # =============================================
