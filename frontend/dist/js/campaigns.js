@@ -15,6 +15,7 @@ App.campaigns = {
         searchQuery: '',
         selectedCampaign: null,
         audioFiles: [],
+        contactGroups: [],
         // ID кампании, чья модалка деталей сейчас открыта (для живых обновлений
         // из WebSocket-канала campaign) — null, если модалка закрыта
         viewingCampaignId: null
@@ -27,6 +28,34 @@ App.campaigns = {
         await this.loadCampaigns();
         await this.loadAudioForSelect();
         this.setupEventListeners();
+    },
+
+    // =============================================
+    // Загрузка групп контактов для формы создания
+    // =============================================
+    async loadContactGroupsForSelect() {
+        try {
+            const data = await App.apiGet('/contact-groups/');
+            this.state.contactGroups = data.items || data || [];
+
+            const container = document.getElementById('campaignContactGroupsList');
+            if (container) {
+                container.innerHTML = this.state.contactGroups.length
+                    ? this.state.contactGroups.map(g => `
+                        <label>
+                            <input type="checkbox" name="campaignContactGroupIds" value="${g.id}">
+                            ${this.escapeHtml(g.name)} (${g.contacts_count || 0})
+                        </label>
+                    `).join('')
+                    : '<p class="text-muted">Нет ни одной группы контактов - создайте её на вкладке «Контакты».</p>';
+            }
+        } catch (error) {
+            console.error('Failed to load contact groups:', error);
+            const container = document.getElementById('campaignContactGroupsList');
+            if (container) {
+                container.innerHTML = '<p class="text-error">Ошибка загрузки групп</p>';
+            }
+        }
     },
 
     setupEventListeners() {
@@ -270,7 +299,15 @@ App.campaigns = {
         if (!modal) return;
         
         const isEdit = !!campaign;
-        
+
+        // Контакты назначаются только при создании - у существующего
+        // обзвона это делается отдельной кнопкой "Назначить контакты"
+        // (CampaignUpdateRequest не принимает contact_group_ids вообще).
+        const contactsSection = document.getElementById('campaignContactsSection');
+        if (contactsSection) {
+            contactsSection.style.display = isEdit ? 'none' : '';
+        }
+
         if (isEdit) {
             title.textContent = 'Редактировать обзвон';
             deleteBtn.style.display = 'inline-block';
@@ -325,6 +362,9 @@ App.campaigns = {
         }
         
         this.loadAudioForSelect();
+        if (!isEdit) {
+            this.loadContactGroupsForSelect();
+        }
         modal.style.display = 'flex';
     },
 
@@ -370,7 +410,24 @@ App.campaigns = {
             App.showToast('CPS должен быть от 0.1 до 50', 'warning');
             return;
         }
-        
+
+        // Группы контактов - обязательны только при создании
+        // (CampaignCreateRequest.validate_contacts() требует хотя бы один
+        // источник; CampaignUpdateRequest этого поля вообще не принимает,
+        // контакты существующего обзвона меняются через "Назначить
+        // контакты", поэтому при редактировании этот блок пропускаем).
+        let contactGroupIds = [];
+        if (!id) {
+            contactGroupIds = Array.from(
+                document.querySelectorAll('input[name="campaignContactGroupIds"]:checked')
+            ).map(cb => parseInt(cb.value));
+
+            if (contactGroupIds.length === 0) {
+                App.showToast('Выберите хотя бы одну группу контактов', 'warning');
+                return;
+            }
+        }
+
         // Стратегия повторных звонков
         const retryStrategy = {
             busy: parseInt(document.getElementById('retryBusyMax')?.value) || 2,
@@ -411,6 +468,10 @@ App.campaigns = {
             retry_strategy: retryStrategy,
             schedule
         };
+
+        if (!id) {
+            data.contact_group_ids = contactGroupIds;
+        }
         
         const submitBtn = document.querySelector('#campaignForm button[type="submit"]');
         const originalText = submitBtn?.textContent;

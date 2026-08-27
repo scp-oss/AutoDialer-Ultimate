@@ -148,7 +148,21 @@
                         </div>
                     </div>
                 </div>
-                
+
+                <!-- Контакты (только при создании - у существующего обзвона
+                     контакты назначаются отдельной кнопкой "Назначить
+                     контакты", CampaignUpdateRequest этого поля не принимает) -->
+                <div class="form-section" id="campaignContactsSection">
+                    <h4>Контакты <span class="required">*</span></h4>
+                    <div class="form-group">
+                        <label>Группы контактов</label>
+                        <div class="checkbox-group" id="campaignContactGroupsList">
+                            <p class="text-muted">Загрузка...</p>
+                        </div>
+                        <small>Нужно выбрать хотя бы одну группу - без этого обзвон нельзя сохранить</small>
+                    </div>
+                </div>
+
                 <!-- Стратегия повторных звонков -->
                 <div class="form-section">
                     <h4>Стратегия повторных звонков</h4>
