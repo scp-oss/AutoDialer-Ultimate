@@ -240,11 +240,17 @@ same => n,GotoIf(\$["\${DTMF_ENABLED}"="0"]?announce_only)
 
 ; После питча кампании нужно явно объявить "нажмите 1/2/4" - раньше
 ; ожидалось, что эта фраза есть в самом тексте питча, но абонент, не
-; услышав её, просто не понимал, что от него ждут. tts/default.sln уже
-; содержит нужный текст ("Пожалуйста, нажмите 1 для подтверждения или 2
-; для отказа") и гарантированно есть на любой установке.
+; услышав её, просто не понимал, что от него ждут.
+; dialer.menu_prompt_audio_id (вкладка "Настройки") даёт выбрать свою
+; формулировку из библиотеки аудио - симлинкается под tts/menu_prompt.sln.
+; Не выбрано - используем tts/default.sln, у него уже есть подходящий
+; текст ("Пожалуйста, нажмите 1 для подтверждения или 2 для отказа") и
+; он гарантированно есть на любой установке.
+same => n,GotoIf(\$[\${STAT(e,/var/lib/asterisk/sounds/tts/menu_prompt.sln)} = 1]?menu_custom)
 same => n,Background(tts/default)
-same => n,WaitExten(\${DTMF_TIMEOUT})
+same => n,Goto(menu_done)
+same => n(menu_custom),Background(tts/menu_prompt)
+same => n(menu_done),WaitExten(\${DTMF_TIMEOUT})
 same => n,Goto(s,announce_only)
 
 same => n(announce_only),NoOp(=== DTMF отключен для кампании \${CAMPAIGN_ID} - чистое объявление ===)

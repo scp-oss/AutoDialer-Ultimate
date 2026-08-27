@@ -256,7 +256,25 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         category=SettingCategory.DIALER,
         description="Использовать адаптивный CPS"
     ),
-    
+    # Фраза "нажмите 1/2/4", которую [sub-media] проигрывает после питча
+    # кампании (см. комментарий у Background(tts/default) в
+    # asterisk/extensions.conf) - раньше это была захардкоженная общая
+    # фраза "подтвердите/откажитесь" из tts/default.sln, но пользователю
+    # нужна была другая формулировка ("нажмите 1, если прослушали, 2 -
+    # если нет"). on_change симлинкует выбранный файл под
+    # tts/menu_prompt.sln - тем же приёмом, что incoming.greeting_audio_id
+    # использует для tts/incoming_custom.sln и campaign.py для
+    # tts/main_<id>.sln. Не выбрано - диалплан использует tts/default,
+    # как и раньше (проверяется через STAT() тем же способом).
+    "dialer.menu_prompt_audio_id": SettingDefinition(
+        key="dialer.menu_prompt_audio_id",
+        value_type="string",
+        default_value="0",
+        category=SettingCategory.DIALER,
+        description="Аудио из библиотеки (вкладка «Аудио») с фразой «нажмите 1/2/4», проигрывается после питча каждой кампании с включённым DTMF-меню. Не выбрано - используется общая фраза по умолчанию.",
+        on_change="update_menu_prompt"
+    ),
+
     # Настройки аудио
     "audio.max_size_mb": SettingDefinition(
         key="audio.max_size_mb",
@@ -548,6 +566,7 @@ class SettingsService:
             "update_dialer_cps": self._apply_dialer_cps,
             "update_log_level": self._apply_log_level,
             "update_incoming_greeting": self._apply_incoming_greeting,
+            "update_menu_prompt": self._apply_menu_prompt,
         }
         
         logger.info("SettingsService инициализирован")
@@ -597,7 +616,7 @@ class SettingsService:
         ui_type = type_map.get(definition.value_type, "text")
 
         options = None
-        if definition.key == "incoming.greeting_audio_id":
+        if definition.key in ("incoming.greeting_audio_id", "dialer.menu_prompt_audio_id"):
             # Список вариантов для этого поля не статичен (зависит от
             # содержимого библиотеки аудио), поэтому не хранится в
             # SettingDefinition.allowed_values, а собирается здесь.
@@ -610,7 +629,7 @@ class SettingsService:
                 ]
                 ui_type = "select"
             except Exception as e:
-                logger.warning(f"Не удалось загрузить список аудио для incoming.greeting_audio_id: {e}")
+                logger.warning(f"Не удалось загрузить список аудио для {definition.key}: {e}")
         elif definition.allowed_values:
             options = [{"value": str(v), "label": str(v)} for v in definition.allowed_values]
             ui_type = "select"
@@ -1004,7 +1023,58 @@ class SettingsService:
                 )
         except OSError as e:
             logger.error(f"Не удалось обновить приветствие входящих звонков ({target}): {e}")
-    
+
+    async def _apply_menu_prompt(self, value) -> None:
+        """
+        Симлинкует выбранное в веб-интерфейсе аудио под tts/menu_prompt.sln -
+        [sub-media] в asterisk/extensions.conf проверяет его наличие через
+        STAT() и играет его вместо общей tts/default.sln после питча
+        кампании, когда DTMF-меню включено (тот же приём, что
+        _apply_incoming_greeting выше использует для
+        tts/incoming_custom.sln).
+        """
+        from pathlib import Path
+
+        audio_id_raw = value if value is not None else await self.get_setting_value("dialer.menu_prompt_audio_id")
+
+        target = app_settings.TTS_DIR / "menu_prompt.sln"
+        source: Optional[Path] = None
+
+        try:
+            audio_id = int(audio_id_raw) if audio_id_raw else None
+        except (TypeError, ValueError):
+            audio_id = None
+
+        if audio_id:
+            async with self.db_pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT file_path FROM audio_files WHERE id = $1",
+                    audio_id
+                )
+            if row and row['file_path']:
+                candidate = Path(row['file_path'])
+                if candidate.exists():
+                    source = candidate
+                else:
+                    logger.warning(
+                        f"Фраза DTMF-меню: аудиофайл audio_id={audio_id} "
+                        f"не найден на диске ({candidate})"
+                    )
+
+        try:
+            if target.is_symlink() or target.exists():
+                target.unlink()
+            if source:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.symlink_to(source)
+                logger.info(f"Фраза DTMF-меню обновлена: {source}")
+            else:
+                logger.info(
+                    "Фраза DTMF-меню не выбрана - используется tts/default по умолчанию"
+                )
+        except OSError as e:
+            logger.error(f"Не удалось обновить фразу DTMF-меню ({target}): {e}")
+
     # =============================================
     # Экспорт/Импорт
     # =============================================
