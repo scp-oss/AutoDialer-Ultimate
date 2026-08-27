@@ -1335,16 +1335,37 @@ class CampaignService:
             # используем временное окно самого запуска как единственный
             # доступный способ отличить "этот прогон" от предыдущих/
             # последующих без более крупной миграции.
+            #
+            # Верхнюю границу окна НЕЛЬЗЯ брать из completed_at: dial_task()
+            # помечает запуск завершённым сразу после того, как ВСЕ контакты
+            # поставлены в очередь (Redis dial_queue) - это происходит почти
+            # мгновенно, а сам звонок идёт асинхронно через AMI и получает
+            # свой call_results только когда реально завершится, зачастую
+            # уже ПОСЛЕ этого момента. Подтверждено живьём: started_at ==
+            # completed_at до секунды, "Обзвонено: 1/1", но список звонков
+            # пуст - реальная запись в call_results появилась позже конца
+            # этого узкого окна. Вместо completed_at берём начало
+            # СЛЕДУЮЩЕГО запуска этой же кампании (если он уже есть) или
+            # "сейчас" (если это последний/текущий запуск) - тогда окно
+            # покрывает вообще всё время между этим запуском и следующим.
+            next_run_started_at = await conn.fetchval("""
+                SELECT started_at FROM campaign_runs
+                WHERE campaign_id = $1 AND started_at > $2
+                ORDER BY started_at ASC
+                LIMIT 1
+            """, row['campaign_id'], row['started_at'])
+            window_end = next_run_started_at or datetime.utcnow()
+
             calls = await conn.fetch("""
                 SELECT res.*, ct.phone, ct.name as contact_name
                 FROM call_results res
                 LEFT JOIN contacts ct ON res.contact_id = ct.id
                 WHERE res.campaign_id = $1
                 AND res.created_at >= $2
-                AND res.created_at <= $3
+                AND res.created_at < $3
                 ORDER BY res.created_at DESC
                 LIMIT 200
-            """, row['campaign_id'], row['started_at'], row['completed_at'] or datetime.utcnow())
+            """, row['campaign_id'], row['started_at'], window_end)
 
         total_contacts = row['total_contacts'] or 0
         processed = row['processed_contacts'] or 0
