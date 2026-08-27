@@ -814,9 +814,29 @@ class CampaignService:
             finally:
                 self._active_campaigns.pop(campaign_id, None)
         
-        # Регистрируем задачу
-        task = asyncio.create_task(dial_task())
-        await self.task_registry.register(task_id, task)
+        # Регистрируем задачу. TaskRegistry.register()'s real signature is
+        # (coro, name="unnamed", task_id=None, ...) - the old call here,
+        # register(task_id, task), passed the task_id STRING positionally
+        # as `coro` and the already-created asyncio.Task as `name`. Since
+        # `task_id` (the registry's own param) then defaulted to None, it
+        # tried `name.replace(' ', '_')` to auto-generate one - `name` was
+        # the Task object, not a string, so this always raised
+        # AttributeError, turning every campaign start into a 500 -
+        # confirmed live even though the campaign itself started fine,
+        # because register() crashed on this line strictly AFTER the real
+        # dial_task() coroutine had already been created via
+        # asyncio.create_task() and started running independently.
+        # register() creates the task itself when given a bare coroutine
+        # (asyncio.iscoroutine()/`__await__` branch) and takes task_id as
+        # an explicit keyword - passing dial_task() directly (not already
+        # wrapped in create_task()) lets it do that in one step, and keeps
+        # `task_id=f"campaign_{campaign_id}"` resolvable later by
+        # stop_campaign()'s task_registry.cancel(task_id).
+        await self.task_registry.register(
+            dial_task(),
+            name=f"Campaign {campaign_id}",
+            task_id=task_id
+        )
         
         campaign_started_counter.inc()
         logger.info(f"Кампания {campaign_id} запущена, контактов: {len(contacts)}")

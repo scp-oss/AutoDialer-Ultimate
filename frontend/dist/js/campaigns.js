@@ -482,7 +482,7 @@ App.campaigns = {
         
         try {
             if (id) {
-                await App.apiPut(`/campaigns/${id}`, data);
+                await App.apiPatch(`/campaigns/${id}`, data);
                 App.showToast('Обзвон обновлён', 'success');
             } else {
                 await App.apiPost('/campaigns/', data);

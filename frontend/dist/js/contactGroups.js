@@ -226,7 +226,7 @@ App.contactGroups = {
         
         try {
             if (id) {
-                await App.apiPut(`/contact-groups/${id}`, data);
+                await App.apiPatch(`/contact-groups/${id}`, data);
                 App.showToast('Группа обновлена', 'success');
             } else {
                 await App.apiPost('/contact-groups/', data);
