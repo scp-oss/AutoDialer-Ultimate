@@ -165,15 +165,15 @@ class CampaignService:
                 INSERT INTO campaigns (
                     name, description, priority, status,
                     max_calls, cps, dial_mode, call_timeout, answer_timeout,
-                    caller_id, caller_id_number, audio_id, dtmf_enabled,
+                    caller_id, caller_id_number, audio_id, dtmf_enabled, dtmf_timeout,
                     retry_strategy, schedule,
                     created_by, created_at, updated_at
                 ) VALUES (
                     $1, $2, $3, $4,
                     $5, $6, $7, $8, $9,
-                    $10, $11, $12, $13,
-                    $14, $15,
-                    $16, NOW(), NOW()
+                    $10, $11, $12, $13, $14,
+                    $15, $16,
+                    $17, NOW(), NOW()
                 )
                 RETURNING id
             """,
@@ -190,6 +190,7 @@ class CampaignService:
                 request.dialer_settings.caller_id_number,
                 request.dialer_settings.audio_id,
                 request.dialer_settings.dtmf_enabled,
+                request.dialer_settings.dtmf_timeout,
                 json.dumps(request.retry_strategy.model_dump()),
                 json.dumps(request.schedule.model_dump()),
                 user_id
@@ -273,7 +274,8 @@ class CampaignService:
                     caller_id_number=row['caller_id_number'],
                     audio_id=row['audio_id'],
                     audio_name=row['audio_name'],
-                    dtmf_enabled=row['dtmf_enabled'] if row['dtmf_enabled'] is not None else True
+                    dtmf_enabled=row['dtmf_enabled'] if row['dtmf_enabled'] is not None else True,
+                    dtmf_timeout=row['dtmf_timeout'] if row['dtmf_timeout'] is not None else 5
                 ),
                 retry_strategy=RetryStrategySchema(**retry_strategy) if retry_strategy else None,
                 schedule=CampaignScheduleSchema(**schedule) if schedule else None,
@@ -344,15 +346,16 @@ class CampaignService:
                     f"caller_id = ${param_idx + 5}",
                     f"caller_id_number = ${param_idx + 6}",
                     f"audio_id = ${param_idx + 7}",
-                    f"dtmf_enabled = ${param_idx + 8}"
+                    f"dtmf_enabled = ${param_idx + 8}",
+                    f"dtmf_timeout = ${param_idx + 9}"
                 ])
                 params.extend([
                     ds.max_calls, ds.cps, ds.dial_mode,
                     ds.call_timeout, ds.answer_timeout,
                     ds.caller_id, ds.caller_id_number, ds.audio_id,
-                    ds.dtmf_enabled
+                    ds.dtmf_enabled, ds.dtmf_timeout
                 ])
-                param_idx += 9
+                param_idx += 10
             
             if request.retry_strategy is not None:
                 updates.append(f"retry_strategy = ${param_idx}")
@@ -550,7 +553,8 @@ class CampaignService:
                         caller_id_number=row['caller_id_number'],
                         audio_id=row['audio_id'],
                         audio_name=row['audio_name'],
-                        dtmf_enabled=row['dtmf_enabled'] if row['dtmf_enabled'] is not None else True
+                        dtmf_enabled=row['dtmf_enabled'] if row['dtmf_enabled'] is not None else True,
+                        dtmf_timeout=row['dtmf_timeout'] if row['dtmf_timeout'] is not None else 5
                     ),
                     retry_strategy=RetryStrategySchema(**retry_strategy) if retry_strategy else None,
                     schedule=CampaignScheduleSchema(**schedule) if schedule else None,

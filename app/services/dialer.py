@@ -1078,22 +1078,36 @@ class DialerManager:
         # так это работает одинаково для первого звонка (из dial_task()),
         # повторов (app/workers/retry.py) и тестового "Быстрый звонок"
         # (campaign_id<=0 - там кампании нет, меню всегда включено).
+        # dtmf_timeout - то же самое, но для длительности ожидания
+        # нажатия (DialerSettingsSchema.dtmf_timeout) - раньше это поле
+        # существовало только в модели и нигде не читалось, единственным
+        # реальным таймаутом был жёстко заданный глобальный
+        # DTMF_TIMEOUT в extensions.conf [globals]. campaigns.dtmf_timeout
+        # NULL (кампания создана/отредактирована до этой правки) - тоже
+        # используем глобальное значение по умолчанию в диалплане, просто
+        # не переопределяем его вообще (см. Gosub-аргумент ниже).
         dtmf_enabled = True
+        dtmf_timeout = None
         if campaign_id > 0:
             try:
                 async with self.db_pool.acquire() as conn:
-                    value = await conn.fetchval(
-                        "SELECT dtmf_enabled FROM campaigns WHERE id = $1", campaign_id
+                    row = await conn.fetchrow(
+                        "SELECT dtmf_enabled, dtmf_timeout FROM campaigns WHERE id = $1", campaign_id
                     )
-                    if value is not None:
-                        dtmf_enabled = value
+                    if row:
+                        if row['dtmf_enabled'] is not None:
+                            dtmf_enabled = row['dtmf_enabled']
+                        if row['dtmf_timeout'] is not None:
+                            dtmf_timeout = row['dtmf_timeout']
             except Exception as e:
-                logger.warning(f"Не удалось прочитать dtmf_enabled для кампании {campaign_id}: {e}")
+                logger.warning(f"Не удалось прочитать dtmf_enabled/dtmf_timeout для кампании {campaign_id}: {e}")
 
         try:
             # Originate
             timeout_ms = self.call_timeout * 1000
             setvar = f'__CAMPAIGN_ID={campaign_id},__RETRY_COUNT={retry},__DTMF_ENABLED={1 if dtmf_enabled else 0}'
+            if dtmf_timeout:
+                setvar += f',__DTMF_TIMEOUT={dtmf_timeout}'
             if traceparent:
                 setvar += f',__TRACEPARENT={traceparent}'
 

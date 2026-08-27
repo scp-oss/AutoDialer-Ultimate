@@ -129,7 +129,10 @@ same => n,Set(__ORIGINAL_PHONE=\${EXTEN})
 ; Incomplete" на любой номер с "7" - подтверждено живьём. Меняем только
 ; для этого исходящего плеча.
 same => n,Set(DIAL_NUMBER=\${IF(\$["\${EXTEN:0:1}"="7"]?8\${EXTEN:1}:\${EXTEN})})
-same => n,Dial(PJSIP/\${DIAL_NUMBER}@\${TRUNK_NAME},\${CALL_TIMEOUT},U(sub-media^\${CAMPAIGN_ID}^\${DTMF_ENABLED}))
+; \${DTMF_TIMEOUT} тут - либо __DTMF_TIMEOUT из Originate (свой таймаут
+; кампании), либо, если не передан, глобальный DTMF_TIMEOUT из [globals].
+; Передаём 3-м аргументом Gosub - тот же приём, что для CAMPAIGN_ID/DTMF_ENABLED.
+same => n,Dial(PJSIP/\${DIAL_NUMBER}@\${TRUNK_NAME},\${CALL_TIMEOUT},U(sub-media^\${CAMPAIGN_ID}^\${DTMF_ENABLED}^\${DTMF_TIMEOUT}))
 same => n,Goto(sub-dial-status,s,1)
 
 exten => duplicate,1,NoOp(=== Повторный запуск dialer_bridge для linkedid \${CHANNEL(linkedid)} - пропускаем ===)
@@ -190,6 +193,10 @@ exten => s,1,NoOp(=== Ответ абонента - Кампания \${ARG1} ==
 same => n,Set(CAMPAIGN_ID=\${ARG1})
 ; ARG2 = DTMF_ENABLED (1/0), пробрасывается из [dialer_bridge].
 same => n,Set(DTMF_ENABLED=\${IF(\$["\${ARG2}"=""]?1:\${ARG2})})
+; ARG3 = DTMF_TIMEOUT кампании. Пусто - \${DTMF_TIMEOUT} резолвится в
+; глобальное значение из [globals] (канал-переменная этого имени тут
+; ещё не задана).
+same => n,Set(DTMF_TIMEOUT=\${IF(\$["\${ARG3}"=""]?\${DTMF_TIMEOUT}:\${ARG3})})
 same => n,Set(AUDIO_FILE=tts/main_\${CAMPAIGN_ID})
 
 ; Проверка наличия кастомного аудио, иначе используется default. STAT()
