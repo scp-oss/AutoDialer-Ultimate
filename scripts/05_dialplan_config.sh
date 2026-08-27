@@ -252,11 +252,15 @@ same => n,GotoIf(\$["\${DTMF_ENABLED}"="0"]?announce_only)
 ; услышав её, просто не понимал, что от него ждут.
 ; dialer.menu_prompt_audio_id (вкладка "Настройки") даёт выбрать свою
 ; формулировку из библиотеки аудио - симлинкается под tts/menu_prompt.sln.
-; Не выбрано - используем tts/default.sln, у него уже есть подходящий
-; текст ("Пожалуйста, нажмите 1 для подтверждения или 2 для отказа") и
-; он гарантированно есть на любой установке.
+; Не выбрано - используем tts/menu_prompt_default.sln (06_tts_install.sh
+; генерирует её на каждой установке с текстом именно "нажмите 1 для
+; подтверждения, что прослушали"). tts/default.sln - последний резерв
+; для уже существующих установок без перегенерированного TTS.
 same => n,GotoIf(\$[\${STAT(e,/var/lib/asterisk/sounds/tts/menu_prompt.sln)} = 1]?menu_custom)
+same => n,GotoIf(\$[\${STAT(e,/var/lib/asterisk/sounds/tts/menu_prompt_default.sln)} = 1]?menu_installer_default)
 same => n,Background(tts/default)
+same => n,Goto(menu_done)
+same => n(menu_installer_default),Background(tts/menu_prompt_default)
 same => n,Goto(menu_done)
 same => n(menu_custom),Background(tts/menu_prompt)
 same => n(menu_done),WaitExten(\${DTMF_TIMEOUT})

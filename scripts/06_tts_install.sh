@@ -227,7 +227,20 @@ generate_default_audio() {
         echo "Пожалуйста, нажмите 1 для подтверждения или 2 для отказа." | \
             piper --model "$MODEL" --output_file "${TTS_DIR}/default.wav" -q 2>/dev/null || true
     fi
-    
+
+    # Фраза DTMF-меню ("нажмите 1/2/4"), которую [sub-media] в
+    # extensions.conf проигрывает после питча КАЖДОЙ кампании с включённым
+    # DTMF-меню - отдельно от default выше (тот - запасной ПИТЧ на случай,
+    # если в кампании вообще не выбрано аудио, а не формулировка меню).
+    # dialer.menu_prompt_audio_id (вкладка "Настройки") позволяет выбрать
+    # свою через библиотеку аудио - этот файл лишь тот, что используется,
+    # пока админ ничего не выбрал.
+    if [ ! -f "${TTS_DIR}/menu_prompt_default.sln" ]; then
+        log_info "Генерация menu_prompt_default..."
+        echo "Нажмите 1 для подтверждения, что вы прослушали сообщение. Нажмите 2, если не согласны." | \
+            piper --model "$MODEL" --output_file "${TTS_DIR}/menu_prompt_default.wav" -q 2>/dev/null || true
+    fi
+
     # Оператор
     if [ ! -f "${TTS_DIR}/operator_default.sln" ]; then
         log_info "Генерация operator_default..."
