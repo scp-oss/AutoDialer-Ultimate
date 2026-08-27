@@ -188,8 +188,11 @@ exten => s,1,NoOp(=== Ответ абонента - Кампания \${ARG1} ==
 same => n,Set(CAMPAIGN_ID=\${ARG1})
 same => n,Set(AUDIO_FILE=tts/main_\${CAMPAIGN_ID})
 
-; Проверка наличия кастомного аудио, иначе используется default
-same => n,GotoIf(\$[\${STAT(e,\${AUDIO_FILE})} = 1]?play)
+; Проверка наличия кастомного аудио, иначе используется default. STAT()
+; делает буквальный stat() по указанной строке - не резолвит расширения
+; и не ищет в каталоге sounds, как это делает Background() - нужен полный
+; абсолютный путь С расширением, иначе всегда 0 даже при существующем файле.
+same => n,GotoIf(\$[\${STAT(e,/var/lib/asterisk/sounds/\${AUDIO_FILE}.sln)} = 1]?play)
 same => n,Set(AUDIO_FILE=tts/default)
 same => n(play),NoOp(=== Воспроизведение: \${AUDIO_FILE} ===)
 
