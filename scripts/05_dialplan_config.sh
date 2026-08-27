@@ -238,6 +238,7 @@ same => n,Set(DB(dialer_answer_epoch/\${CHANNEL(linkedid)})=\${ANSWER_EPOCH})
 same => n,Gosub(sub-amd,s,1)
 ; Тоже в astdb под linkedid - см. комментарий у DB(dialer_answer_epoch/...) выше.
 same => n,Set(DB(dialer_amdstatus/\${CHANNEL(linkedid)})=\${AMDSTATUS})
+same => n,Set(DB(dialer_amdcause/\${CHANNEL(linkedid)})=\${AMDCAUSE})
 
 same => n,Set(TIMEOUT(digit)=\${DTMF_TIMEOUT})
 same => n,Set(TIMEOUT(response)=\${DTMF_TIMEOUT})
@@ -338,9 +339,13 @@ same => n,Hangup()
 
 ; Таймаут - DTMF не получен. AMDSTATUS=MACHINE - автоответчик, никто не
 ; мог физически нажать 1/2/4, статус "timeout" тут вводит в заблуждение.
-exten => t,1,NoOp(=== Таймаут DTMF, AMDSTATUS=\${AMDSTATUS} ===)
+; НО доверяем этому только если AMDCAUSE не "просто тишина в начале"
+; (INITIALSILENCE) - живой человек, которому звонит робот, молчит первые
+; секунды совершенно нормально, это не автоответчик.
+exten => t,1,NoOp(=== Таймаут DTMF, AMDSTATUS=\${AMDSTATUS}, AMDCAUSE=\${AMDCAUSE} ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},dtmf=timeout)
-same => n,UserEvent(DialerResult,Status: \${IF(\$["\${AMDSTATUS}"="MACHINE"]?machine:timeout)},Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
+same => n,Set(TRUST_MACHINE=\${IF(\$["\${AMDSTATUS}"="MACHINE"]?\${IF(\$["\${AMDCAUSE:0:14}"="INITIALSILENCE"]?0:1)}:0)})
+same => n,UserEvent(DialerResult,Status: \${IF(\$["\${TRUST_MACHINE}"="1"]?machine:timeout)},Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Playback(tts/timeout_\${CAMPAIGN_ID})
 same => n,GotoIf(\$[\${STAT(e,/var/lib/asterisk/sounds/tts/timeout_\${CAMPAIGN_ID}.sln)} = 1]?hangup)
 same => n,Playback(tts/timeout_default)
@@ -388,7 +393,10 @@ same => n,UserEvent(DialerHangup,LinkedID: \${CHANNEL(linkedid)},Status: \${DIAL
 same => n,GotoIf(\$["\${DIALSTATUS}"!="ANSWER"]?skip_fallback)
 same => n,Set(FALLBACK_ANSWER_EPOCH=\${DB(dialer_answer_epoch/\${CHANNEL(linkedid)})})
 same => n,Set(FALLBACK_AMDSTATUS=\${DB(dialer_amdstatus/\${CHANNEL(linkedid)})})
-same => n,UserEvent(DialerResult,Status: \${IF(\$["\${FALLBACK_ANSWER_EPOCH}"=""]?unknown:\${IF(\$["\${FALLBACK_AMDSTATUS}"="MACHINE"]?machine:timeout)})},Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)},Duration: \${IF(\$["\${FALLBACK_ANSWER_EPOCH}"=""]?0:\$[\${EPOCH} - \${FALLBACK_ANSWER_EPOCH}])})
+same => n,Set(FALLBACK_AMDCAUSE=\${DB(dialer_amdcause/\${CHANNEL(linkedid)})})
+; "machine" только если AMDCAUSE - не просто тишина в начале, см. TRUST_MACHINE в exten=>t выше.
+same => n,Set(TRUST_MACHINE=\${IF(\$["\${FALLBACK_AMDSTATUS}"="MACHINE"]?\${IF(\$["\${FALLBACK_AMDCAUSE:0:14}"="INITIALSILENCE"]?0:1)}:0)})
+same => n,UserEvent(DialerResult,Status: \${IF(\$["\${FALLBACK_ANSWER_EPOCH}"=""]?unknown:\${IF(\$["\${TRUST_MACHINE}"="1"]?machine:timeout)})},Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)},Duration: \${IF(\$["\${FALLBACK_ANSWER_EPOCH}"=""]?0:\$[\${EPOCH} - \${FALLBACK_ANSWER_EPOCH}])})
 same => n(skip_fallback),NoOp(=== Конец подстраховки для незавершённого DTMF ===)
 
 ; НЕ снимаем блокировку от дубликатов dialer_bridge здесь - вторая
