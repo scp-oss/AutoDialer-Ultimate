@@ -1614,7 +1614,7 @@ class DialerManager:
                 duration=duration
             )
 
-            if status in ['noanswer', 'busy', 'failed']:
+            if status in ['noanswer', 'busy', 'failed', 'machine']:
                 await self._schedule_retry(int(campaign_id) if campaign_id else 0, phone, retry_count + 1, status)
 
     async def _fallback_hangup_result(
@@ -1653,7 +1653,7 @@ class DialerManager:
             ctx.campaign_id, ctx.phone, status, linked_id, unique_id, ctx.retry_count,
             duration=ctx.duration
         )
-        if ctx.campaign_id > 0 and status in ('noanswer', 'busy', 'failed'):
+        if ctx.campaign_id > 0 and status in ('noanswer', 'busy', 'failed', 'machine'):
             await self._schedule_retry(ctx.campaign_id, ctx.phone, ctx.retry_count + 1, status)
     
     async def _handle_dtmf(self, event, unique_id: str):
@@ -1764,7 +1764,8 @@ class DialerManager:
             'busy': {'max': 2, 'delay': settings.RETRY_BUSY_DELAY},
             'noanswer': {'max': 3, 'delay': settings.RETRY_NOANSWER_DELAY},
             'failed': {'max': 1, 'delay': settings.RETRY_FAILED_DELAY},
-            'timeout': {'max': 1, 'delay': 60}
+            'timeout': {'max': 1, 'delay': 60},
+            'machine': {'max': 1, 'delay': settings.RETRY_MACHINE_DELAY}
         }
         strategy = default_strategies.get(status, {'max': 1, 'delay': 60})
 
@@ -1778,7 +1779,7 @@ class DialerManager:
         # через глобальные 120с (settings.RETRY_BUSY_DELAY по умолчанию),
         # которые пользователь в форме вообще не видит и не может понять,
         # почему его собственная настройка не действует.
-        if campaign_id > 0 and status in ('busy', 'noanswer', 'failed', 'timeout'):
+        if campaign_id > 0 and status in ('busy', 'noanswer', 'failed', 'timeout', 'machine'):
             try:
                 async with self.db_pool.acquire() as conn:
                     raw_strategy = await conn.fetchval(

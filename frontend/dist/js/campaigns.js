@@ -357,6 +357,8 @@ App.campaigns = {
                 document.getElementById('retryNoanswerDelay').value = campaign.retry_strategy.noanswer_delay || 600;
                 document.getElementById('retryFailedMax').value = campaign.retry_strategy.failed || 1;
                 document.getElementById('retryFailedDelay').value = campaign.retry_strategy.failed_delay || 1800;
+                document.getElementById('retryMachineMax').value = campaign.retry_strategy.machine || 1;
+                document.getElementById('retryMachineDelay').value = campaign.retry_strategy.machine_delay || 3600;
             }
             
             // Расписание
@@ -385,6 +387,8 @@ App.campaigns = {
             document.getElementById('retryNoanswerDelay').value = 600;
             document.getElementById('retryFailedMax').value = 1;
             document.getElementById('retryFailedDelay').value = 1800;
+            document.getElementById('retryMachineMax').value = 1;
+            document.getElementById('retryMachineDelay').value = 3600;
             document.getElementById('scheduleType').value = 'once';
         }
         
@@ -482,7 +486,9 @@ App.campaigns = {
             noanswer: parseInt(document.getElementById('retryNoanswerMax')?.value) || 3,
             noanswer_delay: parseInt(document.getElementById('retryNoanswerDelay')?.value) || 600,
             failed: parseInt(document.getElementById('retryFailedMax')?.value) || 1,
-            failed_delay: parseInt(document.getElementById('retryFailedDelay')?.value) || 1800
+            failed_delay: parseInt(document.getElementById('retryFailedDelay')?.value) || 1800,
+            machine: parseInt(document.getElementById('retryMachineMax')?.value) || 1,
+            machine_delay: parseInt(document.getElementById('retryMachineDelay')?.value) || 3600
         };
         
         // Расписание (schedule не Optional на бэкенде — при выключенном чекбоксе

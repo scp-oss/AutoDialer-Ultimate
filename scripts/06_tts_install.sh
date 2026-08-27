@@ -237,7 +237,7 @@ generate_default_audio() {
     # пока админ ничего не выбрал.
     if [ ! -f "${TTS_DIR}/menu_prompt_default.sln" ]; then
         log_info "Генерация menu_prompt_default..."
-        echo "Нажмите 1 для подтверждения, что вы прослушали сообщение. Нажмите 2, если не согласны." | \
+        echo "Нажмите 1 для подтверждения, что вы прослушали сообщение." | \
             piper --model "$MODEL" --output_file "${TTS_DIR}/menu_prompt_default.wav" -q 2>/dev/null || true
     fi
 
