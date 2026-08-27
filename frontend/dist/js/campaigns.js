@@ -697,6 +697,35 @@ App.campaigns = {
                             </table>
                         </div>
                     ` : ''}
+
+                    <div class="detail-section">
+                        <h4>Последние звонки</h4>
+                        ${(data.recent_calls && data.recent_calls.length) ? `
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Номер</th>
+                                        <th>Контакт</th>
+                                        <th>Статус</th>
+                                        <th>Длит.</th>
+                                        <th>Дата/время</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${data.recent_calls.map(call => `
+                                        <tr>
+                                            <td>${this.formatPhone(call.phone)}</td>
+                                            <td>${this.escapeHtml(call.contact_name || '—')}</td>
+                                            <td><span class="status-badge status-${call.status}">${this.getCallStatusText(call.status)}</span></td>
+                                            <td>${App.formatDuration(call.duration)}</td>
+                                            <td>${App.formatDateTime(call.created_at)}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                            <small>Показаны последние ${data.recent_calls.length} - полный список со всеми номерами доступен через кнопку «Экспорт» ниже</small>
+                        ` : '<p class="text-muted">Звонков ещё не было</p>'}
+                    </div>
                 </div>
             `;
             
@@ -835,10 +864,10 @@ App.campaigns = {
         try {
             const response = await App.apiGet(`/campaigns/${campaignId}/export`);
             
-            let csv = 'phone,contact_name,status,duration,dtmf_result,call_date\n';
-            
+            let csv = 'Номер,Контакт,Статус,Длительность (с),DTMF,Дата/время\n';
+
             for (const call of response.calls || []) {
-                csv += `${call.phone},${call.contact_name || ''},${call.status},${call.duration || 0},${call.dtmf_result || ''},${call.created_at}\n`;
+                csv += `${call.phone},${call.contact_name || ''},${this.getCallStatusText(call.status)},${call.duration || 0},${call.dtmf_result || ''},${call.created_at}\n`;
             }
             
             App.downloadFile(csv, `campaign_${campaignId}_results.csv`, 'text/csv');
@@ -864,6 +893,13 @@ App.campaigns = {
             'failed': 'Ошибка'
         };
         return map[status] || status;
+    },
+
+    // Статус ЗВОНКА (busy/noanswer/agreed/...), не статус обзвона выше -
+    // те же подписи, что и в "Истории звонков" (history.js:STATUS_LABELS),
+    // переиспользуем оттуда вместо повторного дублирования того же списка.
+    getCallStatusText(status) {
+        return App.history?.STATUS_LABELS?.[status] || status;
     },
 
     formatPhone(phone) {
