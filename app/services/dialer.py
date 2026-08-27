@@ -1287,8 +1287,21 @@ class DialerManager:
         if event_name not in ('UserEvent', 'DTMF') and channel and not channel.startswith('Local/'):
             return
 
-        # Дедупликация
-        event_key = f"{event_name}_{unique_id}"
+        # Дедупликация. event_name - это всегда буквально "UserEvent" для
+        # ЛЮБОГО кастомного UserEvent(), независимо от типа (DialerHangup,
+        # DialerResult, ...) - реальный подтип лежит в отдельном поле
+        # 'userevent'. Без него два РАЗНЫХ UserEvent'а на одном и том же
+        # канале (тот же unique_id), отправленных подряд в одной
+        # последовательности - именно так [hangup-handler] теперь шлёт
+        # сначала UserEvent(DialerHangup,...), потом
+        # UserEvent(DialerResult,...) - получали ОДИНАКОВЫЙ event_key, и
+        # второй тихо терялся здесь как "дубликат" первого. Подтверждено
+        # живьём: диалплан корректно отправлял DialerResult,Status: machine,
+        # но событие ни разу не доходило до _handle_user_event() - звонок
+        # в итоге сохранялся только через 25-секундный fallback как
+        # "unknown", хотя правильный результат был готов сразу после Hangup.
+        event_subtype = event.get('userevent', '') if event_name == 'UserEvent' else ''
+        event_key = f"{event_name}_{event_subtype}_{unique_id}"
         if event_key in self.processed_events:
             return
         self.processed_events[event_key] = True
