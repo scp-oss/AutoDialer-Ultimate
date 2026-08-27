@@ -214,15 +214,9 @@ same => n,Wait(0.2)
 ; звонков никогда не приходит. Подтверждено живьём: длительность 0:00 на
 ; каждом agreed/declined звонке с реальным разговором в несколько секунд.
 ; Вместо того чтобы полагаться на AMI-события, считаем длительность прямо
-; в диалплане (эта строка выполняется уже после реального Answer()) и
-; передаём её в Python прямо в каждом UserEvent(DialerResult,...) ниже.
-same => n,Set(ANSWER_EPOCH=\${EPOCH})
-; Также в astdb под linkedid - [hangup-handler] читает его оттуда, когда
-; абонент вешает трубку сам, не дожидаясь WaitExten (exten=>h в ЭТОМ
-; контексте на это ненадёжен - подтверждено живьём: Asterisk логирует
-; "Abnormal Gosub exit" и не вызывает hangup-extension lookup для этого
-; контекста в таком случае).
-same => n,Set(DB(dialer_answer_epoch/\${CHANNEL(linkedid)})=\${ANSWER_EPOCH})
+; в диалплане и передаём её в Python прямо в каждом UserEvent(DialerResult,...)
+; ниже - но САМА отметка ставится позже, см. комментарий перед Background()
+; ниже про то, почему не сразу после Answer().
 
 ; AMD должен отработать (и дослушать) ДО того, как начнём проигрывать
 ; своё TTS - он различает живого человека и автоответчика по тому, что
@@ -239,6 +233,16 @@ same => n,Gosub(sub-amd,s,1)
 ; Тоже в astdb под linkedid - см. комментарий у DB(dialer_answer_epoch/...) выше.
 same => n,Set(DB(dialer_amdstatus/\${CHANNEL(linkedid)})=\${AMDSTATUS})
 same => n,Set(DB(dialer_amdcause/\${CHANNEL(linkedid)})=\${AMDCAUSE})
+
+; ANSWER_EPOCH ставится ЗДЕСЬ, а не сразу после Answer() - иначе Duration
+; включало бы время работы AMD (1-2с тишины/анализа речи ДО того, как
+; питч начал звучать), и "прослушано X из Y секунд аудио" в отчёте вводило
+; бы в заблуждение - подтверждено живьём. Теперь Duration = сколько реально
+; играло само сообщение.
+same => n,Set(ANSWER_EPOCH=\${EPOCH})
+; Также в astdb под linkedid - [hangup-handler] читает его оттуда для
+; случая "положил трубку без ввода" (exten=>h в этом контексте ненадёжен).
+same => n,Set(DB(dialer_answer_epoch/\${CHANNEL(linkedid)})=\${ANSWER_EPOCH})
 
 same => n,Set(TIMEOUT(digit)=\${DTMF_TIMEOUT})
 same => n,Set(TIMEOUT(response)=\${DTMF_TIMEOUT})
