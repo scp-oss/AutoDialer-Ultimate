@@ -916,6 +916,22 @@ class CallResultService:
         duration: Optional[int]
     ) -> None:
         """Обновить прогресс кампании"""
+        # 'busy'/'noanswer'/'failed' здесь раньше ТОЖЕ помечались 'completed' -
+        # но именно эти три статуса (см. app/services/dialer.py:
+        # _schedule_retry(), strategies dict) имеют настроенную стратегию
+        # повтора и получают next_retry_at сразу СЛЕДУЮЩИМ шагом в
+        # _handle_user_event() (после этого самого вызова). process_retry_
+        # queue() (app/workers/retry.py) забирает на повтор только строки
+        # с status='pending' - если этот UPDATE уже поставил 'completed',
+        # запланированный next_retry_at так никогда и не сработает: сам
+        # повтор молча не происходит, при этом нигде не логируется ошибка.
+        # Подтверждено живьём: кампания уходит в статус "Завершена" сразу
+        # после первого же "занято", хотя retry_strategy требует ещё
+        # 2 попытки. Единственные статусы, для которых повтора в принципе
+        # не бывает (нет записи в strategies) - 'agreed'/'declined': они и
+        # остаются терминальными здесь. Для busy/noanswer/failed контакт
+        # теперь по-прежнему 'pending' - его окончательно закроет сама
+        # _schedule_retry(), когда реально исчерпает лимит попыток.
         await conn.execute("""
             UPDATE campaign_contacts
             SET
@@ -923,7 +939,7 @@ class CallResultService:
                 last_call_status = $1,
                 retry_count = retry_count + 1,
                 status = CASE
-                    WHEN $1::VARCHAR IN ('agreed', 'declined', 'busy', 'failed') THEN 'completed'
+                    WHEN $1::VARCHAR IN ('agreed', 'declined') THEN 'completed'
                     ELSE 'pending'
                 END
             WHERE campaign_id = $2 AND contact_id = (

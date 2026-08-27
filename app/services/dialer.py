@@ -1712,11 +1712,35 @@ class DialerManager:
         }
         
         strategy = strategies.get(status, {'max': 1, 'delay': 60})
-        
+
         if retry_count >= strategy['max']:
             logger.info(f"Достигнут максимум повторов ({strategy['max']}) для {phone}")
+            # campaign_contacts.status намеренно остаётся 'pending' после
+            # _update_campaign_progress() (см. app/services/call_result.py)
+            # именно чтобы этот контакт оставался виден
+            # process_retry_queue() до тех пор, пока повтор ещё возможен.
+            # Раз лимит исчерпан и никакой next_retry_at дальше не будет
+            # выставлен - контакт нужно закрыть здесь явно, иначе он
+            # навсегда останется 'pending' без единого запланированного
+            # повтора и кампания никогда не сможет дойти до "Завершена".
+            if campaign_id > 0:
+                try:
+                    normalized = self.normalize_phone(phone)
+                    if normalized:
+                        async with self.db_pool.acquire() as conn:
+                            contact_id = await conn.fetchval(
+                                "SELECT id FROM contacts WHERE phone = $1", normalized
+                            )
+                            if contact_id:
+                                await conn.execute("""
+                                    UPDATE campaign_contacts
+                                    SET status = 'completed'
+                                    WHERE campaign_id = $1 AND contact_id = $2
+                                """, campaign_id, contact_id)
+                except Exception as e:
+                    logger.error(f"Ошибка закрытия контакта после исчерпания повторов: {e}")
             return
-        
+
         if campaign_id <= 0:
             return
         
