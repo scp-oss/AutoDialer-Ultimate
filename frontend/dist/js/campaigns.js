@@ -16,6 +16,11 @@ App.campaigns = {
         selectedCampaign: null,
         audioFiles: [],
         contactGroups: [],
+        // Группы, отмеченные при открытии формы редактирования (по
+        // campaign.contact_groups) - saveCampaign() сравнивает с этим,
+        // чтобы понять, реально ли пользователь сменил группу, а не
+        // просто отредактировал что-то другое в той же форме.
+        originalContactGroupIds: [],
         // ID кампании, чья модалка деталей сейчас открыта (для живых обновлений
         // из WebSocket-канала campaign) — null, если модалка закрыта
         viewingCampaignId: null
@@ -33,7 +38,7 @@ App.campaigns = {
     // =============================================
     // Загрузка групп контактов для формы создания
     // =============================================
-    async loadContactGroupsForSelect() {
+    async loadContactGroupsForSelect(selectedIds = []) {
         try {
             const data = await App.apiGet('/contact-groups/');
             this.state.contactGroups = data.items || data || [];
@@ -43,7 +48,7 @@ App.campaigns = {
                 container.innerHTML = this.state.contactGroups.length
                     ? this.state.contactGroups.map(g => `
                         <label>
-                            <input type="checkbox" name="campaignContactGroupIds" value="${g.id}">
+                            <input type="checkbox" name="campaignContactGroupIds" value="${g.id}" ${selectedIds.includes(g.id) ? 'checked' : ''}>
                             ${this.escapeHtml(g.name)} (${g.contacts_count || 0})
                         </label>
                     `).join('')
@@ -325,7 +330,7 @@ App.campaigns = {
         }
         if (contactsHint) {
             contactsHint.textContent = isEdit
-                ? 'Необязательно. Отметьте группу(ы), чтобы ЗАМЕНИТЬ ими текущий список контактов обзвона - остальные настройки при этом не пострадают.'
+                ? 'Ниже отмечена текущая группа(ы) обзвона. Смените отметку, чтобы ЗАМЕНИТЬ список контактов - остальные настройки при этом не пострадают. Ничего не меняли - список контактов не тронется.'
                 : 'Нужно выбрать хотя бы одну группу - без этого обзвон нельзя сохранить';
         }
 
@@ -385,10 +390,20 @@ App.campaigns = {
         
         this.loadAudioForSelect();
         // Список групп нужен и при редактировании теперь тоже - см.
-        // комментарий выше про смену группы обзвона. loadContactGroupsForSelect()
-        // всегда генерирует чекбоксы заново, все снятые, так что предыдущий
-        // выбор (для другой кампании) сюда не протекает.
-        this.loadContactGroupsForSelect();
+        // комментарий выше про смену группы обзвона. При редактировании
+        // отмечаем ТЕКУЩИЕ группы кампании (campaign.contact_groups,
+        // приходит только в детальном ответе GET /campaigns/{id} - см.
+        // editCampaign() ниже), чтобы было видно, откуда сейчас звонок
+        // берёт контакты, а не пустой список без единой подсказки.
+        // originalContactGroupIds запоминаем отдельно, чтобы saveCampaign()
+        // мог сравнить и НЕ трогать campaign_contacts, если пользователь
+        // ничего не менял в этом блоке - иначе любое редактирование
+        // кампании (например, просто смена названия) тихо сбрасывало бы
+        // прогресс/retry_count всех контактов на пустой пересбор той же
+        // группы.
+        const currentGroupIds = isEdit ? (campaign.contact_groups || []).map(g => g.id) : [];
+        this.state.originalContactGroupIds = currentGroupIds;
+        this.loadContactGroupsForSelect(currentGroupIds);
         modal.style.display = 'flex';
     },
 
@@ -400,10 +415,18 @@ App.campaigns = {
         this.state.selectedCampaign = null;
     },
 
-    editCampaign(id) {
-        const campaign = this.state.campaigns.find(c => c.id === id);
-        if (campaign) {
+    async editCampaign(id) {
+        // this.state.campaigns (список, GET /campaigns/) отдаёт
+        // CampaignResponse - без поля contact_groups, оно есть только в
+        // CampaignDetailResponse (GET /campaigns/{id}). Без этого запроса
+        // openCampaignModal() не может отметить текущую группу кампании
+        // при редактировании.
+        try {
+            const campaign = await App.apiGet(`/campaigns/${id}`);
             this.openCampaignModal(campaign);
+        } catch (error) {
+            console.error('Failed to load campaign for edit:', error);
+            App.showToast('Ошибка загрузки обзвона', 'error');
         }
     },
 
@@ -509,10 +532,22 @@ App.campaigns = {
             if (id) {
                 await App.apiPatch(`/campaigns/${id}`, data);
 
-                // Отмечены группы - меняем группу обзвона: полностью
-                // заменяем контакты кампании выбранным (replace=true).
-                // Ничего не отмечено - контакты не трогаем вообще.
-                if (contactGroupIds.length > 0) {
+                // Отметка группы(групп) поменялась относительно того, что
+                // было отмечено при открытии формы (originalContactGroupIds,
+                // выставлен в openCampaignModal() по campaign.contact_groups) -
+                // значит пользователь реально хочет сменить группу обзвона,
+                // заменяем контакты кампании (replace=true). Отметка НЕ
+                // менялась (в т.ч. просто открыли и сохранили без правок
+                // групп) - контакты не трогаем: иначе любое редактирование
+                // кампании (даже просто смена названия) тихо пересобирало бы
+                // campaign_contacts заново и сбрасывало retry_count/статус
+                // уже обработанных контактов.
+                const original = [...(this.state.originalContactGroupIds || [])].sort();
+                const current = [...contactGroupIds].sort();
+                const groupsChanged = original.length !== current.length
+                    || original.some((v, i) => v !== current[i]);
+
+                if (groupsChanged && contactGroupIds.length > 0) {
                     await App.apiPost(`/campaigns/${id}/assign-contacts`, {
                         group_ids: contactGroupIds,
                         contact_ids: [],

@@ -1737,14 +1737,42 @@ class DialerManager:
     
     async def _schedule_retry(self, campaign_id: int, phone: str, retry_count: int, status: str):
         """Планирование повторного звонка"""
-        strategies = {
+        default_strategies = {
             'busy': {'max': 2, 'delay': settings.RETRY_BUSY_DELAY},
             'noanswer': {'max': 3, 'delay': settings.RETRY_NOANSWER_DELAY},
             'failed': {'max': 1, 'delay': settings.RETRY_FAILED_DELAY},
             'timeout': {'max': 1, 'delay': 60}
         }
-        
-        strategy = strategies.get(status, {'max': 1, 'delay': 60})
+        strategy = default_strategies.get(status, {'max': 1, 'delay': 60})
+
+        # Кампания хранит СВОЮ стратегию повторов (campaigns.retry_strategy -
+        # busy/busy_delay/noanswer/noanswer_delay/... из формы "Стратегия
+        # повторных звонков" при создании/редактировании обзвона), но выше
+        # до этой правки она никогда не читалась - всегда использовались
+        # только глобальные settings.RETRY_*_DELAY и захардкоженные max.
+        # Подтверждено живьём: кампания настроена на "занято: 30с", повтор
+        # не приходил ни через 30с, ни вскоре после - приходил бы только
+        # через глобальные 120с (settings.RETRY_BUSY_DELAY по умолчанию),
+        # которые пользователь в форме вообще не видит и не может понять,
+        # почему его собственная настройка не действует.
+        if campaign_id > 0 and status in ('busy', 'noanswer', 'failed', 'timeout'):
+            try:
+                async with self.db_pool.acquire() as conn:
+                    raw_strategy = await conn.fetchval(
+                        "SELECT retry_strategy FROM campaigns WHERE id = $1", campaign_id
+                    )
+                campaign_strategy = json.loads(raw_strategy) if raw_strategy else {}
+                max_key, delay_key = status, f'{status}_delay'
+                if max_key in campaign_strategy and delay_key in campaign_strategy:
+                    strategy = {
+                        'max': campaign_strategy[max_key],
+                        'delay': campaign_strategy[delay_key]
+                    }
+            except Exception as e:
+                logger.warning(
+                    f"Не удалось прочитать стратегию повторов кампании {campaign_id}, "
+                    f"использую глобальную по умолчанию: {e}"
+                )
 
         if retry_count >= strategy['max']:
             logger.info(f"Достигнут максимум повторов ({strategy['max']}) для {phone}")
