@@ -46,7 +46,7 @@ fi
 # =============================================
 FREEPBX_EXTENSION="${FREEPBX_EXTENSION:-291}"
 CALL_TIMEOUT="${CALL_TIMEOUT:-30}"
-DTMF_TIMEOUT="${DTMF_TIMEOUT:-10}"
+DTMF_TIMEOUT="${DTMF_TIMEOUT:-5}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
 # CALLERID(num) должен быть настоящим номером/добавочным - реальные
 # операторские транки отклоняют вызов (CONGESTION) при невалидном Caller
