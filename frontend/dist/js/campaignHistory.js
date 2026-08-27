@@ -191,14 +191,21 @@ App.campaignHistory = {
     // Сравнение длительности звонка с длительностью самого аудио - без
     // этого "0:10" в истории ничего не говорит о том, дослушал ли абонент
     // сообщение целиком (файл может быть 0:40) или бросил трубку на
-    // середине. < 90% длительности аудио - подсвечиваем предупреждением;
-    // agreed/declined с быстрым DTMF не считается "не дослушал", если
-    // человек уже понял суть и ответил раньше конца записи, но видеть эту
-    // цифру всё равно полезно.
+    // середине. Duration в call_results считается от начала проигрывания
+    // питча (см. ANSWER_EPOCH в extensions.conf) и дальше растёт и во время
+    // фразы меню ("нажмите 1..."), и во время ожидания DTMF - если человек
+    // дослушал сам питч целиком, а потом ещё думал 20 секунд перед тем как
+    // положить трубку, Duration будет 20+ секунд при 5-секундном файле,
+    // хотя дослушал он его полностью. Реальная длительность прослушивания
+    // самого питча не может физически превышать длительность самого файла
+    // (Background() не воспроизводит его дважды за один звонок) - поэтому
+    // ограничиваем показываемое число длительностью аудио сверху: если
+    // Duration >= audioDuration, значит дослушал целиком, дальше не важно.
     durationCellHtml(duration, audioDuration) {
         const durationText = App.formatDuration(duration);
         if (audioDuration == null) return durationText;
-        const short = (duration || 0) < audioDuration * 0.9;
-        return `<span class="${short ? 'text-warning' : ''}">${durationText} из ${App.formatDuration(audioDuration)}</span>`;
+        const heard = Math.min(duration || 0, audioDuration);
+        const short = heard < audioDuration * 0.9;
+        return `<span class="${short ? 'text-warning' : ''}">${App.formatDuration(heard)} из ${App.formatDuration(audioDuration)}</span>`;
     }
 };
