@@ -113,6 +113,8 @@ same => n,Set(DB(dialer_bridge_lock/\${CHANNEL(linkedid)})=1)
 same => n,Set(DIALER_UNLOCK_OK=\${UNLOCK(\${DIALER_LOCK_NAME})})
 same => n,Set(CAMPAIGN_ID=\${CAMPAIGN_ID})
 same => n,Set(RETRY_COUNT=\${RETRY_COUNT})
+; Из Originate 'Variable' (__DTMF_ENABLED=1/0) - пусто считаем "включено".
+same => n,Set(DTMF_ENABLED=\${IF(\$["\${DTMF_ENABLED}"=""]?1:\${DTMF_ENABLED})})
 same => n,Set(CALLERID(num)=\${CALLER_ID})
 same => n,Set(CALLERID(name)=Camp_\${CAMPAIGN_ID})
 same => n,Set(CHANNEL(hangup_handler_push)=hangup-handler,s,1)
@@ -127,7 +129,7 @@ same => n,Set(__ORIGINAL_PHONE=\${EXTEN})
 ; Incomplete" на любой номер с "7" - подтверждено живьём. Меняем только
 ; для этого исходящего плеча.
 same => n,Set(DIAL_NUMBER=\${IF(\$["\${EXTEN:0:1}"="7"]?8\${EXTEN:1}:\${EXTEN})})
-same => n,Dial(PJSIP/\${DIAL_NUMBER}@\${TRUNK_NAME},\${CALL_TIMEOUT},U(sub-media^\${CAMPAIGN_ID}))
+same => n,Dial(PJSIP/\${DIAL_NUMBER}@\${TRUNK_NAME},\${CALL_TIMEOUT},U(sub-media^\${CAMPAIGN_ID}^\${DTMF_ENABLED}))
 same => n,Goto(sub-dial-status,s,1)
 
 exten => duplicate,1,NoOp(=== Повторный запуск dialer_bridge для linkedid \${CHANNEL(linkedid)} - пропускаем ===)
@@ -186,6 +188,8 @@ same => n,Hangup()
 [sub-media]
 exten => s,1,NoOp(=== Ответ абонента - Кампания \${ARG1} ===)
 same => n,Set(CAMPAIGN_ID=\${ARG1})
+; ARG2 = DTMF_ENABLED (1/0), пробрасывается из [dialer_bridge].
+same => n,Set(DTMF_ENABLED=\${IF(\$["\${ARG2}"=""]?1:\${ARG2})})
 same => n,Set(AUDIO_FILE=tts/main_\${CAMPAIGN_ID})
 
 ; Проверка наличия кастомного аудио, иначе используется default. STAT()
@@ -218,7 +222,15 @@ same => n,Gosub(sub-amd,s,1)
 same => n,Set(TIMEOUT(digit)=\${DTMF_TIMEOUT})
 same => n,Set(TIMEOUT(response)=\${DTMF_TIMEOUT})
 same => n,Background(\${AUDIO_FILE})
+
+; DTMF-меню можно отключить на кампанию целиком - "чистое объявление".
+same => n,GotoIf(\$["\${DTMF_ENABLED}"="0"]?announce_only)
 same => n,WaitExten(\${DTMF_TIMEOUT})
+same => n,Goto(s,announce_only)
+
+same => n(announce_only),NoOp(=== DTMF отключен для кампании \${CAMPAIGN_ID} - чистое объявление ===)
+same => n,UserEvent(DialerResult,Status: announced,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)})
+same => n,Hangup()
 
 
 ; =============================================

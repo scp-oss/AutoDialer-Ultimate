@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     audio_id INTEGER,
     caller_id VARCHAR(80),
     caller_id_number VARCHAR(20),
+    dtmf_enabled BOOLEAN DEFAULT TRUE,
     retry_strategy JSONB DEFAULT '{"busy": 2, "noanswer": 3, "failed": 1, "timeout": 1}',
     schedule JSONB,
     metadata JSONB DEFAULT '{}',

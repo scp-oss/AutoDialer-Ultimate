@@ -25,6 +25,7 @@ const HistoryModule = {
         noanswer: 'Нет ответа',
         failed: 'Ошибка',
         timeout: 'Прослушал, не подтвердил',
+        announced: 'Объявление проиграно',
         canceled: 'Отменён',
         machine: 'Автоответчик',
         congestion: 'Перегрузка',

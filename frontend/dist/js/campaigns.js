@@ -331,7 +331,8 @@ App.campaigns = {
             document.getElementById('campaignCps').value = campaign.dialer_settings?.cps || 1;
             document.getElementById('campaignCallerId').value = campaign.dialer_settings?.caller_id || '';
             document.getElementById('campaignAudioSelect').value = campaign.dialer_settings?.audio_id || '';
-            
+            document.getElementById('campaignDtmfEnabled').checked = campaign.dialer_settings?.dtmf_enabled !== false;
+
             // Стратегия повторных звонков
             if (campaign.retry_strategy) {
                 document.getElementById('retryBusyMax').value = campaign.retry_strategy.busy || 2;
@@ -404,7 +405,8 @@ App.campaigns = {
         const cps = parseInt(document.getElementById('campaignCps')?.value) || 1;
         const callerId = document.getElementById('campaignCallerId')?.value?.trim();
         const audioId = document.getElementById('campaignAudioSelect')?.value;
-        
+        const dtmfEnabled = document.getElementById('campaignDtmfEnabled')?.checked ?? true;
+
         // Валидация
         if (!name) {
             App.showToast('Введите название обзвона', 'warning');
@@ -468,7 +470,8 @@ App.campaigns = {
             max_calls: maxCalls,
             cps,
             caller_id: callerId || null,
-            audio_id: audioId || null
+            audio_id: audioId || null,
+            dtmf_enabled: dtmfEnabled
         };
 
         const data = {

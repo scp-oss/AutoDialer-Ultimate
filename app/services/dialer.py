@@ -1072,10 +1072,28 @@ class DialerManager:
             
             await self.redis.setex(f"trace:{action_id}", 60, traceparent)
         
+        # DTMF-меню (1/2/4) можно отключить на кампанию целиком ("чистое
+        # объявление" - см. dtmf_enabled в DialerSettingsSchema). Смотрим
+        # прямо в campaigns, а не тащим это через сигнатуру start_call() -
+        # так это работает одинаково для первого звонка (из dial_task()),
+        # повторов (app/workers/retry.py) и тестового "Быстрый звонок"
+        # (campaign_id<=0 - там кампании нет, меню всегда включено).
+        dtmf_enabled = True
+        if campaign_id > 0:
+            try:
+                async with self.db_pool.acquire() as conn:
+                    value = await conn.fetchval(
+                        "SELECT dtmf_enabled FROM campaigns WHERE id = $1", campaign_id
+                    )
+                    if value is not None:
+                        dtmf_enabled = value
+            except Exception as e:
+                logger.warning(f"Не удалось прочитать dtmf_enabled для кампании {campaign_id}: {e}")
+
         try:
             # Originate
             timeout_ms = self.call_timeout * 1000
-            setvar = f'__CAMPAIGN_ID={campaign_id},__RETRY_COUNT={retry}'
+            setvar = f'__CAMPAIGN_ID={campaign_id},__RETRY_COUNT={retry},__DTMF_ENABLED={1 if dtmf_enabled else 0}'
             if traceparent:
                 setvar += f',__TRACEPARENT={traceparent}'
 

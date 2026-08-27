@@ -37,6 +37,7 @@ class CallResultStatus(str, Enum):
     CONGESTION = "congestion"   # Перегрузка сети
     CHANUNAVAIL = "chanunavail" # Канал недоступен
     UNKNOWN = "unknown"         # Неизвестно
+    ANNOUNCED = "announced"     # Объявление проиграно (DTMF-меню отключено для кампании)
 
 
 class CallDirection(str, Enum):
