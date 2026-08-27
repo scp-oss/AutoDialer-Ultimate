@@ -158,7 +158,11 @@ outbound_auth = ${FREEPBX_EXTENSION}_auth
 aors = ${FREEPBX_EXTENSION}_aor
 
 ; Caller ID
-callerid = AutoDialer <${FREEPBX_EXTENSION}>
+; Текстовый бренд "AutoDialer" вместо номера ломал восприятие CID
+; оператором на транке (см. extensions.conf) - здесь та же причина,
+; эндпоинт должен представляться просто своим номером, как обычный
+; SIP-телефон, а не выдуманным именем.
+callerid = ${FREEPBX_EXTENSION} <${FREEPBX_EXTENSION}>
 callerid_privacy = allowed_not_screened
 
 ; Медиа настройки
@@ -307,7 +311,11 @@ allow = ulaw
 allow = alaw
 outbound_auth = ${FREEPBX_EXTENSION}_auth
 aors = ${FREEPBX_EXTENSION}_backup_aor
-callerid = AutoDialer <${FREEPBX_EXTENSION}>
+; Текстовый бренд "AutoDialer" вместо номера ломал восприятие CID
+; оператором на транке (см. extensions.conf) - здесь та же причина,
+; эндпоинт должен представляться просто своим номером, как обычный
+; SIP-телефон, а не выдуманным именем.
+callerid = ${FREEPBX_EXTENSION} <${FREEPBX_EXTENSION}>
 from_user = ${FREEPBX_EXTENSION}
 from_domain = ${BACKUP_FREEPBX_IP}
 EOF

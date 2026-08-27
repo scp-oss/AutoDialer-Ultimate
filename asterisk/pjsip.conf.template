@@ -137,7 +137,16 @@ outbound_auth = ${FREEPBX_EXTENSION}_auth
 aors = ${FREEPBX_EXTENSION}_aor
 
 ; ========== CALLER ID ==========
-callerid = AutoDialer <${FREEPBX_EXTENSION}>
+; Раньше здесь стояло "AutoDialer <${FREEPBX_EXTENSION}>" - текстовый
+; бренд вместо номера на уровне самого PJSIP endpoint'а (независимо от
+; того, что выставляет дальплан через CALLERID(num)/(name) в
+; extensions.conf). Обычный SIP-телефон (Yealink и т.п.), зарегистрированный
+; под тем же добавочным, такого не делает - у него тут просто номер.
+; С send_pai/trust_id_outbound=yes ниже это могло утекать в заголовки
+; вроде P-Asserted-Identity как "AutoDialer" независимо от фикса в
+; дальплане. Теперь эндпоинт представляется ровно как обычный телефон -
+; своим номером, без выдуманного отображаемого имени.
+callerid = ${FREEPBX_EXTENSION} <${FREEPBX_EXTENSION}>
 callerid_privacy = allowed_not_screened
 callerid_tag = ${FREEPBX_EXTENSION}
 
