@@ -351,7 +351,12 @@ same => n,WaitExten(\${DTMF_TIMEOUT})
 ; обработчиков выше - там уже дедуплицируется на стороне Python по
 ; linked_id, так что повторный вызов здесь безопасен).
 exten => h,1,NoOp(=== Канал завершён без ввода DTMF - кампания \${CAMPAIGN_ID} ===)
-same => n,UserEvent(DialerResult,Status: unknown,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)},Duration: \${IF(\$["\${ANSWER_EPOCH}"=""]?0:\$[\${EPOCH} - \${ANSWER_EPOCH}])})
+; Абонент дослушал и повесил трубку сам, не дождавшись естественного
+; истечения WaitExten - для отчёта это то же самое, что "прослушал, не
+; подтвердил" (статус timeout) - тот же результат, просто дошёл до Python
+; другим путём. unknown оставляем только если ANSWER_EPOCH ещё не
+; выставлен (канал оборвался ДО Answer()).
+same => n,UserEvent(DialerResult,Status: \${IF(\$["\${ANSWER_EPOCH}"=""]?unknown:timeout)},Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)},Duration: \${IF(\$["\${ANSWER_EPOCH}"=""]?0:\$[\${EPOCH} - \${ANSWER_EPOCH}])})
 
 
 ; =============================================
