@@ -237,6 +237,13 @@ same => n,Background(\${AUDIO_FILE})
 
 ; DTMF-меню можно отключить на кампанию целиком - "чистое объявление".
 same => n,GotoIf(\$["\${DTMF_ENABLED}"="0"]?announce_only)
+
+; После питча кампании нужно явно объявить "нажмите 1/2/4" - раньше
+; ожидалось, что эта фраза есть в самом тексте питча, но абонент, не
+; услышав её, просто не понимал, что от него ждут. tts/default.sln уже
+; содержит нужный текст ("Пожалуйста, нажмите 1 для подтверждения или 2
+; для отказа") и гарантированно есть на любой установке.
+same => n,Background(tts/default)
 same => n,WaitExten(\${DTMF_TIMEOUT})
 same => n,Goto(s,announce_only)
 
@@ -331,6 +338,14 @@ same => n,UserEvent(DialerResult,Status: invalid_dtmf,Campaign: \${CAMPAIGN_ID},
 same => n,Playback(invalid)
 same => n,Background(\${AUDIO_FILE})
 same => n,WaitExten(\${DTMF_TIMEOUT})
+
+; Абонент мог повесить трубку, не дожидаясь WaitExten и не нажав ничего -
+; тогда ни один UserEvent(DialerResult,...) выше не выполняется вовсе.
+; 'h' выполняется на ЛЮБОМ завершении этого канала (включая Hangup() из
+; обработчиков выше - там уже дедуплицируется на стороне Python по
+; linked_id, так что повторный вызов здесь безопасен).
+exten => h,1,NoOp(=== Канал завершён без ввода DTMF - кампания \${CAMPAIGN_ID} ===)
+same => n,UserEvent(DialerResult,Status: unknown,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)},Duration: \${IF(\$["\${ANSWER_EPOCH}"=""]?0:\$[\${EPOCH} - \${ANSWER_EPOCH}])})
 
 
 ; =============================================
