@@ -1605,23 +1605,30 @@ class DialerManager:
                 await self._schedule_retry(int(campaign_id) if campaign_id else 0, phone, retry_count + 1, status)
 
     async def _fallback_hangup_result(
-        self, ctx, linked_id: str, unique_id: str, cause_txt: str, delay: float = 3.0
+        self, ctx, linked_id: str, unique_id: str, cause_txt: str, delay: float = 25.0
     ):
         """
         Единая подстраховка на случай, если ни один UserEvent(DialerResult,...)
         из диалплана (busy/noanswer/failed из [sub-dial-status], DTMF-
         обработчики или подстраховка "положил трубку без ввода" в
-        [hangup-handler]) так и не пришёл за delay секунд после Hangup -
-        такое бывает при гонке AMI-событий (подтверждено живьём: сырое
-        Hangup-событие для PJSIP-канала иногда доходит до Python раньше,
-        чем диалплан успевает дойти до своего [hangup-handler], который
-        сам состоит из нескольких шагов Gosub/Set/UserEvent). Раньше этот
-        путь для "не отвечен" срабатывал МГНОВЕННО, без задержки - гонку
-        с dialplan-событием он неизменно выигрывал, затирая, например,
-        честно посчитанный диалпланом "machine"/"timeout" на статус по
-        коду причины разрыва. Теперь ждём и уступаем dialplan-событию,
-        если оно всё же придёт - используем причину разрыва только как
-        последний, ничем не подкреплённый резерв.
+        [hangup-handler]) так и не пришёл за delay секунд после Hangup.
+
+        delay был 3с - оказалось недостаточно, и подтверждено живьём даже
+        ПОСЛЕ первого фикса гонки: [dialer_bridge] размещает Dial() через
+        Local-канал ("проброс" Local/<номер>@dialer_bridge), и его вторая,
+        "мёртвая" половина (та, что определяет DB_EXISTS-блокировку и сразу
+        вешает трубку в exten=>duplicate, см. [dialer_bridge]) шлёт СВОЁ
+        собственное AMI Hangup-событие с ТЕМ ЖЕ linkedid - Python резолвит
+        его в тот же ctx (через linked_id-fallback в _resolve_action_id) и
+        планирует ЕЙ СВОЮ 3-секундную подстраховку, которая срабатывает
+        через ~3с ПОСЛЕ САМОГО НАЧАЛА звонка - то есть на много секунд
+        РАНЬШЕ настоящего результата (после AMD + проигрывания + до 10с
+        DTMF_TIMEOUT это легко 12-18с). Эта ранняя подстраховка успевала
+        забрать ключ дедупликации и записать угаданный по причине разрыва
+        статус ДО того, как реальный результат от диалплана вообще
+        появлялся. delay теперь заведомо больше worst-case длительности
+        всего сценария (AMD totalAnalysisTime 5с + DTMF_TIMEOUT 10с +
+        служебные задержки), кто бы её ни запланировал.
         """
         await asyncio.sleep(delay)
         dedup_key = f"dialer_result_saved:{linked_id}"
