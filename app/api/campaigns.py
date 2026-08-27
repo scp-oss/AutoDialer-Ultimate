@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from app.core.dependencies import get_current_user, require_admin, TokenData, PaginationParams
 from app.services import get_campaign_service
 from app.models.campaign import (
-    CampaignCreateRequest, CampaignUpdateRequest,
+    CampaignCreateRequest, CampaignUpdateRequest, CampaignAssignContactsRequest,
     CampaignResponse, CampaignDetailResponse, CampaignListResponse,
     CampaignStatsResponse, CampaignProgressResponse,
     CampaignStatus, CampaignPriority
@@ -139,6 +139,26 @@ async def update_campaign(
     campaign_service = get_campaign_service()
     await campaign_service.update_campaign(campaign_id, request, user.user_id)
     return {"status": "updated"}
+
+
+@router.post("/{campaign_id}/assign-contacts")
+async def assign_campaign_contacts(
+    campaign_id: int,
+    request: CampaignAssignContactsRequest,
+    user: TokenData = Depends(get_current_user)
+):
+    """
+    Назначить/сменить контакты кампании - ранее этого маршрута не
+    существовало вообще, см. комментарий у CampaignAssignContactsRequest.
+    """
+    campaign_service = get_campaign_service()
+    return await campaign_service.assign_contacts(
+        campaign_id,
+        request.group_ids,
+        request.contact_ids,
+        request.replace,
+        user.user_id
+    )
 
 
 @router.delete("/{campaign_id}")

@@ -1576,16 +1576,31 @@ class DialerManager:
 
             logger.info(f"🎯 DialerResult: кампания={campaign_id}, телефон={phone}, статус={status}")
 
-            # DialerResult обычно приходит ДО Hangup (dialplan шлёт его
-            # прямо перед своим Hangup()), так что ctx.duration (считается
-            # в _handle_hangup) тут ещё не установлен - берём длительность
-            # "на текущий момент" от ctx.answered_at, иначе результат
-            # сохранялся вообще без длительности (подтверждено живьём:
-            # 0:00 у явно отвеченных и разговорных звонков).
+            # [sub-media] выполняется на вызываемом канале через U() у
+            # Dial() и ВСЕГДА завершается собственным Hangup() внутри
+            # этого Gosub - реального бриджа с исходным Local-каналом
+            # никогда не происходит, значит AMI BridgeEnter (единственное
+            # место, где ставился ctx.answered_at) для этих звонков вообще
+            # никогда не приходит. Из-за этого ctx.answered_at оставался
+            # пустым всегда, и duration ниже (через ctx) неизменно был
+            # None у agreed/declined/etc с реальным разговором в несколько
+            # секунд - подтверждено живьём (0:00 на каждом звонке).
+            # extensions.conf теперь считает длительность сам (${EPOCH} на
+            # входе в [sub-media] сразу после Answer() против ${EPOCH} в
+            # момент UserEvent) и передаёт её явным полем Duration - это
+            # первичный источник. ctx.answered_at оставлен как fallback на
+            # случай прямого вызова без обновлённого диалплана.
             duration = None
+            raw_duration = event.get('duration')
+            if raw_duration not in (None, ''):
+                try:
+                    duration = int(raw_duration)
+                except (TypeError, ValueError):
+                    duration = None
+
             action_id = self._resolve_action_id(unique_id, linked_id)
             ctx = self.call_contexts.get(action_id) if action_id else None
-            if ctx and ctx.answered_at:
+            if duration is None and ctx and ctx.answered_at:
                 duration = int((datetime.utcnow() - ctx.answered_at).total_seconds())
 
             await self._save_call_result(

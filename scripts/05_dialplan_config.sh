@@ -206,6 +206,18 @@ same => n,Wait(0.3)
 same => n,Answer()
 same => n,Wait(0.2)
 
+; U(sub-media^...) выполняется на ВЫЗЫВАЕМОМ канале ДО того, как Dial()
+; вообще мог бы сбриджить его с исходным Local-каналом, а каждая ветка
+; ниже завершается Hangup() прямо внутри этого Gosub - реального бриджа
+; никогда не происходит, поэтому AMI-событие BridgeEnter (единственное
+; место, где раньше выставлялся ctx.answered_at в dialer.py) для этих
+; звонков никогда не приходит. Подтверждено живьём: длительность 0:00 на
+; каждом agreed/declined звонке с реальным разговором в несколько секунд.
+; Вместо того чтобы полагаться на AMI-события, считаем длительность прямо
+; в диалплане (эта строка выполняется уже после реального Answer()) и
+; передаём её в Python прямо в каждом UserEvent(DialerResult,...) ниже.
+same => n,Set(ANSWER_EPOCH=\${EPOCH})
+
 ; AMD должен отработать (и дослушать) ДО того, как начнём проигрывать
 ; своё TTS - он различает живого человека и автоответчика по тому, что
 ; говорит ДАЛЬНЯЯ сторона первой, а наш же Background() заглушил бы это,
@@ -229,7 +241,7 @@ same => n,WaitExten(\${DTMF_TIMEOUT})
 same => n,Goto(s,announce_only)
 
 same => n(announce_only),NoOp(=== DTMF отключен для кампании \${CAMPAIGN_ID} - чистое объявление ===)
-same => n,UserEvent(DialerResult,Status: announced,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: announced,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Hangup()
 
 
@@ -240,7 +252,7 @@ same => n,Hangup()
 ; DTMF 1 - Согласие
 exten => 1,1,NoOp(=== DTMF 1: Согласие ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},dtmf=1)
-same => n,UserEvent(DialerResult,Status: agreed,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 1,LinkedID: \${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: agreed,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 1,LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Playback(tts/thanks_\${CAMPAIGN_ID})
 same => n,GotoIf(\$[\${STAT(e,tts/thanks_\${CAMPAIGN_ID})} = 1]?hangup)
 same => n,Playback(tts/thanks_default)
@@ -249,7 +261,7 @@ same => n(hangup),Hangup()
 ; DTMF 2 - Отказ
 exten => 2,1,NoOp(=== DTMF 2: Отказ ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},dtmf=2)
-same => n,UserEvent(DialerResult,Status: declined,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 2,LinkedID: \${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: declined,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 2,LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Playback(tts/goodbye_\${CAMPAIGN_ID})
 same => n,GotoIf(\$[\${STAT(e,tts/goodbye_\${CAMPAIGN_ID})} = 1]?hangup)
 same => n,Playback(tts/goodbye_default)
@@ -264,7 +276,7 @@ same => n,WaitExten(\${DTMF_TIMEOUT})
 ; DTMF 4 - Запрос оператора
 exten => 4,1,NoOp(=== DTMF 4: Запрос оператора ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},dtmf=4)
-same => n,UserEvent(DialerResult,Status: operator,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 4,LinkedID: \${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: operator,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 4,LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Playback(tts/operator_\${CAMPAIGN_ID})
 same => n,GotoIf(\$[\${STAT(e,tts/operator_\${CAMPAIGN_ID})} = 1]?hangup)
 same => n,Playback(tts/operator_default)
@@ -272,41 +284,41 @@ same => n(hangup),Hangup()
 
 ; DTMF 5-9, 0, *, # - Пользовательские действия
 exten => 5,1,NoOp(=== DTMF 5: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status: custom5,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 5,LinkedID: \${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: custom5,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 5,LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Hangup()
 
 exten => 6,1,NoOp(=== DTMF 6: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status: custom6,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 6,LinkedID: \${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: custom6,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 6,LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Hangup()
 
 exten => 7,1,NoOp(=== DTMF 7: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status: custom7,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 7,LinkedID: \${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: custom7,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 7,LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Hangup()
 
 exten => 8,1,NoOp(=== DTMF 8: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status: custom8,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 8,LinkedID: \${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: custom8,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 8,LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Hangup()
 
 exten => 9,1,NoOp(=== DTMF 9: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status: custom9,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 9,LinkedID: \${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: custom9,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 9,LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Hangup()
 
 exten => 0,1,NoOp(=== DTMF 0: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status: custom0,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 0,LinkedID: \${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: custom0,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: 0,LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Hangup()
 
 exten => *,1,NoOp(=== DTMF *: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status: star,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: *,LinkedID: \${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: star,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: *,LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Hangup()
 
 exten => #,1,NoOp(=== DTMF #: Пользовательское ===)
-same => n,UserEvent(DialerResult,Status: hash,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: #,LinkedID: \${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: hash,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: #,LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Hangup()
 
 ; Таймаут - DTMF не получен
 exten => t,1,NoOp(=== Таймаут DTMF ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},dtmf=timeout)
-same => n,UserEvent(DialerResult,Status: timeout,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},LinkedID: \${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: timeout,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Playback(tts/timeout_\${CAMPAIGN_ID})
 same => n,GotoIf(\$[\${STAT(e,tts/timeout_\${CAMPAIGN_ID})} = 1]?hangup)
 same => n,Playback(tts/timeout_default)
@@ -315,7 +327,7 @@ same => n(hangup),Hangup()
 ; Неверный ввод
 exten => i,1,NoOp(=== Неверный DTMF: \${INVALID_EXTEN} ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},dtmf=invalid)
-same => n,UserEvent(DialerResult,Status: invalid_dtmf,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: \${INVALID_EXTEN},LinkedID: \${CHANNEL(linkedid)})
+same => n,UserEvent(DialerResult,Status: invalid_dtmf,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: \${INVALID_EXTEN},LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Playback(invalid)
 same => n,Background(\${AUDIO_FILE})
 same => n,WaitExten(\${DTMF_TIMEOUT})

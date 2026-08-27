@@ -310,12 +310,23 @@ App.campaigns = {
         
         const isEdit = !!campaign;
 
-        // Контакты назначаются только при создании - у существующего
-        // обзвона это делается отдельной кнопкой "Назначить контакты"
-        // (CampaignUpdateRequest не принимает contact_group_ids вообще).
-        const contactsSection = document.getElementById('campaignContactsSection');
-        if (contactsSection) {
-            contactsSection.style.display = isEdit ? 'none' : '';
+        // При редактировании секция групп остаётся видимой, но меняет смысл:
+        // ничего не отмечено - контакты не трогаем; отмечена хотя бы одна
+        // группа - при сохранении список контактов кампании полностью
+        // заменяется выбранным (см. saveCampaign() -> assign-contacts,
+        // replace=true). Раньше при редактировании эту секцию скрывали
+        // целиком и сменить группу обзвона было вообще нельзя никак -
+        // единственная кнопка "Назначить контакты" в деталях только
+        // добавляла контакты поверх старых, а не заменяла группу.
+        const requiredMark = document.getElementById('campaignContactsRequiredMark');
+        const contactsHint = document.getElementById('campaignContactsHint');
+        if (requiredMark) {
+            requiredMark.style.display = isEdit ? 'none' : '';
+        }
+        if (contactsHint) {
+            contactsHint.textContent = isEdit
+                ? 'Необязательно. Отметьте группу(ы), чтобы ЗАМЕНИТЬ ими текущий список контактов обзвона - остальные настройки при этом не пострадают.'
+                : 'Нужно выбрать хотя бы одну группу - без этого обзвон нельзя сохранить';
         }
 
         if (isEdit) {
@@ -373,9 +384,11 @@ App.campaigns = {
         }
         
         this.loadAudioForSelect();
-        if (!isEdit) {
-            this.loadContactGroupsForSelect();
-        }
+        // Список групп нужен и при редактировании теперь тоже - см.
+        // комментарий выше про смену группы обзвона. loadContactGroupsForSelect()
+        // всегда генерирует чекбоксы заново, все снятые, так что предыдущий
+        // выбор (для другой кампании) сюда не протекает.
+        this.loadContactGroupsForSelect();
         modal.style.display = 'flex';
     },
 
@@ -423,21 +436,20 @@ App.campaigns = {
             return;
         }
 
-        // Группы контактов - обязательны только при создании
+        // Группы контактов - обязательны при создании
         // (CampaignCreateRequest.validate_contacts() требует хотя бы один
-        // источник; CampaignUpdateRequest этого поля вообще не принимает,
-        // контакты существующего обзвона меняются через "Назначить
-        // контакты", поэтому при редактировании этот блок пропускаем).
-        let contactGroupIds = [];
-        if (!id) {
-            contactGroupIds = Array.from(
-                document.querySelectorAll('input[name="campaignContactGroupIds"]:checked')
-            ).map(cb => parseInt(cb.value));
+        // источник). При редактировании то же поле необязательно: если
+        // что-то отмечено, после сохранения формы ниже отдельным вызовом
+        // ЗАМЕНЯЕМ список контактов кампании выбранным (смена группы
+        // обзвона) - см. POST /campaigns/{id}/assign-contacts,
+        // replace=true. Если не отмечено ничего - контакты не трогаем.
+        const contactGroupIds = Array.from(
+            document.querySelectorAll('input[name="campaignContactGroupIds"]:checked')
+        ).map(cb => parseInt(cb.value));
 
-            if (contactGroupIds.length === 0) {
-                App.showToast('Выберите хотя бы одну группу контактов', 'warning');
-                return;
-            }
+        if (!id && contactGroupIds.length === 0) {
+            App.showToast('Выберите хотя бы одну группу контактов', 'warning');
+            return;
         }
 
         // Стратегия повторных звонков
@@ -496,12 +508,24 @@ App.campaigns = {
         try {
             if (id) {
                 await App.apiPatch(`/campaigns/${id}`, data);
+
+                // Отмечены группы - меняем группу обзвона: полностью
+                // заменяем контакты кампании выбранным (replace=true).
+                // Ничего не отмечено - контакты не трогаем вообще.
+                if (contactGroupIds.length > 0) {
+                    await App.apiPost(`/campaigns/${id}/assign-contacts`, {
+                        group_ids: contactGroupIds,
+                        contact_ids: [],
+                        replace: true
+                    });
+                }
+
                 App.showToast('Обзвон обновлён', 'success');
             } else {
                 await App.apiPost('/campaigns/', data);
                 App.showToast('Обзвон создан', 'success');
             }
-            
+
             this.closeCampaignModal();
             await this.loadCampaigns(this.state.currentPage);
             

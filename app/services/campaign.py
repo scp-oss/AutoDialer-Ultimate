@@ -1175,6 +1175,65 @@ class CampaignService:
         
         return added
     
+    async def assign_contacts(
+        self,
+        campaign_id: int,
+        group_ids: List[int],
+        contact_ids: List[int],
+        replace: bool,
+        user_id: int
+    ) -> Dict[str, Any]:
+        """
+        Назначить контакты существующей кампании - POST
+        /campaigns/{id}/assign-contacts. Раньше маршрута не существовало
+        вообще (см. комментарий у CampaignAssignContactsRequest), из-за
+        чего ни "Назначить контакты" в деталях кампании, ни смена группы
+        обзвона при редактировании никогда не работали (404 на каждый
+        вызов).
+
+        replace=False (кнопка "Назначить контакты") - добавляет контакты
+        к уже существующим в кампании, дубликаты по contact_id молча
+        пропускаются (тот же _add_contacts_to_campaign, что и при
+        создании).
+        replace=True (смена группы в форме редактирования) - полностью
+        стирает текущий campaign_contacts кампании и заполняет заново
+        выбранными группами/контактами. call_results и campaign_runs
+        хранятся отдельно по contact_id/campaign_id и от этого не
+        страдают - вся история звонков остаётся на месте, меняется только
+        то, кого кампания будет обзванивать дальше.
+        """
+        async with self.db_pool.acquire() as conn:
+            campaign = await conn.fetchrow(
+                "SELECT status FROM campaigns WHERE id = $1 FOR UPDATE", campaign_id
+            )
+            if not campaign:
+                raise CampaignNotFoundError(f"Кампания {campaign_id} не найдена")
+
+            if campaign['status'] == CampaignStatus.RUNNING.value:
+                raise CampaignError(
+                    "Нельзя менять контакты у запущенного обзвона - сначала остановите его"
+                )
+
+            if replace:
+                await conn.execute(
+                    "DELETE FROM campaign_contacts WHERE campaign_id = $1", campaign_id
+                )
+
+            added = await self._add_contacts_to_campaign(
+                conn, campaign_id, group_ids, contact_ids, None
+            )
+            total = await self._get_campaign_contacts_count(conn, campaign_id)
+
+            await self._log_audit(conn, user_id, 'campaign_contacts_assigned', 'campaign', campaign_id, {
+                'group_ids': group_ids,
+                'contact_ids': contact_ids,
+                'replace': replace,
+                'added': added,
+                'total': total
+            })
+
+        return {'added': added, 'total': total}
+
     async def _get_campaign_contacts_count(self, conn, campaign_id: int) -> int:
         """Получить количество контактов в кампании"""
         return await conn.fetchval("""

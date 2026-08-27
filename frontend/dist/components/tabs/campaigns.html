@@ -161,17 +161,22 @@
                     </div>
                 </div>
 
-                <!-- Контакты (только при создании - у существующего обзвона
-                     контакты назначаются отдельной кнопкой "Назначить
-                     контакты", CampaignUpdateRequest этого поля не принимает) -->
+                <!-- Контакты. При создании - обязательный источник контактов
+                     (CampaignCreateRequest.validate_contacts()). При
+                     редактировании то же самое поле работает как смена группы
+                     обзвона: если тут что-то отметить и сохранить форму, список
+                     контактов кампании ПОЛНОСТЬЮ заменяется выбранным (через
+                     POST /campaigns/{id}/assign-contacts, replace=true) - см.
+                     campaigns.js saveCampaign(). Ничего не отмечено - контакты
+                     не трогаются. -->
                 <div class="form-section" id="campaignContactsSection">
-                    <h4>Контакты <span class="required">*</span></h4>
+                    <h4>Контакты <span class="required" id="campaignContactsRequiredMark">*</span></h4>
                     <div class="form-group">
                         <label>Группы контактов</label>
                         <div class="checkbox-group" id="campaignContactGroupsList">
                             <p class="text-muted">Загрузка...</p>
                         </div>
-                        <small>Нужно выбрать хотя бы одну группу - без этого обзвон нельзя сохранить</small>
+                        <small id="campaignContactsHint">Нужно выбрать хотя бы одну группу - без этого обзвон нельзя сохранить</small>
                     </div>
                 </div>
 

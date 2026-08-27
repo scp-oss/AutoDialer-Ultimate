@@ -343,6 +343,33 @@ class CampaignStartRequest(BaseSchema):
     limit_contacts: Optional[int] = Field(None, ge=1, description="Ограничить количество контактов")
 
 
+class CampaignAssignContactsRequest(BaseSchema):
+    """
+    Запрос на назначение контактов существующей кампании - POST
+    /campaigns/{id}/assign-contacts. Раньше этот маршрут вообще не
+    существовал на бэкенде (фронтенд его вызывал и получал 404 на каждой
+    попытке) - ни кнопка "Назначить контакты" в деталях кампании, ни смена
+    группы обзвона при редактировании никогда не работали.
+    """
+    group_ids: List[int] = Field(default_factory=list, description="ID групп контактов")
+    contact_ids: List[int] = Field(default_factory=list, description="ID отдельных контактов")
+    replace: bool = Field(
+        False,
+        description=(
+            "False (по умолчанию) - добавить контакты к уже существующим "
+            "в кампании (кнопка 'Назначить контакты'). True - полностью "
+            "заменить список контактов кампании выбранными группами/"
+            "контактами (смена группы обзвона при редактировании)."
+        )
+    )
+
+    @model_validator(mode='after')
+    def validate_contacts(self) -> 'CampaignAssignContactsRequest':
+        if not self.group_ids and not self.contact_ids:
+            raise ValueError("Необходимо указать хотя бы одну группу или контакт")
+        return self
+
+
 class CampaignStopRequest(BaseSchema):
     """
     Запрос на остановку кампании.
