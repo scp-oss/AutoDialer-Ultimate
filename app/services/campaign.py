@@ -727,9 +727,21 @@ class CampaignService:
                 SET status = $1, started_at = NOW(), updated_at = NOW()
                 WHERE id = $2
             """, CampaignStatus.RUNNING.value, campaign_id)
-            
+
+            # Отдельная запись в campaign_runs на КАЖДЫЙ запуск - в отличие
+            # от campaigns.started_at/completed_at (которые каждый повторный
+            # запуск перезаписывает), это и есть та самая история "когда
+            # запускали, когда завершился", которую видно на вкладке
+            # "История обзвонов".
+            run_id = await conn.fetchval("""
+                INSERT INTO campaign_runs (campaign_id, status, total_contacts, started_by)
+                VALUES ($1, 'running', $2, $3)
+                RETURNING id
+            """, campaign_id, len(contacts), user_id)
+
             await self._log_audit(conn, user_id, 'campaign_started', 'campaign', campaign_id, {
-                'contacts_count': len(contacts)
+                'contacts_count': len(contacts),
+                'run_id': run_id
             })
         
         # Обновляем настройки дозвона
@@ -807,6 +819,11 @@ class CampaignService:
                         SET status = $1, completed_at = NOW(), updated_at = NOW()
                         WHERE id = $2
                     """, CampaignStatus.COMPLETED.value, campaign_id)
+                    await conn.execute("""
+                        UPDATE campaign_runs
+                        SET status = 'completed', completed_at = NOW(), processed_contacts = $1
+                        WHERE id = $2
+                    """, processed, run_id)
 
                 campaign_completed_counter.inc()
                 logger.info(f"Кампания {campaign_id} завершена, обработано {processed} контактов")
@@ -820,6 +837,11 @@ class CampaignService:
                         SET status = $1, stopped_at = NOW(), updated_at = NOW()
                         WHERE id = $2
                     """, CampaignStatus.STOPPED.value, campaign_id)
+                    await conn.execute("""
+                        UPDATE campaign_runs
+                        SET status = 'stopped', completed_at = NOW(), processed_contacts = $1
+                        WHERE id = $2
+                    """, processed, run_id)
                 await self._publish_campaign_event(campaign_id)
                 raise
             except Exception as e:
@@ -831,6 +853,11 @@ class CampaignService:
                         SET status = $1, updated_at = NOW()
                         WHERE id = $2
                     """, CampaignStatus.FAILED.value, campaign_id)
+                    await conn.execute("""
+                        UPDATE campaign_runs
+                        SET status = 'failed', completed_at = NOW(), processed_contacts = $1
+                        WHERE id = $2
+                    """, processed, run_id)
                 await self._publish_campaign_event(campaign_id)
                 raise
             finally:
@@ -1214,6 +1241,127 @@ class CampaignService:
             peak_cps=0.0
         )
     
+    # =============================================
+    # История запусков (вкладка "История обзвонов")
+    # =============================================
+    async def list_campaign_runs(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        campaign_id: Optional[int] = None,
+        status: Optional[str] = None,
+        search: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Список запусков обзвонов - одна строка на каждый прогон, а не на кампанию"""
+        offset = (page - 1) * page_size
+
+        async with self.db_pool.acquire() as conn:
+            where = []
+            params = []
+            idx = 1
+
+            if campaign_id:
+                where.append(f"cr.campaign_id = ${idx}")
+                params.append(campaign_id)
+                idx += 1
+
+            if status:
+                where.append(f"cr.status = ${idx}")
+                params.append(status)
+                idx += 1
+
+            if search:
+                where.append(f"c.name ILIKE ${idx}")
+                params.append(f"%{search}%")
+                idx += 1
+
+            where_clause = "WHERE " + " AND ".join(where) if where else ""
+
+            total = await conn.fetchval(f"""
+                SELECT COUNT(*) FROM campaign_runs cr
+                JOIN campaigns c ON c.id = cr.campaign_id
+                {where_clause}
+            """, *params)
+
+            rows = await conn.fetch(f"""
+                SELECT cr.*, c.name as campaign_name
+                FROM campaign_runs cr
+                JOIN campaigns c ON c.id = cr.campaign_id
+                {where_clause}
+                ORDER BY cr.started_at DESC
+                LIMIT ${idx} OFFSET ${idx + 1}
+            """, *params, page_size, offset)
+
+        items = []
+        for row in rows:
+            total_contacts = row['total_contacts'] or 0
+            processed = row['processed_contacts'] or 0
+            items.append({
+                'id': row['id'],
+                'campaign_id': row['campaign_id'],
+                'campaign_name': row['campaign_name'],
+                'status': row['status'],
+                'started_at': row['started_at'],
+                'completed_at': row['completed_at'],
+                'total_contacts': total_contacts,
+                'processed_contacts': processed,
+                'progress_percent': round(processed / total_contacts * 100, 2) if total_contacts else 0.0
+            })
+
+        total = total or 0
+        return {
+            'items': items,
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': max(1, (total + page_size - 1) // page_size)
+        }
+
+    async def get_campaign_run(self, run_id: int) -> Optional[Dict[str, Any]]:
+        """Детали одного запуска - статистика + звонки, попавшие именно в его временное окно"""
+        async with self.db_pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT cr.*, c.name as campaign_name
+                FROM campaign_runs cr
+                JOIN campaigns c ON c.id = cr.campaign_id
+                WHERE cr.id = $1
+            """, run_id)
+
+            if not row:
+                return None
+
+            # call_results не хранит run_id (звонки этой кампании вообще
+            # никак не различают, в рамках какого запуска они сделаны) -
+            # используем временное окно самого запуска как единственный
+            # доступный способ отличить "этот прогон" от предыдущих/
+            # последующих без более крупной миграции.
+            calls = await conn.fetch("""
+                SELECT res.*, ct.phone, ct.name as contact_name
+                FROM call_results res
+                LEFT JOIN contacts ct ON res.contact_id = ct.id
+                WHERE res.campaign_id = $1
+                AND res.created_at >= $2
+                AND res.created_at <= $3
+                ORDER BY res.created_at DESC
+                LIMIT 200
+            """, row['campaign_id'], row['started_at'], row['completed_at'] or datetime.utcnow())
+
+        total_contacts = row['total_contacts'] or 0
+        processed = row['processed_contacts'] or 0
+
+        return {
+            'id': row['id'],
+            'campaign_id': row['campaign_id'],
+            'campaign_name': row['campaign_name'],
+            'status': row['status'],
+            'started_at': row['started_at'],
+            'completed_at': row['completed_at'],
+            'total_contacts': total_contacts,
+            'processed_contacts': processed,
+            'progress_percent': round(processed / total_contacts * 100, 2) if total_contacts else 0.0,
+            'calls': [dict(c) for c in calls]
+        }
+
     async def _get_campaign_contact_groups(self, conn, campaign_id: int) -> List[Dict[str, Any]]:
         """Получить группы контактов кампании"""
         rows = await conn.fetch("""

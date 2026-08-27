@@ -1,7 +1,9 @@
 <!-- ============================================= -->
-<!-- CAMPAIGN HISTORY TAB - отдельная вкладка для просмотра прошлых
-     обзвонов (в отличие от "Обзвон", тут нет создания/управления,
-     только список + drill-down "во сколько дозвонились до каждого") -->
+<!-- CAMPAIGN HISTORY TAB - отдельная вкладка "История обзвонов": одна
+     строка на каждый ЗАПУСК обзвона (campaign_runs), а не на кампанию -
+     "Обзвон" может обзвонить одну и ту же группу много раз ("Запустить
+     снова"), и тут должно быть видно каждый прогон отдельно: когда
+     запущен, когда завершён, кто и с каким статусом обзвонен. -->
 <!-- ============================================= -->
 <div class="campaign-history-container">
 
@@ -21,16 +23,15 @@
             <input type="text"
                    id="campaignHistorySearch"
                    class="form-control"
-                   placeholder="🔍 Поиск по названию..."
+                   placeholder="🔍 Поиск по названию обзвона..."
                    autocomplete="off">
         </div>
         <div class="filter-group">
             <select id="campaignHistoryStatusFilter" class="form-control">
                 <option value="">Все статусы</option>
-                <option value="running">Запущенные</option>
-                <option value="paused">Приостановленные</option>
-                <option value="completed">Завершённые</option>
-                <option value="stopped">Остановленные</option>
+                <option value="running">Выполняется</option>
+                <option value="completed">Завершён</option>
+                <option value="stopped">Остановлен</option>
                 <option value="failed">Ошибка</option>
             </select>
         </div>
@@ -41,23 +42,22 @@
         </div>
     </div>
 
-    <!-- Таблица прошлых обзвонов -->
+    <!-- Таблица запусков -->
     <div class="table-responsive">
         <table class="table" id="campaignHistoryTable">
             <thead>
                 <tr>
                     <th width="60">ID</th>
-                    <th>Название</th>
+                    <th>Обзвон</th>
                     <th width="120">Статус</th>
                     <th width="150">Прогресс</th>
-                    <th width="80">Конверсия</th>
-                    <th width="160">Запущена</th>
-                    <th width="160">Завершена</th>
+                    <th width="160">Запущен</th>
+                    <th width="160">Завершён</th>
                     <th width="100">Действия</th>
                 </tr>
             </thead>
             <tbody id="campaignHistoryTableBody">
-                <tr><td colspan="8" class="text-center"><div class="loading">Загрузка...</div></td></tr>
+                <tr><td colspan="7" class="text-center"><div class="loading">Загрузка...</div></td></tr>
             </tbody>
         </table>
     </div>
@@ -68,43 +68,33 @@
 </div>
 
 <!-- ============================================= -->
-<!-- МОДАЛЬНОЕ ОКНО ДЕТАЛЕЙ ОБЗВОНА - тот же контент, что и в "Обзвон"
-     (App.campaigns.viewCampaignDetail() - модуль общий, HTML-контейнер
-     нужен в DOM каждой вкладки, которая его открывает, т.к. App.switchTab
-     заменяет весь #contentContainer целиком) -->
+<!-- МОДАЛЬНОЕ ОКНО ДЕТАЛЕЙ ЗАПУСКА -->
 <!-- ============================================= -->
-<div id="campaignDetailModal" class="modal" style="display: none;">
+<div id="runDetailModal" class="modal" style="display: none;">
     <div class="modal-content modal-large">
         <div class="modal-header">
-            <h3 id="campaignDetailTitle">Детали обзвона</h3>
-            <button class="modal-close" onclick="App.campaigns.closeCampaignDetailModal()">&times;</button>
+            <h3 id="runDetailTitle">Детали запуска</h3>
+            <button class="modal-close" onclick="App.campaignHistory.closeRunDetailModal()">&times;</button>
         </div>
         <div class="modal-body">
-            <div id="campaignDetailContent">
+            <div id="runDetailContent">
                 <div class="loading">Загрузка...</div>
             </div>
         </div>
         <div class="modal-footer">
             <button type="button"
                     class="btn btn-outline"
-                    onclick="App.campaigns.closeCampaignDetailModal()">
+                    onclick="App.campaignHistory.closeRunDetailModal()">
                 Закрыть
-            </button>
-            <button type="button"
-                    class="btn btn-outline"
-                    id="campaignExportBtn"
-                    onclick="App.campaigns.exportCampaignResults()">
-                📥 Экспорт
             </button>
         </div>
     </div>
 </div>
 
 <!-- ============================================= -->
-<!-- СТИЛИ - те же классы, что и в campaigns.html (они заданы там
-     локально, не в общем css/style.css, кроме .status-badge - см.
-     комментарий в App.campaignHistory), дублируем по тому же принципу,
-     по которому у каждой вкладки свой inline <style> в этом проекте -->
+<!-- СТИЛИ - те же классы, что и в campaigns.html (заданы там локально,
+     не в общем css/style.css, кроме .status-badge), дублируем по тому
+     же принципу, по которому у каждой вкладки свой inline <style> -->
 <!-- ============================================= -->
 <style>
     .campaign-history-container {
@@ -174,12 +164,6 @@
         color: var(--color-text-muted);
     }
 
-    /* Модалка деталей обзвона (та же, что и на вкладке "Обзвон") */
-    .campaign-detail {
-        max-height: 60vh;
-        overflow-y: auto;
-    }
-
     .detail-section {
         margin-bottom: var(--spacing-lg);
         padding-bottom: var(--spacing-lg);
@@ -212,32 +196,6 @@
         width: 150px;
     }
 
-    .stats-grid-detail {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: var(--spacing-md);
-    }
-
-    .stat-item-detail {
-        text-align: center;
-        padding: var(--spacing-sm);
-        background: var(--color-bg-tertiary);
-        border-radius: var(--radius-md);
-    }
-
-    .stat-item-detail .stat-label {
-        display: block;
-        font-size: 0.8rem;
-        color: var(--color-text-muted);
-        margin-bottom: var(--spacing-xs);
-    }
-
-    .stat-item-detail .stat-value {
-        font-size: 1.25rem;
-        font-weight: 600;
-        color: var(--color-text-primary);
-    }
-
     @media (max-width: 768px) {
         .filters-panel {
             flex-direction: column;
@@ -248,17 +206,9 @@
         .filter-group {
             width: 100%;
         }
-
-        .stats-grid-detail {
-            grid-template-columns: repeat(2, 1fr);
-        }
     }
 
     @media (max-width: 480px) {
-        .stats-grid-detail {
-            grid-template-columns: 1fr;
-        }
-
         .modal-large {
             width: 95%;
         }

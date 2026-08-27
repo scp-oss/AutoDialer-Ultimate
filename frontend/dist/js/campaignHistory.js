@@ -1,16 +1,15 @@
 /**
  * AutoDialer Ultimate - Campaign History Module
  * Version: 3.0.0
- * Отдельная read-only вкладка "История обзвонов" - список прошлых (и
- * текущих) запусков обзвона без функций управления/создания (это есть
- * на вкладке "Обзвон"), с тем же drill-down в детали через уже
- * существующую App.campaigns.viewCampaignDetail() - показывает статус,
- * во сколько дозвонились до каждого номера, и т.д.
+ * Отдельная read-only вкладка "История обзвонов" - одна строка на
+ * КАЖДЫЙ запуск обзвона (GET /campaigns/runs, campaign_runs в БД), а не
+ * на кампанию, так что "Запустить снова" на вкладке "Обзвон" видно как
+ * отдельную запись со своим временем начала/конца и своей статистикой.
  */
 
 App.campaignHistory = {
     state: {
-        campaigns: [],
+        runs: [],
         currentPage: 1,
         totalPages: 1,
         pageSize: 20
@@ -35,7 +34,7 @@ App.campaignHistory = {
 
         const tbody = document.getElementById('campaignHistoryTableBody');
         if (tbody) {
-            tbody.innerHTML = '<tr><td colspan="8" class="text-center"><div class="loading">Загрузка...</div></td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="loading">Загрузка...</div></td></tr>';
         }
 
         try {
@@ -49,8 +48,8 @@ App.campaignHistory = {
             if (search) params.set('search', search);
             if (status) params.set('status', status);
 
-            const data = await App.apiGet(`/campaigns/?${params.toString()}`);
-            this.state.campaigns = data.items || data || [];
+            const data = await App.apiGet(`/campaigns/runs?${params.toString()}`);
+            this.state.runs = data.items || data || [];
             this.state.totalPages = data.total_pages || 1;
 
             this.renderTable();
@@ -59,7 +58,7 @@ App.campaignHistory = {
         } catch (error) {
             console.error('Failed to load campaign history:', error);
             if (tbody) {
-                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-error">Ошибка загрузки</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-error">Ошибка загрузки</td></tr>';
             }
             App.showToast('Ошибка загрузки истории обзвонов', 'error');
         }
@@ -69,15 +68,15 @@ App.campaignHistory = {
         const tbody = document.getElementById('campaignHistoryTableBody');
         if (!tbody) return;
 
-        const campaigns = this.state.campaigns;
+        const runs = this.state.runs;
 
-        if (!campaigns || campaigns.length === 0) {
+        if (!runs || runs.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="8" class="text-center">
+                    <td colspan="7" class="text-center">
                         <div class="empty-state">
                             <div class="empty-icon">🗂️</div>
-                            <p>История обзвонов пока пуста</p>
+                            <p>Ещё не было ни одного запуска обзвона</p>
                         </div>
                     </td>
                 </tr>
@@ -85,25 +84,20 @@ App.campaignHistory = {
             return;
         }
 
-        tbody.innerHTML = campaigns.map(c => this.rowHtml(c)).join('');
+        tbody.innerHTML = runs.map(r => this.rowHtml(r)).join('');
     },
 
-    rowHtml(c) {
-        const processed = c.stats?.processed_contacts || 0;
-        const total = c.stats?.total_contacts || 0;
-        const progress = c.stats?.progress_percent || 0;
-        const conversion = c.stats?.conversion_rate || 0;
-        const finishedAt = c.completed_at || c.stopped_at || null;
+    rowHtml(r) {
+        const processed = r.processed_contacts || 0;
+        const total = r.total_contacts || 0;
+        const progress = r.progress_percent || 0;
 
         return `
-            <tr class="campaign-row" style="cursor: pointer;" onclick="App.campaigns.viewCampaignDetail(${c.id})">
-                <td>${c.id}</td>
+            <tr class="campaign-row" style="cursor: pointer;" onclick="App.campaignHistory.viewRunDetail(${r.id})">
+                <td>${r.id}</td>
+                <td><strong>${App.campaigns.escapeHtml(r.campaign_name)}</strong></td>
                 <td>
-                    <strong>${App.campaigns.escapeHtml(c.name)}</strong>
-                    ${c.description ? `<br><small>${App.campaigns.escapeHtml(c.description)}</small>` : ''}
-                </td>
-                <td>
-                    <span class="status-badge status-${c.status}">${App.campaigns.getStatusText(c.status)}</span>
+                    <span class="status-badge status-${r.status}">${App.campaigns.getStatusText(r.status)}</span>
                 </td>
                 <td>
                     <div class="progress-container">
@@ -113,17 +107,83 @@ App.campaignHistory = {
                         <span class="progress-text">${processed}/${total}</span>
                     </div>
                 </td>
-                <td>
-                    <span class="${conversion > 0 ? 'text-success' : ''}">${conversion}%</span>
-                </td>
-                <td>${c.started_at ? App.formatDateTime(c.started_at) : '—'}</td>
-                <td>${finishedAt ? App.formatDateTime(finishedAt) : '—'}</td>
+                <td>${r.started_at ? App.formatDateTime(r.started_at) : '—'}</td>
+                <td>${r.completed_at ? App.formatDateTime(r.completed_at) : '—'}</td>
                 <td class="actions-cell">
-                    <button class="btn btn-sm btn-outline" onclick="event.stopPropagation(); App.campaigns.viewCampaignDetail(${c.id})" title="Просмотр">
+                    <button class="btn btn-sm btn-outline" onclick="event.stopPropagation(); App.campaignHistory.viewRunDetail(${r.id})" title="Просмотр">
                         👁️
                     </button>
                 </td>
             </tr>
         `;
+    },
+
+    // =============================================
+    // Детали одного запуска
+    // =============================================
+    async viewRunDetail(id) {
+        try {
+            const run = await App.apiGet(`/campaigns/runs/${id}`);
+
+            const modal = document.getElementById('runDetailModal');
+            const title = document.getElementById('runDetailTitle');
+            const content = document.getElementById('runDetailContent');
+            if (!modal || !content) return;
+
+            title.textContent = `${run.campaign_name} — запуск #${run.id}`;
+
+            content.innerHTML = `
+                <div class="detail-section">
+                    <h4>Информация о запуске</h4>
+                    <table class="details-table">
+                        <tr><td>Обзвон:</td><td>${App.campaigns.escapeHtml(run.campaign_name)}</td></tr>
+                        <tr><td>Статус:</td><td><span class="status-badge status-${run.status}">${App.campaigns.getStatusText(run.status)}</span></td></tr>
+                        <tr><td>Запущен:</td><td>${App.formatDateTime(run.started_at)}</td></tr>
+                        <tr><td>Завершён:</td><td>${run.completed_at ? App.formatDateTime(run.completed_at) : '—'}</td></tr>
+                        <tr><td>Обзвонено:</td><td>${run.processed_contacts}/${run.total_contacts} (${run.progress_percent}%)</td></tr>
+                    </table>
+                </div>
+                <div class="detail-section">
+                    <h4>Звонки в этом запуске</h4>
+                    ${(run.calls && run.calls.length) ? `
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Номер</th>
+                                    <th>Контакт</th>
+                                    <th>Статус</th>
+                                    <th>Длит.</th>
+                                    <th>Дата/время</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${run.calls.map(call => `
+                                    <tr>
+                                        <td>${App.campaigns.formatPhone(call.phone)}</td>
+                                        <td>${App.campaigns.escapeHtml(call.contact_name || '—')}</td>
+                                        <td><span class="status-badge status-${call.status}">${App.campaigns.getCallStatusText(call.status)}</span></td>
+                                        <td>${App.formatDuration(call.duration)}</td>
+                                        <td>${App.formatDateTime(call.created_at)}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    ` : '<p class="text-muted">Звонков в этом запуске пока нет</p>'}
+                </div>
+            `;
+
+            modal.style.display = 'flex';
+
+        } catch (error) {
+            console.error('Failed to load run detail:', error);
+            App.showToast('Ошибка загрузки деталей запуска', 'error');
+        }
+    },
+
+    closeRunDetailModal() {
+        const modal = document.getElementById('runDetailModal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
     }
 };

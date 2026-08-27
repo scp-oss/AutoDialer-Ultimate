@@ -78,6 +78,44 @@ async def get_active_campaigns(user: TokenData = Depends(get_current_user)):
     return await campaign_service.get_active_campaigns()
 
 
+@router.get("/runs")
+async def list_campaign_runs(
+    pagination: PaginationParams = Depends(),
+    campaign_id: Optional[int] = None,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    user: TokenData = Depends(get_current_user)
+):
+    """
+    Список запусков обзвонов для вкладки "История обзвонов" - одна
+    строка на каждый прогон (нажатие "Запустить"/"Запустить снова"),
+    а не на кампанию. Должен стоять ДО /{campaign_id} - тот же класс
+    бага, что и /summary/​/active выше ("runs" иначе пытается
+    распарситься как campaign_id:int и падает с 422).
+    """
+    campaign_service = get_campaign_service()
+    return await campaign_service.list_campaign_runs(
+        page=pagination.page,
+        page_size=pagination.page_size,
+        campaign_id=campaign_id,
+        status=status,
+        search=search
+    )
+
+
+@router.get("/runs/{run_id}")
+async def get_campaign_run(
+    run_id: int,
+    user: TokenData = Depends(get_current_user)
+):
+    """Детали одного запуска (для drill-down из "Истории обзвонов")"""
+    campaign_service = get_campaign_service()
+    run = await campaign_service.get_campaign_run(run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    return run
+
+
 @router.get("/{campaign_id}", response_model=CampaignDetailResponse)
 async def get_campaign(
     campaign_id: int,

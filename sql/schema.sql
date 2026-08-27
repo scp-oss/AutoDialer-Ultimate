@@ -134,6 +134,24 @@ CREATE TABLE IF NOT EXISTS campaigns (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Журнал запусков кампании (app/services/campaign.py: start_campaign()/
+-- dial_task()) - одна строка на каждое нажатие "Запустить"/"Запустить
+-- снова", а не одна на кампанию (campaigns.started_at/completed_at
+-- перезаписываются при каждом повторном запуске и теряют историю
+-- предыдущих прогонов - для этого и нужна отдельная таблица).
+CREATE TABLE IF NOT EXISTS campaign_runs (
+    id SERIAL PRIMARY KEY,
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMP,
+    status VARCHAR(50) NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'stopped', 'failed')),
+    total_contacts INTEGER NOT NULL DEFAULT 0,
+    processed_contacts INTEGER NOT NULL DEFAULT 0,
+    started_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_campaign_runs_campaign_id ON campaign_runs(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_runs_started_at ON campaign_runs(started_at DESC);
+
 -- Теги кампаний (app/services/campaign.py: _add_campaign_tags/_get_campaign_tags)
 CREATE TABLE IF NOT EXISTS campaign_tags (
     campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
