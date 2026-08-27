@@ -328,10 +328,11 @@ exten => #,1,NoOp(=== DTMF #: Пользовательское ===)
 same => n,UserEvent(DialerResult,Status: hash,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: #,LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Hangup()
 
-; Таймаут - DTMF не получен
-exten => t,1,NoOp(=== Таймаут DTMF ===)
+; Таймаут - DTMF не получен. AMDSTATUS=MACHINE - автоответчик, никто не
+; мог физически нажать 1/2/4, статус "timeout" тут вводит в заблуждение.
+exten => t,1,NoOp(=== Таймаут DTMF, AMDSTATUS=\${AMDSTATUS} ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},dtmf=timeout)
-same => n,UserEvent(DialerResult,Status: timeout,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
+same => n,UserEvent(DialerResult,Status: \${IF(\$["\${AMDSTATUS}"="MACHINE"]?machine:timeout)},Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Playback(tts/timeout_\${CAMPAIGN_ID})
 same => n,GotoIf(\$[\${STAT(e,/var/lib/asterisk/sounds/tts/timeout_\${CAMPAIGN_ID}.sln)} = 1]?hangup)
 same => n,Playback(tts/timeout_default)
@@ -356,7 +357,7 @@ exten => h,1,NoOp(=== Канал завершён без ввода DTMF - ка�
 ; подтвердил" (статус timeout) - тот же результат, просто дошёл до Python
 ; другим путём. unknown оставляем только если ANSWER_EPOCH ещё не
 ; выставлен (канал оборвался ДО Answer()).
-same => n,UserEvent(DialerResult,Status: \${IF(\$["\${ANSWER_EPOCH}"=""]?unknown:timeout)},Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)},Duration: \${IF(\$["\${ANSWER_EPOCH}"=""]?0:\$[\${EPOCH} - \${ANSWER_EPOCH}])})
+same => n,UserEvent(DialerResult,Status: \${IF(\$["\${ANSWER_EPOCH}"=""]?unknown:\${IF(\$["\${AMDSTATUS}"="MACHINE"]?machine:timeout)})},Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)},Duration: \${IF(\$["\${ANSWER_EPOCH}"=""]?0:\$[\${EPOCH} - \${ANSWER_EPOCH}])})
 
 
 ; =============================================
