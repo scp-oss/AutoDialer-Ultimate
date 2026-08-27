@@ -1379,10 +1379,20 @@ class CampaignService:
     async def get_campaign_run(self, run_id: int) -> Optional[Dict[str, Any]]:
         """Детали одного запуска - статистика + звонки, попавшие именно в его временное окно"""
         async with self.db_pool.acquire() as conn:
+            # a.duration - длительность аудио, которое реально проигрывается
+            # звонящим (campaigns.audio_id), нужна фронту, чтобы можно было
+            # сравнить с call_results.duration и понять, дослушал ли абонент
+            # сообщение целиком или бросил трубку на середине (например,
+            # файл 40с, а звонок длился всего 10с). Это аудио ТЕКУЩЕЕ для
+            # кампании на момент запроса - если его сменили уже после этого
+            # запуска, длительность будет от нового файла, не от того, что
+            # реально звучало в момент звонка; полная точность потребовала
+            # бы отдельной колонки audio_id в самой campaign_runs.
             row = await conn.fetchrow("""
-                SELECT cr.*, c.name as campaign_name
+                SELECT cr.*, c.name as campaign_name, a.duration as audio_duration
                 FROM campaign_runs cr
                 JOIN campaigns c ON c.id = cr.campaign_id
+                LEFT JOIN audio_files a ON a.id = c.audio_id
                 WHERE cr.id = $1
             """, run_id)
 
@@ -1439,6 +1449,7 @@ class CampaignService:
             'total_contacts': total_contacts,
             'processed_contacts': processed,
             'progress_percent': round(processed / total_contacts * 100, 2) if total_contacts else 0.0,
+            'audio_duration': round(row['audio_duration']) if row['audio_duration'] is not None else None,
             'calls': [dict(c) for c in calls]
         }
 

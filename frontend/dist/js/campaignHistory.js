@@ -141,6 +141,7 @@ App.campaignHistory = {
                         <tr><td>Запущен:</td><td>${App.formatDateTime(run.started_at)}</td></tr>
                         <tr><td>Завершён:</td><td>${run.completed_at ? App.formatDateTime(run.completed_at) : '—'}</td></tr>
                         <tr><td>Обзвонено:</td><td>${run.processed_contacts}/${run.total_contacts} (${run.progress_percent}%)</td></tr>
+                        <tr><td>Длительность аудио:</td><td>${run.audio_duration != null ? App.formatDuration(run.audio_duration) : '—'}</td></tr>
                     </table>
                 </div>
                 <div class="detail-section">
@@ -152,7 +153,7 @@ App.campaignHistory = {
                                     <th>Номер</th>
                                     <th>Контакт</th>
                                     <th>Статус</th>
-                                    <th>Длит.</th>
+                                    <th>Длит.${run.audio_duration != null ? ' (из аудио)' : ''}</th>
                                     <th>Дата/время</th>
                                 </tr>
                             </thead>
@@ -162,7 +163,7 @@ App.campaignHistory = {
                                         <td>${App.campaigns.formatPhone(call.phone)}</td>
                                         <td>${App.campaigns.escapeHtml(call.contact_name || '—')}</td>
                                         <td><span class="status-badge status-${call.status}">${App.campaigns.getCallStatusText(call.status)}</span></td>
-                                        <td>${App.formatDuration(call.duration)}</td>
+                                        <td>${this.durationCellHtml(call.duration, run.audio_duration)}</td>
                                         <td>${App.formatDateTime(call.created_at)}</td>
                                     </tr>
                                 `).join('')}
@@ -185,5 +186,19 @@ App.campaignHistory = {
         if (modal) {
             modal.style.display = 'none';
         }
+    },
+
+    // Сравнение длительности звонка с длительностью самого аудио - без
+    // этого "0:10" в истории ничего не говорит о том, дослушал ли абонент
+    // сообщение целиком (файл может быть 0:40) или бросил трубку на
+    // середине. < 90% длительности аудио - подсвечиваем предупреждением;
+    // agreed/declined с быстрым DTMF не считается "не дослушал", если
+    // человек уже понял суть и ответил раньше конца записи, но видеть эту
+    // цифру всё равно полезно.
+    durationCellHtml(duration, audioDuration) {
+        const durationText = App.formatDuration(duration);
+        if (audioDuration == null) return durationText;
+        const short = (duration || 0) < audioDuration * 0.9;
+        return `<span class="${short ? 'text-warning' : ''}">${durationText} из ${App.formatDuration(audioDuration)}</span>`;
     }
 };
