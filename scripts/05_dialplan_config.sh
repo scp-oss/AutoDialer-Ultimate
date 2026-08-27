@@ -217,6 +217,12 @@ same => n,Wait(0.2)
 ; в диалплане (эта строка выполняется уже после реального Answer()) и
 ; передаём её в Python прямо в каждом UserEvent(DialerResult,...) ниже.
 same => n,Set(ANSWER_EPOCH=\${EPOCH})
+; Также в astdb под linkedid - [hangup-handler] читает его оттуда, когда
+; абонент вешает трубку сам, не дожидаясь WaitExten (exten=>h в ЭТОМ
+; контексте на это ненадёжен - подтверждено живьём: Asterisk логирует
+; "Abnormal Gosub exit" и не вызывает hangup-extension lookup для этого
+; контекста в таком случае).
+same => n,Set(DB(dialer_answer_epoch/\${CHANNEL(linkedid)})=\${ANSWER_EPOCH})
 
 ; AMD должен отработать (и дослушать) ДО того, как начнём проигрывать
 ; своё TTS - он различает живого человека и автоответчика по тому, что
@@ -230,6 +236,8 @@ same => n,Set(ANSWER_EPOCH=\${EPOCH})
 ; проигрываем питч; AMDSTATUS по-прежнему пишется в CDR(userfield) внутри
 ; sub-amd для статистики, но больше не завершает звонок раньше времени.
 same => n,Gosub(sub-amd,s,1)
+; Тоже в astdb под linkedid - см. комментарий у DB(dialer_answer_epoch/...) выше.
+same => n,Set(DB(dialer_amdstatus/\${CHANNEL(linkedid)})=\${AMDSTATUS})
 
 same => n,Set(TIMEOUT(digit)=\${DTMF_TIMEOUT})
 same => n,Set(TIMEOUT(response)=\${DTMF_TIMEOUT})
@@ -348,16 +356,11 @@ same => n,WaitExten(\${DTMF_TIMEOUT})
 
 ; Абонент мог повесить трубку, не дожидаясь WaitExten и не нажав ничего -
 ; тогда ни один UserEvent(DialerResult,...) выше не выполняется вовсе.
-; 'h' выполняется на ЛЮБОМ завершении этого канала (включая Hangup() из
-; обработчиков выше - там уже дедуплицируется на стороне Python по
-; linked_id, так что повторный вызов здесь безопасен).
-exten => h,1,NoOp(=== Канал завершён без ввода DTMF - кампания \${CAMPAIGN_ID} ===)
-; Абонент дослушал и повесил трубку сам, не дождавшись естественного
-; истечения WaitExten - для отчёта это то же самое, что "прослушал, не
-; подтвердил" (статус timeout) - тот же результат, просто дошёл до Python
-; другим путём. unknown оставляем только если ANSWER_EPOCH ещё не
-; выставлен (канал оборвался ДО Answer()).
-same => n,UserEvent(DialerResult,Status: \${IF(\$["\${ANSWER_EPOCH}"=""]?unknown:\${IF(\$["\${AMDSTATUS}"="MACHINE"]?machine:timeout)})},Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)},Duration: \${IF(\$["\${ANSWER_EPOCH}"=""]?0:\$[\${EPOCH} - \${ANSWER_EPOCH}])})
+; Раньше здесь стоял exten=>h - но подтверждено живьём, что для этого
+; случая (Dial() вызывает этот контекст через U(), т.е. изнутри Gosub'а)
+; Asterisk НЕ вызывает exten=>h вообще, только логирует "Abnormal Gosub
+; exit". Надёжный обработчик для этого случая - [hangup-handler] ниже
+; (висит на Local-канале [dialer_bridge], вызывается всегда).
 
 
 ; =============================================
@@ -372,6 +375,22 @@ exten => s,1,NoOp(=== Канал \${CHANNEL} завершён ===)
 ; \`channel.startswith(...)\` на стороне приложения падает с
 ; AttributeError - подтверждено живьём на Docker-сборке того же дозвона.
 same => n,UserEvent(DialerHangup,LinkedID: \${CHANNEL(linkedid)},Status: \${DIALSTATUS},Duration: \${CDR(duration)},BillSec: \${CDR(billsec)})
+
+; Подстраховка "абонент сам повесил трубку, не нажав ничего" - см.
+; комментарий в [sub-media] про ненадёжный exten=>h. Этот контекст
+; выполняется на Local-канале [dialer_bridge] (CAMPAIGN_ID/RETRY_COUNT/
+; ORIGINAL_PHONE уже есть тут как обычные переменные, заданы до Dial()) и
+; вызывается всегда. ANSWER_EPOCH/AMDSTATUS заданы на другом (PJSIP)
+; канале внутри [sub-media] - недоступны здесь напрямую, поэтому читаем
+; их из astdb, куда [sub-media] их кладёт под общим linkedid. Если
+; реальный результат уже отправлен - dialer_result_saved:linked_id на
+; стороне Python уже занят, и это безопасно игнорируется как дубликат.
+same => n,GotoIf(\$["\${DIALSTATUS}"!="ANSWER"]?skip_fallback)
+same => n,Set(FALLBACK_ANSWER_EPOCH=\${DB(dialer_answer_epoch/\${CHANNEL(linkedid)})})
+same => n,Set(FALLBACK_AMDSTATUS=\${DB(dialer_amdstatus/\${CHANNEL(linkedid)})})
+same => n,UserEvent(DialerResult,Status: \${IF(\$["\${FALLBACK_ANSWER_EPOCH}"=""]?unknown:\${IF(\$["\${FALLBACK_AMDSTATUS}"="MACHINE"]?machine:timeout)})},Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)},Duration: \${IF(\$["\${FALLBACK_ANSWER_EPOCH}"=""]?0:\$[\${EPOCH} - \${FALLBACK_ANSWER_EPOCH}])})
+same => n(skip_fallback),NoOp(=== Конец подстраховки для незавершённого DTMF ===)
+
 ; НЕ снимаем блокировку от дубликатов dialer_bridge здесь - вторая
 ; половина Local-канала не гарантированно успевает дойти до своей проверки
 ; DB_EXISTS до этого момента (подтверждено живьём: она может начать
