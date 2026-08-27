@@ -205,7 +205,9 @@ App.campaignHistory = {
         const durationText = App.formatDuration(duration);
         if (audioDuration == null) return durationText;
         const heard = Math.min(duration || 0, audioDuration);
+        const full = heard >= audioDuration;
         const short = heard < audioDuration * 0.9;
-        return `<span class="${short ? 'text-warning' : ''}">${App.formatDuration(heard)} из ${App.formatDuration(audioDuration)}</span>`;
+        const cls = full ? 'text-success' : (short ? 'text-warning' : '');
+        return `<span class="${cls}">${App.formatDuration(heard)} из ${App.formatDuration(audioDuration)}</span>`;
     }
 };
