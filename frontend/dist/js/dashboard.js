@@ -19,7 +19,6 @@ App.dashboard = {
             totalDuration: 0
         },
         activeCampaigns: [],
-        recentCalls: [],
         chart: null,
         chartPeriod: 'week' // day, week, month
     },
@@ -76,7 +75,6 @@ App.dashboard = {
             await Promise.all([
                 this.loadStats(),
                 this.loadActiveCampaigns(),
-                this.loadRecentCalls(),
                 this.loadCampaignsSummary(),
                 this.loadSystemWidget()
             ]);
@@ -215,51 +213,6 @@ App.dashboard = {
     },
 
     // =============================================
-    // Последние звонки
-    // =============================================
-    async loadRecentCalls() {
-        try {
-            // /api/history doesn't exist - the endpoint is registered
-            // under the /calls router as /calls/history (app/api/calls.py)
-            const data = await App.apiGet('/calls/history?limit=10');
-            this.state.recentCalls = data.items || data.history || data || [];
-            this.renderRecentCalls();
-        } catch (error) {
-            console.error('Failed to load recent calls:', error);
-            this.renderRecentCallsEmpty();
-        }
-    },
-
-    renderRecentCalls() {
-        const container = document.getElementById('recentCalls');
-        if (!container) return;
-        
-        const calls = this.state.recentCalls;
-        
-        if (!calls || calls.length === 0) {
-            this.renderRecentCallsEmpty();
-            return;
-        }
-        
-        container.innerHTML = calls.map(call => `
-            <div class="call-item" onclick="App.history?.showCallDetails(${call.id})">
-                <span class="call-time">${this.formatTime(call.created_at)}</span>
-                <span class="call-phone">${this.formatPhone(call.phone || call.to_number)}</span>
-                <span class="status-badge status-${call.status}">${this.getCallStatusText(call.status)}</span>
-                <span class="call-campaign">${this.escapeHtml(call.campaign_name || '—')}</span>
-                ${call.direction === 'inbound' ? '<span class="badge badge-info">Вх.</span>' : ''}
-            </div>
-        `).join('');
-    },
-
-    renderRecentCallsEmpty() {
-        const container = document.getElementById('recentCalls');
-        if (container) {
-            container.innerHTML = '<div class="loading">Нет звонков</div>';
-        }
-    },
-
-    // =============================================
     // График
     // =============================================
     initChart() {
@@ -347,13 +300,26 @@ App.dashboard = {
             const days = daysByPeriod[this.state.chartPeriod] || 7;
             const data = await App.apiGet(`/stats/calls/daily?days=${days}`);
             const chartData = data.daily || data || [];
-            
-            if (chartData.length === 0) {
-                return;
-            }
-            
+
             // Сортируем по дате
             chartData.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            // График - линия ПО ДНЯМ, ей нужно минимум 2 точки, чтобы
+            // вообще было что соединять линией - с 0 или 1 днём реальных
+            // звонков (например, свежая установка или "День" в качестве
+            // периода) Chart.js рисует либо пустой холст, либо одну точку
+            // без единой линии, что и выглядело как "не понятно что
+            // показывает, нет ни одной линии" - показываем понятное
+            // текстовое объяснение вместо графика в этом случае.
+            if (chartData.length < 2) {
+                this.showChartEmptyState(
+                    chartData.length === 0
+                        ? 'За выбранный период ещё нет звонков - график появится, когда накопится история минимум за 2 дня.'
+                        : 'Пока данные есть только за один день - для линии нужно минимум 2 дня истории. Переключитесь на «Неделя»/«Месяц» или загляните позже.'
+                );
+                return;
+            }
+            this.hideChartEmptyState();
 
             const labels = chartData.map(d => this.formatChartDate(d.date));
             const totals = chartData.map(d => d.total || 0);
@@ -369,39 +335,35 @@ App.dashboard = {
             this.state.chart.data.datasets[0].data = totals;
             this.state.chart.data.datasets[1].data = agreed;
             this.state.chart.data.datasets[2].data = noanswer;
-            
+
             this.state.chart.update();
-            
+
         } catch (error) {
+            // Раньше при любой ошибке API (в т.ч. временный сбой сети)
+            // сюда подставлялись СЛУЧАЙНЫЕ числа как будто реальная
+            // статистика - пользователь не мог отличить настоящий график
+            // от выдуманного. Честная причина ошибки лучше фиктивных
+            // данных.
             console.error('Failed to load chart data:', error);
-            this.loadMockChartData();
+            this.showChartEmptyState('Не удалось загрузить статистику для графика.');
         }
     },
 
-    loadMockChartData() {
-        if (!this.state.chart) return;
-
-        // Заглушка если API не отдаёт данные для графика
-        const labels = [];
-        const totals = [];
-        const agreed = [];
-        const noanswer = [];
-        
-        const today = new Date();
-        for (let i = 6; i >= 0; i--) {
-            const date = new Date(today);
-            date.setDate(date.getDate() - i);
-            labels.push(date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }));
-            totals.push(Math.floor(Math.random() * 500) + 200);
-            agreed.push(Math.floor(Math.random() * 100) + 50);
-            noanswer.push(Math.floor(Math.random() * 150) + 50);
+    showChartEmptyState(message) {
+        const canvas = document.getElementById('statsChart');
+        const empty = document.getElementById('statsChartEmpty');
+        if (canvas) canvas.style.display = 'none';
+        if (empty) {
+            empty.textContent = message;
+            empty.style.display = 'flex';
         }
-        
-        this.state.chart.data.labels = labels;
-        this.state.chart.data.datasets[0].data = totals;
-        this.state.chart.data.datasets[1].data = agreed;
-        this.state.chart.data.datasets[2].data = noanswer;
-        this.state.chart.update();
+    },
+
+    hideChartEmptyState() {
+        const canvas = document.getElementById('statsChart');
+        const empty = document.getElementById('statsChartEmpty');
+        if (canvas) canvas.style.display = '';
+        if (empty) empty.style.display = 'none';
     },
 
     // =============================================
@@ -542,16 +504,6 @@ App.dashboard = {
         return `${minutes} мин`;
     },
 
-    formatTime(isoString) {
-        if (!isoString) return '—';
-        const date = App.parseServerDate(isoString);
-        return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    },
-
-    formatPhone(phone) {
-        return App.formatPhoneNumber(phone);
-    },
-
     formatChartDate(dateStr) {
         const date = new Date(dateStr);
         if (this.state.chartPeriod === 'month') {
@@ -570,18 +522,6 @@ App.dashboard = {
             'stopped': 'Остановлена',
             'completed': 'Завершена',
             'failed': 'Ошибка'
-        };
-        return map[status] || status;
-    },
-
-    getCallStatusText(status) {
-        const map = {
-            'completed': 'Завершен',
-            'answered': 'Отвечен',
-            'no_answer': 'Нет ответа',
-            'busy': 'Занято',
-            'failed': 'Ошибка',
-            'cancelled': 'Отменен'
         };
         return map[status] || status;
     },

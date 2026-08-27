@@ -111,8 +111,12 @@
                 <div class="card-header">
                     <h3>📈 Статистика звонков</h3>
                 </div>
-                <div class="card-body chart-container">
-                    <canvas id="statsChart"></canvas>
+                <div class="card-body">
+                    <p class="chart-hint">Звонки по дням за выбранный период (кнопки «День/Неделя/Месяц» выше) - синяя линия «Всего звонков», зелёная «Согласий», жёлтая «Нет ответа».</p>
+                    <div class="chart-container">
+                        <canvas id="statsChart"></canvas>
+                        <div id="statsChartEmpty" class="chart-empty-state" style="display: none;"></div>
+                    </div>
                 </div>
             </div>
             
@@ -140,19 +144,6 @@
                     <h3>🖥️ Состояние системы</h3>
                 </div>
                 <div class="card-body" id="systemWidget">
-                    <div class="loading">Загрузка...</div>
-                </div>
-            </div>
-            
-            <!-- Последние звонки -->
-            <div class="card">
-                <div class="card-header">
-                    <h3>📜 Последние звонки</h3>
-                    <button class="btn btn-outline btn-sm" onclick="App.switchTab('history')">
-                        История →
-                    </button>
-                </div>
-                <div class="card-body" id="recentCalls">
                     <div class="loading">Загрузка...</div>
                 </div>
             </div>
@@ -302,15 +293,33 @@
     }
     
     /* Chart Container */
+    .chart-hint {
+        margin: 0 0 var(--spacing-md);
+        color: var(--color-text-muted);
+        font-size: 0.8125rem;
+    }
+
     .chart-container {
         position: relative;
         height: 280px;
         width: 100%;
     }
-    
+
     #statsChart {
         width: 100% !important;
         height: 100% !important;
+    }
+
+    .chart-empty-state {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: var(--spacing-lg);
+        color: var(--color-text-muted);
+        font-size: 0.875rem;
     }
     
     /* Campaign Item (в дашборде) */
@@ -348,39 +357,6 @@
         gap: var(--spacing-xs);
         margin-top: var(--spacing-sm);
         justify-content: flex-end;
-    }
-    
-    /* Call Item (в дашборде) */
-    .call-item {
-        display: grid;
-        grid-template-columns: 70px 140px 90px 1fr auto;
-        gap: var(--spacing-sm);
-        padding: var(--spacing-sm) var(--spacing-md);
-        border-bottom: 1px solid var(--color-border);
-        font-size: 0.875rem;
-        align-items: center;
-        cursor: pointer;
-        transition: background var(--transition-fast);
-    }
-    
-    .call-item:hover {
-        background: var(--color-bg-tertiary);
-    }
-    
-    .call-item:last-child {
-        border-bottom: none;
-    }
-    
-    .call-time {
-        color: var(--color-text-muted);
-    }
-    
-    .call-phone {
-        font-weight: 500;
-    }
-    
-    .call-campaign {
-        color: var(--color-text-secondary);
     }
     
     /* System Widget */
@@ -473,12 +449,7 @@
         .quick-actions .btn {
             width: 100%;
         }
-        
-        .call-item {
-            grid-template-columns: 1fr;
-            gap: var(--spacing-xs);
-        }
-        
+
         .stat-card {
             padding: var(--spacing-md);
         }
