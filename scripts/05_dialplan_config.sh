@@ -48,7 +48,13 @@ FREEPBX_EXTENSION="${FREEPBX_EXTENSION:-291}"
 CALL_TIMEOUT="${CALL_TIMEOUT:-30}"
 DTMF_TIMEOUT="${DTMF_TIMEOUT:-10}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
-CALLER_ID="${CALLER_ID:-AutoDialer}"
+# CALLERID(num) должен быть настоящим номером/добавочным - реальные
+# операторские транки отклоняют вызов (CONGESTION) при невалидном Caller
+# ID Number. Раньше дефолт был текстом "AutoDialer", из-за чего звонки на
+# реальные мобильные через транк проваливались, а на внутренние номера
+# (не проверяющие CID) - нет, что маскировало проблему. По умолчанию
+# используем сам номер extension, под который регистрируется транк.
+CALLER_ID="${CALLER_ID:-$FREEPBX_EXTENSION}"
 
 print_info "Номер Extension:   $FREEPBX_EXTENSION"
 print_info "Таймаут звонка:    $CALL_TIMEOUT сек"
