@@ -197,6 +197,11 @@ App.campaigns = {
                                 ▶️
                             </button>
                         ` : ''}
+                        ${['completed', 'stopped', 'failed'].includes(c.status) ? `
+                            <button class="btn btn-sm btn-success" onclick="App.campaigns.restartCampaign(${c.id})" title="Запустить снова (обзвонит всех заново)">
+                                🔁
+                            </button>
+                        ` : ''}
                         ${c.status === 'running' ? `
                             <button class="btn btn-sm btn-warning" onclick="App.campaigns.pauseCampaign(${c.id})" title="Пауза">
                                 ⏸️
@@ -520,6 +525,13 @@ App.campaigns = {
             console.error('Failed to start campaign:', error);
             App.showToast(error.message || 'Ошибка запуска', 'error');
         }
+    },
+
+    async restartCampaign(id) {
+        if (!App.confirm('Запустить обзвон заново? Все контакты будут прозвонены ещё раз, включая тех, кто уже ответил/согласился/отказался в прошлый раз.')) {
+            return;
+        }
+        await this.startCampaign(id);
     },
 
     async pauseCampaign(id) {

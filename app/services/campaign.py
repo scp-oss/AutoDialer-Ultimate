@@ -666,14 +666,31 @@ class CampaignService:
             
             if campaign['status'] == CampaignStatus.RUNNING.value:
                 raise CampaignAlreadyRunningError("Кампания уже запущена")
-            
+
+            # Повторный запуск (completed/stopped/failed, не draft) - без
+            # этого обзвон физически нельзя было повторить: ниже контакты
+            # выбираются с "cc.status != 'completed'", а завершённые
+            # контакты (после прошлого прогона - agreed/declined, или
+            # busy/noanswer/failed с исчерпанными попытками, см.
+            # _schedule_retry() в dialer.py) как раз в статусе 'completed'.
+            # Пользователь явно просил возможность запускать один и тот же
+            # обзвон по той же группе сколько угодно раз - каждый повторный
+            # запуск обзванивает ВСЕХ заново, а не только тех, кто ещё не
+            # был обработан в прошлый раз.
+            if campaign['status'] != CampaignStatus.DRAFT.value:
+                await conn.execute("""
+                    UPDATE campaign_contacts
+                    SET status = 'pending', retry_count = 0, next_retry_at = NULL
+                    WHERE campaign_id = $1
+                """, campaign_id)
+
             # Проверяем расписание (если не force)
             if not force:
                 schedule = json.loads(campaign['schedule']) if campaign['schedule'] else {}
                 if schedule.get('enabled'):
                     if not self._check_schedule(schedule):
                         raise CampaignError("Кампания не может быть запущена по расписанию")
-            
+
             # Проверяем наличие контактов
             contacts_count = await conn.fetchval("""
                 SELECT COUNT(*) FROM campaign_contacts WHERE campaign_id = $1
