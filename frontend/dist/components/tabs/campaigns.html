@@ -255,18 +255,18 @@
                                    id="retryMachineMax"
                                    class="form-control"
                                    min="0"
-                                   max="3"
-                                   value="1">
+                                   max="5"
+                                   value="5">
                         </div>
                         <div class="form-group">
                             <label>Задержка (сек)</label>
                             <input type="number"
                                    id="retryMachineDelay"
                                    class="form-control"
-                                   min="1800"
+                                   min="60"
                                    max="86400"
-                                   value="3600">
-                            <small>Минимум 1800с (30 мин) - повторный звонок сразу же скорее всего снова попадёт на автоответчик</small>
+                                   value="60">
+                            <small>Минимум 60с (1 мин)</small>
                         </div>
                     </div>
                 </div>

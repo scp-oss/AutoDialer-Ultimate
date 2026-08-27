@@ -203,9 +203,7 @@ class Settings(BaseSettings):
     RETRY_BUSY_DELAY: int = Field(120, ge=30, le=3600, description="Задержка при busy (сек)")
     RETRY_NOANSWER_DELAY: int = Field(300, ge=60, le=7200, description="Задержка при noanswer (сек)")
     RETRY_FAILED_DELAY: int = Field(60, ge=30, le=1800, description="Задержка при failed (сек)")
-    # Заметно дольше остальных - повторный звонок сразу же на тот же
-    # автоответчик/голосовую почту почти наверняка попадёт туда же снова.
-    RETRY_MACHINE_DELAY: int = Field(3600, ge=1800, le=86400, description="Задержка при автоответчике (сек)")
+    RETRY_MACHINE_DELAY: int = Field(60, ge=60, le=86400, description="Задержка при автоответчике (сек)")
     
     # Адаптивный CPS
     ADAPTIVE_CPS_ENABLED: bool = Field(True, description="Включить адаптивный CPS")

@@ -78,8 +78,8 @@ class RetryStrategySchema(BaseSchema):
     timeout: int = Field(1, ge=0, le=5, description="Максимум повторов при 'таймаут'")
     timeout_delay: int = Field(60, ge=30, le=1800, description="Задержка при 'таймаут' (сек)")
     
-    machine: int = Field(1, ge=0, le=3, description="Максимум повторов при 'автоответчик'")
-    machine_delay: int = Field(3600, ge=1800, le=86400, description="Задержка при 'автоответчик' (сек)")
+    machine: int = Field(2, ge=0, le=5, description="Максимум повторов при 'автоответчик'")
+    machine_delay: int = Field(60, ge=60, le=86400, description="Задержка при 'автоответчик' (сек)")
     
     # Глобальные настройки
     max_total_retries: int = Field(5, ge=0, le=20, description="Общий максимум повторов")

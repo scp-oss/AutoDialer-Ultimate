@@ -1765,7 +1765,7 @@ class DialerManager:
             'noanswer': {'max': 3, 'delay': settings.RETRY_NOANSWER_DELAY},
             'failed': {'max': 1, 'delay': settings.RETRY_FAILED_DELAY},
             'timeout': {'max': 1, 'delay': 60},
-            'machine': {'max': 1, 'delay': settings.RETRY_MACHINE_DELAY}
+            'machine': {'max': 2, 'delay': settings.RETRY_MACHINE_DELAY}
         }
         strategy = default_strategies.get(status, {'max': 1, 'delay': 60})
 
