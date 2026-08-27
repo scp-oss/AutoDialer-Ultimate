@@ -1501,42 +1501,30 @@ class DialerManager:
         
         # Сохраняем результат
         if ctx:
-            if ctx.answered_at:
-                # Реальный статус отвеченного звонка (согласие/отказ/
-                # автоответчик/...) считает dialplan по DTMF и присылает
-                # отдельным UserEvent(DialerResult) - см. _handle_user_event.
-                # Раньше здесь СВЕРХУ жёстко писалось 'agreed' для ЛЮБОГО
-                # отвеченного звонка, независимо от реального результата
-                # (подтверждено живьём: отказ/автоответчик/тишина - всё
-                # считалось "согласием"). UserEvent обычно приходит раньше
-                # или почти одновременно с Hangup - даём ему 3 секунды,
-                # прежде чем считать, что он не придёт вовсе, и сохранять
-                # честное 'unknown' вместо выдуманного результата.
-                asyncio.create_task(self._fallback_unknown_result(ctx, linked_id, unique_id))
-            else:
-                # Тот же ключ дедупликации, что и в _handle_user_event/
-                # _fallback_unknown_result - без него "мёртвая" половина
-                # Local-канала (та, что редиректится на duplicate,1 и
-                # вешает трубку без единого реального Dial()) могла всё
-                # равно прислать сюда собственное Hangup-событие на тот же
-                # linked_id и создать лишнюю строку в call_results
-                # (подтверждено живьём: "Ошибка" через ~3с после
-                # настоящего результата того же звонка). linked_id общий
-                # у обеих половин, так что этот SET NX гарантированно
-                # пропускает только первый результат на звонок, откуда бы
-                # он ни пришёл.
-                dedup_key = f"dialer_result_saved:{linked_id}"
-                if await self.redis.set(dedup_key, "1", ex=300, nx=True):
-                    status = self._map_hangup_cause_to_status(cause_txt)
-                    await self._save_call_result(
-                        ctx.campaign_id,
-                        ctx.phone,
-                        status,
-                        linked_id,
-                        unique_id,
-                        ctx.retry_count,
-                        duration=ctx.duration
-                    )
+            # Реальный статус (agreed/declined/busy/noanswer/failed/timeout/
+            # machine/announced/...) всегда приходит отдельным
+            # UserEvent(DialerResult,...) из диалплана - от [sub-dial-status]
+            # для busy/noanswer/failed (до своего Hangup()), от DTMF-
+            # обработчиков в [sub-media] (тоже до своего Hangup()), или от
+            # [hangup-handler] как подстраховка на случай "положил трубку,
+            # не нажав ничего". Раньше этот блок раздваивался на
+            # ctx.answered_at: True -> 3-секундная отложенная подстраховка,
+            # False -> МГНОВЕННОЕ сохранение по коду причины разрыва
+            # (_map_hangup_cause_to_status). Поскольку ctx.answered_at на
+            # практике вообще никогда не выставляется (BridgeEnter не
+            # приходит для этой топологии звонка - см. комментарий у
+            # ANSWER_EPOCH в extensions.conf), КАЖДЫЙ отвеченный звонок шёл
+            # по мгновенной ветке - и сырое Hangup-событие от AMI успевало
+            # забрать ключ дедупликации РАНЬШЕ, чем [hangup-handler] в
+            # диалплане (несколько шагов Gosub/Set/UserEvent) вообще
+            # доходил до своего UserEvent(DialerResult,...). Подтверждено
+            # живьём: диалплан корректно слал "Status: machine, Duration:
+            # 13", а в БД всё равно оказывалось "Неизвестно"/0:00. Единая
+            # отложенная подстраховка ниже даёт любому из dialplan-событий
+            # шанс прийти первым во ВСЕХ случаях, а не только "отвечен".
+            asyncio.create_task(
+                self._fallback_hangup_result(ctx, linked_id, unique_id, cause_txt)
+            )
         
         logger.info(f"📴 Hangup: {action_id}, причина={cause_txt}, активно={active}")
 
@@ -1616,22 +1604,37 @@ class DialerManager:
             if status in ['noanswer', 'busy', 'failed']:
                 await self._schedule_retry(int(campaign_id) if campaign_id else 0, phone, retry_count + 1, status)
 
-    async def _fallback_unknown_result(self, ctx, linked_id: str, unique_id: str, delay: float = 3.0):
+    async def _fallback_hangup_result(
+        self, ctx, linked_id: str, unique_id: str, cause_txt: str, delay: float = 3.0
+    ):
         """
-        Подстраховка для отвеченных звонков: если UserEvent(DialerResult) с
-        реальным результатом (см. _handle_user_event) не пришёл за delay
-        секунд после Hangup, сохраняем честное 'unknown' - лучше явно
-        неизвестный результат, чем выдуманный "agreed" или полное отсутствие
-        строки в call_results.
+        Единая подстраховка на случай, если ни один UserEvent(DialerResult,...)
+        из диалплана (busy/noanswer/failed из [sub-dial-status], DTMF-
+        обработчики или подстраховка "положил трубку без ввода" в
+        [hangup-handler]) так и не пришёл за delay секунд после Hangup -
+        такое бывает при гонке AMI-событий (подтверждено живьём: сырое
+        Hangup-событие для PJSIP-канала иногда доходит до Python раньше,
+        чем диалплан успевает дойти до своего [hangup-handler], который
+        сам состоит из нескольких шагов Gosub/Set/UserEvent). Раньше этот
+        путь для "не отвечен" срабатывал МГНОВЕННО, без задержки - гонку
+        с dialplan-событием он неизменно выигрывал, затирая, например,
+        честно посчитанный диалпланом "machine"/"timeout" на статус по
+        коду причины разрыва. Теперь ждём и уступаем dialplan-событию,
+        если оно всё же придёт - используем причину разрыва только как
+        последний, ничем не подкреплённый резерв.
         """
         await asyncio.sleep(delay)
         dedup_key = f"dialer_result_saved:{linked_id}"
         if not await self.redis.set(dedup_key, "1", ex=300, nx=True):
             return  # DialerResult успел прийти первым
+
+        status = self._map_hangup_cause_to_status(cause_txt) if not ctx.answered_at else 'unknown'
         await self._save_call_result(
-            ctx.campaign_id, ctx.phone, 'unknown', linked_id, unique_id, ctx.retry_count,
+            ctx.campaign_id, ctx.phone, status, linked_id, unique_id, ctx.retry_count,
             duration=ctx.duration
         )
+        if ctx.campaign_id > 0 and status in ('noanswer', 'busy', 'failed'):
+            await self._schedule_retry(ctx.campaign_id, ctx.phone, ctx.retry_count + 1, status)
     
     async def _handle_dtmf(self, event, unique_id: str):
         """Обработка DTMF"""
