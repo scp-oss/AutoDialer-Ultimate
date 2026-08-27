@@ -1,0 +1,270 @@
+<!-- ============================================= -->
+<!-- CAMPAIGN HISTORY TAB - отдельная вкладка для просмотра прошлых
+     обзвонов (в отличие от "Обзвон", тут нет создания/управления,
+     только список + drill-down "во сколько дозвонились до каждого") -->
+<!-- ============================================= -->
+<div class="campaign-history-container">
+
+    <!-- Заголовок с действиями -->
+    <div class="page-header">
+        <h2>🗂️ История обзвонов</h2>
+        <div class="header-actions">
+            <button class="btn btn-outline" id="campaignHistoryRefreshBtn" title="Обновить">
+                🔄 Обновить
+            </button>
+        </div>
+    </div>
+
+    <!-- Панель фильтров и поиска -->
+    <div class="filters-panel">
+        <div class="search-box">
+            <input type="text"
+                   id="campaignHistorySearch"
+                   class="form-control"
+                   placeholder="🔍 Поиск по названию..."
+                   autocomplete="off">
+        </div>
+        <div class="filter-group">
+            <select id="campaignHistoryStatusFilter" class="form-control">
+                <option value="">Все статусы</option>
+                <option value="running">Запущенные</option>
+                <option value="paused">Приостановленные</option>
+                <option value="completed">Завершённые</option>
+                <option value="stopped">Остановленные</option>
+                <option value="failed">Ошибка</option>
+            </select>
+        </div>
+        <div class="filter-actions">
+            <button class="btn btn-outline btn-sm" onclick="App.campaignHistory.load()">
+                🔍 Применить
+            </button>
+        </div>
+    </div>
+
+    <!-- Таблица прошлых обзвонов -->
+    <div class="table-responsive">
+        <table class="table" id="campaignHistoryTable">
+            <thead>
+                <tr>
+                    <th width="60">ID</th>
+                    <th>Название</th>
+                    <th width="120">Статус</th>
+                    <th width="150">Прогресс</th>
+                    <th width="80">Конверсия</th>
+                    <th width="160">Запущена</th>
+                    <th width="160">Завершена</th>
+                    <th width="100">Действия</th>
+                </tr>
+            </thead>
+            <tbody id="campaignHistoryTableBody">
+                <tr><td colspan="8" class="text-center"><div class="loading">Загрузка...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Пагинация -->
+    <div id="campaignHistoryPagination" class="pagination-container"></div>
+
+</div>
+
+<!-- ============================================= -->
+<!-- МОДАЛЬНОЕ ОКНО ДЕТАЛЕЙ ОБЗВОНА - тот же контент, что и в "Обзвон"
+     (App.campaigns.viewCampaignDetail() - модуль общий, HTML-контейнер
+     нужен в DOM каждой вкладки, которая его открывает, т.к. App.switchTab
+     заменяет весь #contentContainer целиком) -->
+<!-- ============================================= -->
+<div id="campaignDetailModal" class="modal" style="display: none;">
+    <div class="modal-content modal-large">
+        <div class="modal-header">
+            <h3 id="campaignDetailTitle">Детали обзвона</h3>
+            <button class="modal-close" onclick="App.campaigns.closeCampaignDetailModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="campaignDetailContent">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button"
+                    class="btn btn-outline"
+                    onclick="App.campaigns.closeCampaignDetailModal()">
+                Закрыть
+            </button>
+            <button type="button"
+                    class="btn btn-outline"
+                    id="campaignExportBtn"
+                    onclick="App.campaigns.exportCampaignResults()">
+                📥 Экспорт
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================= -->
+<!-- СТИЛИ - те же классы, что и в campaigns.html (они заданы там
+     локально, не в общем css/style.css, кроме .status-badge - см.
+     комментарий в App.campaignHistory), дублируем по тому же принципу,
+     по которому у каждой вкладки свой inline <style> в этом проекте -->
+<!-- ============================================= -->
+<style>
+    .campaign-history-container {
+        padding: 0;
+    }
+
+    .filters-panel {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-bottom: var(--spacing-lg);
+        flex-wrap: wrap;
+        align-items: flex-end;
+    }
+
+    .search-box {
+        flex: 1;
+        min-width: 250px;
+    }
+
+    .filter-group {
+        min-width: 180px;
+    }
+
+    .filter-actions {
+        display: flex;
+        gap: var(--spacing-sm);
+    }
+
+    .campaign-row {
+        cursor: pointer;
+        transition: background var(--transition-fast);
+    }
+
+    .campaign-row:hover {
+        background: var(--color-bg-tertiary);
+    }
+
+    .progress-container {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+    }
+
+    .progress-text {
+        font-size: 0.8rem;
+        color: var(--color-text-secondary);
+        white-space: nowrap;
+    }
+
+    .actions-cell {
+        white-space: nowrap;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: var(--spacing-2xl);
+    }
+
+    .empty-icon {
+        font-size: 3rem;
+        margin-bottom: var(--spacing-md);
+        opacity: 0.5;
+    }
+
+    .empty-state p {
+        margin-bottom: var(--spacing-lg);
+        color: var(--color-text-muted);
+    }
+
+    /* Модалка деталей обзвона (та же, что и на вкладке "Обзвон") */
+    .campaign-detail {
+        max-height: 60vh;
+        overflow-y: auto;
+    }
+
+    .detail-section {
+        margin-bottom: var(--spacing-lg);
+        padding-bottom: var(--spacing-lg);
+        border-bottom: 1px solid var(--color-border);
+    }
+
+    .detail-section:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+
+    .detail-section h4 {
+        margin-top: 0;
+        margin-bottom: var(--spacing-md);
+        color: var(--color-text-secondary);
+    }
+
+    .details-table {
+        width: 100%;
+    }
+
+    .details-table td {
+        padding: var(--spacing-xs) 0;
+    }
+
+    .details-table td:first-child {
+        font-weight: 500;
+        color: var(--color-text-muted);
+        width: 150px;
+    }
+
+    .stats-grid-detail {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: var(--spacing-md);
+    }
+
+    .stat-item-detail {
+        text-align: center;
+        padding: var(--spacing-sm);
+        background: var(--color-bg-tertiary);
+        border-radius: var(--radius-md);
+    }
+
+    .stat-item-detail .stat-label {
+        display: block;
+        font-size: 0.8rem;
+        color: var(--color-text-muted);
+        margin-bottom: var(--spacing-xs);
+    }
+
+    .stat-item-detail .stat-value {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--color-text-primary);
+    }
+
+    @media (max-width: 768px) {
+        .filters-panel {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .search-box,
+        .filter-group {
+            width: 100%;
+        }
+
+        .stats-grid-detail {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    @media (max-width: 480px) {
+        .stats-grid-detail {
+            grid-template-columns: 1fr;
+        }
+
+        .modal-large {
+            width: 95%;
+        }
+
+        .details-table td:first-child {
+            width: 120px;
+        }
+    }
+</style>

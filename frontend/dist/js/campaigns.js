@@ -159,7 +159,12 @@ App.campaigns = {
     // таблицы, и точечным live-обновлением конкретной строки по WebSocket-событию
     campaignRowHtml(c) {
         const progress = c.stats?.progress_percent || 0;
-        const called = c.stats?.called_contacts || 0;
+        // CampaignStatsResponse (app/models/campaign.py) называет это
+        // processed_contacts, не called_contacts - таблица всегда
+        // показывала "0/N" в прогрессе для любой кампании, независимо от
+        // того, сколько реально обзвонили (видно на первом же скриншоте
+        // обзвона в этом разговоре: "0/1" у уже завершённой кампании).
+        const called = c.stats?.processed_contacts || 0;
         const total = c.stats?.total_contacts || 0;
         const conversion = c.stats?.conversion_rate || 0;
 
@@ -679,7 +684,7 @@ App.campaigns = {
                             </div>
                             <div class="stat-item-detail">
                                 <span class="stat-label">Прогресс</span>
-                                <span class="stat-value">${stats.called_contacts || 0}/${stats.total_contacts || 0}</span>
+                                <span class="stat-value">${stats.processed_contacts || 0}/${stats.total_contacts || 0}</span>
                             </div>
                         </div>
                         <div class="progress-bar" style="margin-top: 10px;">
@@ -741,8 +746,16 @@ App.campaigns = {
                 </div>
             `;
             
+            // Кнопки "Экспорт"/"Назначить контакты" в подвале этой же
+            // модалки читают ID именно отсюда (см. IIFE-обёртку внизу
+            // campaigns.html) - без этого атрибута dataset.campaignId был
+            // всегда undefined (this.state.selectedCampaign относится к
+            // ДРУГОЙ модалке - редактирования, не деталей), и "Экспорт" в
+            // деталях обзвона молча ничего не делал.
+            modal.dataset.campaignId = id;
+
             modal.style.display = 'flex';
-            
+
         } catch (error) {
             console.error('Failed to load campaign detail:', error);
             App.showToast('Ошибка загрузки деталей', 'error');
@@ -761,6 +774,16 @@ App.campaigns = {
     // Назначение контактов кампании
     // =============================================
     async openAssignContactsModal(campaignId) {
+        // Кнопка в подвале модалки деталей зовёт это без аргумента -
+        // берём ID из dataset, который viewCampaignDetail() всегда
+        // проставляет на #campaignDetailModal перед показом. Раньше это
+        // подставлялось только внешней IIFE-обёрткой в campaigns.html,
+        // которая не выполняется на вкладках, отдельных от "Обзвон"
+        // (например "История обзвонов" - тот же #campaignDetailModal,
+        // но без этого script-тега) - там кнопка была бы сломана.
+        campaignId = campaignId || document.getElementById('campaignDetailModal')?.dataset.campaignId;
+        if (!campaignId) return;
+
         // Закрываем детали
         this.closeCampaignDetailModal();
         
@@ -873,6 +896,12 @@ App.campaigns = {
     // Экспорт результатов кампании
     // =============================================
     async exportCampaignResults(campaignId) {
+        // См. комментарий в openAssignContactsModal() выше - тот же фолбэк
+        // на dataset.campaignId, чтобы кнопка "Экспорт" в подвале модалки
+        // деталей работала на любой вкладке, где эта модалка открыта.
+        campaignId = campaignId || document.getElementById('campaignDetailModal')?.dataset.campaignId;
+        if (!campaignId) return;
+
         try {
             const response = await App.apiGet(`/campaigns/${campaignId}/export`);
             
