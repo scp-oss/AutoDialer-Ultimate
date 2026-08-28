@@ -274,7 +274,26 @@ same => n,Goto(menu_done)
 same => n(menu_installer_default),Background(tts/menu_prompt_default)
 same => n,Goto(menu_done)
 same => n(menu_custom),Background(tts/menu_prompt)
-same => n(menu_done),WaitExten(\${DTMF_TIMEOUT})
+; WaitExten() тут ломался живьём подтверждённым багом: Dial()+U()-Gosub +
+; WaitExten'ов встроенный переход "цифра совпала с расширением" ломает учёт
+; стека в app_stack.c (Abnormal Gosub exit) даже когда DTMF доходит
+; идеально (подтверждено rtp/core debug трейсом - полный RFC2833-набор с
+; end=1, и тут же обрыв вместо перехода на exten => 1,1). Background()'ово
+; прерывание по цифре (используется выше, для питча и для этой же фразы
+; меню) устроено иначе и не подвержено этому. Read() читает цифру в
+; переменную без всякой попытки прыгать по расширениям сама - переход на
+; обработчик делаем сами обычным Goto(), безопасным внутри Gosub всегда.
+same => n(menu_done),Read(DTMF_DIGIT,,1,,,\${DTMF_TIMEOUT})
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="1"]?1,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="2"]?2,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="3"]?3,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="4"]?4,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="5"]?5,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="6"]?6,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="7"]?7,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="8"]?8,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="9"]?9,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="0"]?0,1)
 same => n,Goto(s,announce_only)
 
 same => n(announce_only),NoOp(=== DTMF отключен для кампании \${CAMPAIGN_ID} - чистое объявление ===)
@@ -308,7 +327,18 @@ same => n(hangup),Hangup()
 exten => 3,1,NoOp(=== DTMF 3: Повтор ===)
 same => n,Set(CDR(userfield)=\${CDR(userfield)},dtmf=3)
 same => n,Background(\${AUDIO_FILE})
-same => n,WaitExten(\${DTMF_TIMEOUT})
+; Тот же баг Dial()+U()+WaitExten - см. комментарий у первого Read() выше.
+same => n,Read(DTMF_DIGIT,,1,,,\${DTMF_TIMEOUT})
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="1"]?1,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="2"]?2,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="3"]?3,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="4"]?4,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="5"]?5,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="6"]?6,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="7"]?7,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="8"]?8,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="9"]?9,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="0"]?0,1)
 
 ; DTMF 4 - Запрос оператора
 exten => 4,1,NoOp(=== DTMF 4: Запрос оператора ===)
@@ -372,7 +402,18 @@ same => n,Set(CDR(userfield)=\${CDR(userfield)},dtmf=invalid)
 same => n,UserEvent(DialerResult,Status: invalid_dtmf,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},DTMF: \${INVALID_EXTEN},LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Playback(invalid)
 same => n,Background(\${AUDIO_FILE})
-same => n,WaitExten(\${DTMF_TIMEOUT})
+; Тот же баг Dial()+U()+WaitExten - см. комментарий у первого Read() выше.
+same => n,Read(DTMF_DIGIT,,1,,,\${DTMF_TIMEOUT})
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="1"]?1,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="2"]?2,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="3"]?3,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="4"]?4,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="5"]?5,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="6"]?6,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="7"]?7,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="8"]?8,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="9"]?9,1)
+same => n,GotoIf(\$["\${DTMF_DIGIT}"="0"]?0,1)
 
 ; Абонент мог повесить трубку, не дожидаясь WaitExten и не нажав ничего -
 ; тогда ни один UserEvent(DialerResult,...) выше не выполняется вовсе.
