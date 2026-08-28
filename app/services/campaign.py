@@ -737,11 +737,15 @@ class CampaignService:
             # запуск перезаписывает), это и есть та самая история "когда
             # запускали, когда завершился", которую видно на вкладке
             # "История обзвонов".
+            # audio_id - аудио кампании НА МОМЕНТ этого конкретного запуска
+            # (campaign['audio_id']), а не то, что может стоять у кампании
+            # позже - иначе get_campaign_run()'s "X из Y" сравнивал бы старые
+            # запуски с уже сменившимся аудио.
             run_id = await conn.fetchval("""
-                INSERT INTO campaign_runs (campaign_id, status, total_contacts, started_by)
-                VALUES ($1, 'running', $2, $3)
+                INSERT INTO campaign_runs (campaign_id, status, total_contacts, started_by, audio_id)
+                VALUES ($1, 'running', $2, $3, $4)
                 RETURNING id
-            """, campaign_id, len(contacts), user_id)
+            """, campaign_id, len(contacts), user_id, campaign['audio_id'])
 
             await self._log_audit(conn, user_id, 'campaign_started', 'campaign', campaign_id, {
                 'contacts_count': len(contacts),
@@ -1384,19 +1388,20 @@ class CampaignService:
         """Детали одного запуска - статистика + звонки, попавшие именно в его временное окно"""
         async with self.db_pool.acquire() as conn:
             # a.duration - длительность аудио, которое реально проигрывается
-            # звонящим (campaigns.audio_id), нужна фронту, чтобы можно было
-            # сравнить с call_results.duration и понять, дослушал ли абонент
-            # сообщение целиком или бросил трубку на середине (например,
-            # файл 40с, а звонок длился всего 10с). Это аудио ТЕКУЩЕЕ для
-            # кампании на момент запроса - если его сменили уже после этого
-            # запуска, длительность будет от нового файла, не от того, что
-            # реально звучало в момент звонка; полная точность потребовала
-            # бы отдельной колонки audio_id в самой campaign_runs.
+            # звонящим, нужна фронту, чтобы можно было сравнить с
+            # call_results.duration и понять, дослушал ли абонент сообщение
+            # целиком или бросил трубку на середине (например, файл 40с, а
+            # звонок длился всего 10с). COALESCE(cr.audio_id, c.audio_id) -
+            # cr.audio_id снимается на момент КОНКРЕТНОГО запуска (см.
+            # start_campaign()), так что смена аудио кампании между
+            # запусками больше не искажает старые запуски; запуски,
+            # сделанные ДО добавления этой колонки, имеют cr.audio_id=NULL и
+            # по-прежнему падают на текущее аудио кампании как раньше.
             row = await conn.fetchrow("""
                 SELECT cr.*, c.name as campaign_name, a.duration as audio_duration
                 FROM campaign_runs cr
                 JOIN campaigns c ON c.id = cr.campaign_id
-                LEFT JOIN audio_files a ON a.id = c.audio_id
+                LEFT JOIN audio_files a ON a.id = COALESCE(cr.audio_id, c.audio_id)
                 WHERE cr.id = $1
             """, run_id)
 

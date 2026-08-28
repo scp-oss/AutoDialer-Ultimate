@@ -148,7 +148,14 @@ CREATE TABLE IF NOT EXISTS campaign_runs (
     status VARCHAR(50) NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'stopped', 'failed')),
     total_contacts INTEGER NOT NULL DEFAULT 0,
     processed_contacts INTEGER NOT NULL DEFAULT 0,
-    started_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+    started_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    -- Аудио кампании НА МОМЕНТ этого запуска, а не сейчас - campaigns.audio_id
+    -- может смениться между запусками, и get_campaign_run()'s "X из Y" в
+    -- истории раньше всегда сравнивал(о) с ТЕКУЩИМ аудио кампании, даже
+    -- для старых запусков, сделанных с другим файлом. Без FK тут же (как и
+    -- campaigns.audio_id выше) - audio_files объявлена ниже по файлу, FK
+    -- добавлен отдельным ALTER TABLE рядом с fk_campaigns_audio.
+    audio_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_campaign_runs_campaign_id ON campaign_runs(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_campaign_runs_started_at ON campaign_runs(started_at DESC);
@@ -452,6 +459,9 @@ CREATE TABLE IF NOT EXISTS audio_usage (
 );
 
 ALTER TABLE campaigns ADD CONSTRAINT fk_campaigns_audio
+    FOREIGN KEY (audio_id) REFERENCES audio_files(id) ON DELETE SET NULL;
+
+ALTER TABLE campaign_runs ADD CONSTRAINT fk_campaign_runs_audio
     FOREIGN KEY (audio_id) REFERENCES audio_files(id) ON DELETE SET NULL;
 
 -- =============================================
