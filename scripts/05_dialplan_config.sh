@@ -428,7 +428,9 @@ same => n,GotoIf(\$["\${DTMF_DIGIT}"="0"]?0,1)
 ; Обработчик завершения звонка
 ; =============================================
 [hangup-handler]
-exten => s,1,NoOp(=== Канал \${CHANNEL} завершён ===)
+; HANGUPCAUSE/CHANNEL(hangupsource) прямо в NoOp - чтобы при живом обрыве
+; звонка было видно прямо в консоли, КТО реально повесил трубку.
+exten => s,1,NoOp(=== Канал \${CHANNEL} завершён === HangupCause: \${HANGUPCAUSE} HangupSource: \${CHANNEL(hangupsource)} ===)
 ; Без своего "Channel:" - у любого AMI-события (включая UserEvent) уже
 ; есть нативный заголовок "Channel:", который Asterisk добавляет всегда.
 ; Дублирующий заголовок с тем же именем заставляет panoramisk хранить

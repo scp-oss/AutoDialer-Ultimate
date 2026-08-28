@@ -346,8 +346,8 @@ cat > /etc/asterisk/extensions.conf << 'EOF'
 ; Без префикса "PJSIP/" - см. Dial() в 05_dialplan_config.sh, который
 ; заменяет этот файл-плейсхолдер, для объяснения формата.
 TRUNK_NAME = 291_endpoint
-CALL_TIMEOUT = 30
-DTMF_TIMEOUT = 10
+CALL_TIMEOUT = 90
+DTMF_TIMEOUT = 8
 
 [default]
 exten => _X.,1,NoOp(Unhandled call to ${EXTEN})

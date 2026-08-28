@@ -463,7 +463,7 @@ load_env_safe() {
     export FREEPBX_EXTENSION="${FREEPBX_EXTENSION:-291}"
     export MAX_CALLS="${MAX_CALLS:-50}"
     export DEFAULT_CPS="${DEFAULT_CPS:-5.0}"
-    export CALL_TIMEOUT="${CALL_TIMEOUT:-30}"
+    export CALL_TIMEOUT="${CALL_TIMEOUT:-90}"
     export MAX_RETRIES="${MAX_RETRIES:-3}"
     export TTS_VOICE="${TTS_VOICE:-denis}"
     
