@@ -1175,29 +1175,57 @@ class SettingsService:
     ) -> Dict[str, Any]:
         """
         Сбросить все настройки категории.
-        
+
         Args:
             category: Категория
             user_id: ID пользователя
-        
+
         Returns:
             Результат сброса
         """
         reset_count = 0
         errors = []
-        
+
         for key, definition in SYSTEM_SETTINGS.items():
             if definition.category.value != category:
                 continue
-            
+
             try:
                 await self.update_setting(key, str(definition.default_value), user_id)
                 reset_count += 1
             except Exception as e:
                 errors.append({"key": key, "error": str(e)})
-        
+
         return {
             "category": category,
+            "reset": reset_count,
+            "errors": errors
+        }
+
+    async def reset_all_settings(
+        self,
+        user_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Сбросить ВСЕ настройки к значениям по умолчанию.
+
+        Args:
+            user_id: ID пользователя
+
+        Returns:
+            Результат сброса
+        """
+        reset_count = 0
+        errors = []
+
+        for key, definition in SYSTEM_SETTINGS.items():
+            try:
+                await self.update_setting(key, str(definition.default_value), user_id)
+                reset_count += 1
+            except Exception as e:
+                errors.append({"key": key, "error": str(e)})
+
+        return {
             "reset": reset_count,
             "errors": errors
         }

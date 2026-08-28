@@ -623,9 +623,11 @@ const SettingsModule = {
     },
     
     // Сброс настроек
+    // Подтверждение уже получено через модалку settingsResetModal
+    // (см. confirmResetBtn в attachEventListeners) - лишний нативный
+    // confirm() здесь показывал ВТОРОЙ, дублирующий диалог поверх уже
+    // подтверждённого действия.
     async resetToDefaults() {
-        if (!confirm('Сбросить все настройки к значениям по умолчанию?')) return;
-        
         try {
             const response = await authFetch(`${API_BASE}/settings/reset`, {
                 method: 'POST'
@@ -706,6 +708,23 @@ const SettingsModule = {
         document.getElementById('settingsSaveAllBtn')?.addEventListener('click', () => this.saveAllSettings());
         document.getElementById('restartServicesBtn')?.addEventListener('click', () => this.restartServices());
         document.getElementById('saveJsonBtn')?.addEventListener('click', () => this.saveJson());
+
+        // "Сбросить" - открывает модалку подтверждения; сам сброс происходит
+        // по клику на confirmResetBtn внутри неё. Обе кнопки существуют в
+        // settings.html и вызывают полностью реализованный resetToDefaults(),
+        // но ни одна из них раньше не была привязана ни здесь, ни где-либо
+        // ещё (инлайн-<script> внутри settings.html никогда не выполняется -
+        // он попадает в DOM через innerHTML при переключении вкладок, а
+        // браузеры не исполняют так вставленные <script>) - кнопка была
+        // полностью мёртвой, подтверждено отсутствием единого обработчика
+        // в коде.
+        document.getElementById('settingsResetBtn')?.addEventListener('click', () => {
+            App.showModal('settingsResetModal');
+        });
+        document.getElementById('confirmResetBtn')?.addEventListener('click', () => {
+            this.resetToDefaults();
+            App.hideModal('settingsResetModal');
+        });
         
         // Закрытие модальных окон
         document.querySelectorAll('.close-modal').forEach(btn => {

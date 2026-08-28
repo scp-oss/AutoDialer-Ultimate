@@ -183,7 +183,6 @@ App.campaigns = {
                 <td>
                     <span class="status-badge status-${c.status}">${this.getStatusText(c.status)}</span>
                 </td>
-                <td>${c.dialer_settings?.max_calls || 10}</td>
                 <td>${c.dialer_settings?.cps || 1}</td>
                 <td>
                     <div class="progress-container">
@@ -343,7 +342,6 @@ App.campaigns = {
             document.getElementById('campaignId').value = campaign.id;
             document.getElementById('campaignName').value = campaign.name || '';
             document.getElementById('campaignDescription').value = campaign.description || '';
-            document.getElementById('campaignMaxCalls').value = campaign.dialer_settings?.max_calls || 10;
             document.getElementById('campaignCps').value = campaign.dialer_settings?.cps || 1;
             document.getElementById('campaignCallTimeout').value = campaign.dialer_settings?.call_timeout || 90;
             document.getElementById('campaignCallerId').value = campaign.dialer_settings?.caller_id || '';
@@ -381,7 +379,6 @@ App.campaigns = {
             document.getElementById('campaignForm').reset();
             
             // Значения по умолчанию
-            document.getElementById('campaignMaxCalls').value = 10;
             document.getElementById('campaignCps').value = 1;
             document.getElementById('campaignCallTimeout').value = 90;
             document.getElementById('retryBusyMax').value = 2;
@@ -444,7 +441,6 @@ App.campaigns = {
         const id = document.getElementById('campaignId')?.value;
         const name = document.getElementById('campaignName')?.value?.trim();
         const description = document.getElementById('campaignDescription')?.value?.trim();
-        const maxCalls = parseInt(document.getElementById('campaignMaxCalls')?.value) || 10;
         const cps = parseInt(document.getElementById('campaignCps')?.value) || 1;
         const callTimeout = parseInt(document.getElementById('campaignCallTimeout')?.value) || 90;
         const callerId = document.getElementById('campaignCallerId')?.value?.trim();
@@ -455,11 +451,6 @@ App.campaigns = {
         // Валидация
         if (!name) {
             App.showToast('Введите название обзвона', 'warning');
-            return;
-        }
-        
-        if (maxCalls < 1 || maxCalls > 100) {
-            App.showToast('Количество каналов должно быть от 1 до 100', 'warning');
             return;
         }
         
@@ -518,7 +509,6 @@ App.campaigns = {
         // остальные настройки (dial_mode, таймауты и т.п.), не выставляемые в этой форме.
         const dialerSettings = {
             ...(this.state.selectedCampaign?.dialer_settings || {}),
-            max_calls: maxCalls,
             cps,
             call_timeout: callTimeout,
             caller_id: callerId || null,
@@ -724,7 +714,6 @@ App.campaigns = {
                             <tr><td>ID:</td><td>${campaign.id}</td></tr>
                             <tr><td>Статус:</td><td><span class="status-badge status-${campaign.status}">${this.getStatusText(campaign.status)}</span></td></tr>
                             <tr><td>Описание:</td><td>${this.escapeHtml(campaign.description || '—')}</td></tr>
-                            <tr><td>Макс. каналов:</td><td>${campaign.dialer_settings?.max_calls || 10}</td></tr>
                             <tr><td>CPS:</td><td>${campaign.dialer_settings?.cps || 1}</td></tr>
                             <tr><td>Caller ID:</td><td>${this.escapeHtml(campaign.dialer_settings?.caller_id || '—')}</td></tr>
                             <tr><td>Создана:</td><td>${App.formatDateTime(campaign.created_at)}</td></tr>

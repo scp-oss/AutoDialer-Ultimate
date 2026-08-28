@@ -316,6 +316,11 @@ small {
 }
 
 .kill-switch {
+    /* Admin-only (see .admin-only / applyRoleBasedUI() in app.js) - never
+       shown to non-admin accounts. Still solid red so an admin recognizes
+       it as a destructive action, but no glowing box-shadow "beacon" and
+       no hover scale-up - it doesn't need to shout at the one role that's
+       allowed to see it at all. */
     background: linear-gradient(135deg, #f0466e, #dc2626);
     color: white;
     border: none;
@@ -327,12 +332,10 @@ small {
     transition: all var(--transition-fast);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    box-shadow: 0 6px 16px rgba(240, 70, 110, 0.35);
 }
 
 .kill-switch:hover {
     filter: brightness(1.1);
-    transform: scale(1.02);
 }
 
 /* ============================================= */

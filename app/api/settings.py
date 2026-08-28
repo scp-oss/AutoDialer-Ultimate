@@ -64,6 +64,13 @@ async def bulk_update_settings(
     return await settings_service.bulk_update_settings(request.settings, admin.user_id)
 
 
+@router.post("/reset")
+async def reset_all_settings(admin: TokenData = Depends(require_admin)):
+    """Сбросить ВСЕ настройки к значениям по умолчанию (admin only)"""
+    settings_service = get_settings_service()
+    return await settings_service.reset_all_settings(admin.user_id)
+
+
 @router.get("/categories")
 async def get_setting_categories(user: TokenData = Depends(get_current_user)):
     """Получить категории настроек"""
