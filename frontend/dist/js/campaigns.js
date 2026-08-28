@@ -348,7 +348,7 @@ App.campaigns = {
             document.getElementById('campaignCallerId').value = campaign.dialer_settings?.caller_id || '';
             document.getElementById('campaignAudioSelect').value = campaign.dialer_settings?.audio_id || '';
             document.getElementById('campaignDtmfEnabled').checked = campaign.dialer_settings?.dtmf_enabled !== false;
-            document.getElementById('campaignDtmfTimeout').value = campaign.dialer_settings?.dtmf_timeout || 5;
+            document.getElementById('campaignDtmfTimeout').value = campaign.dialer_settings?.dtmf_timeout || 8;
 
             // Стратегия повторных звонков
             if (campaign.retry_strategy) {
@@ -447,7 +447,7 @@ App.campaigns = {
         const callerId = document.getElementById('campaignCallerId')?.value?.trim();
         const audioId = document.getElementById('campaignAudioSelect')?.value;
         const dtmfEnabled = document.getElementById('campaignDtmfEnabled')?.checked ?? true;
-        const dtmfTimeout = parseInt(document.getElementById('campaignDtmfTimeout')?.value) || 5;
+        const dtmfTimeout = parseInt(document.getElementById('campaignDtmfTimeout')?.value) || 8;
 
         // Валидация
         if (!name) {

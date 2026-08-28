@@ -275,7 +275,7 @@ class CampaignService:
                     audio_id=row['audio_id'],
                     audio_name=row['audio_name'],
                     dtmf_enabled=row['dtmf_enabled'] if row['dtmf_enabled'] is not None else True,
-                    dtmf_timeout=row['dtmf_timeout'] if row['dtmf_timeout'] is not None else 5
+                    dtmf_timeout=row['dtmf_timeout'] if row['dtmf_timeout'] is not None else 8
                 ),
                 retry_strategy=RetryStrategySchema(**retry_strategy) if retry_strategy else None,
                 schedule=CampaignScheduleSchema(**schedule) if schedule else None,
@@ -554,7 +554,7 @@ class CampaignService:
                         audio_id=row['audio_id'],
                         audio_name=row['audio_name'],
                         dtmf_enabled=row['dtmf_enabled'] if row['dtmf_enabled'] is not None else True,
-                        dtmf_timeout=row['dtmf_timeout'] if row['dtmf_timeout'] is not None else 5
+                        dtmf_timeout=row['dtmf_timeout'] if row['dtmf_timeout'] is not None else 8
                     ),
                     retry_strategy=RetryStrategySchema(**retry_strategy) if retry_strategy else None,
                     schedule=CampaignScheduleSchema(**schedule) if schedule else None,

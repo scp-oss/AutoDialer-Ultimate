@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     caller_id VARCHAR(80),
     caller_id_number VARCHAR(20),
     dtmf_enabled BOOLEAN DEFAULT TRUE,
-    dtmf_timeout INTEGER DEFAULT 5,
+    dtmf_timeout INTEGER DEFAULT 8,
     retry_strategy JSONB DEFAULT '{"busy": 2, "noanswer": 3, "failed": 1, "timeout": 1}',
     schedule JSONB,
     metadata JSONB DEFAULT '{}',

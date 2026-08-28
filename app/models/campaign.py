@@ -222,7 +222,7 @@ class DialerSettingsSchema(BaseSchema):
     
     # DTMF настройки
     dtmf_enabled: bool = Field(True, description="Меню DTMF (1/2/4) после приветствия - если выключено, звонок просто проигрывает объявление и завершается")
-    dtmf_timeout: int = Field(5, ge=1, le=30, description="Таймаут ожидания DTMF (сек)")
+    dtmf_timeout: int = Field(8, ge=1, le=30, description="Таймаут ожидания DTMF (сек)")
     dtmf_interdigit_timeout: int = Field(3, ge=1, le=10, description="Таймаут между цифрами (сек)")
     
     # Запись звонков
