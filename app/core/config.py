@@ -193,7 +193,18 @@ class Settings(BaseSettings):
     MAX_CPS: int = Field(50, ge=1, le=200, description="Максимальный CPS")
     MIN_CPS: float = Field(0.5, ge=0.1, le=10, description="Минимальный CPS")
     
-    CALL_TIMEOUT: int = Field(30, ge=5, le=300, description="Таймаут звонка (сек)")
+    # Раньше 30 - на живых звонках подтверждено, что AMI Originate 'Timeout'
+    # (в dialer.py: timeout_ms = self.call_timeout * 1000), в отличие от
+    # задокументированного поведения, на практике действует не только на
+    # ожидание ответа, а как абсолютный потолок на ВЕСЬ звонок - включая
+    # AMD (~5с) + питч + фразу меню + ожидание DTMF, которые целиком идут
+    # ПОСЛЕ ответа. Подтверждено живьём: звонок обрывался Asterisk'ом
+    # изнутри (HangupCause: 16, HangupSource: пусто, никакого входящего BYE
+    # в SIP-логе) стабильно на границе конца фразы меню - именно там, где
+    # суммарное время с начала Originate (с учётом digest-авторизации)
+    # подбиралось к 30с. Подняли с запасом, чтобы AMD+питч+меню+ожидание
+    # DTMF заведомо укладывались с большим запасом.
+    CALL_TIMEOUT: int = Field(90, ge=5, le=300, description="Таймаут звонка (сек)")
     CALLER_ID: str = Field("AutoDialer", description="Caller ID по умолчанию")
     CALLER_ID_NUMBER: str = Field("", description="Номер Caller ID")
     

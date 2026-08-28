@@ -45,7 +45,7 @@ fi
 # Установка значений по умолчанию
 # =============================================
 FREEPBX_EXTENSION="${FREEPBX_EXTENSION:-291}"
-CALL_TIMEOUT="${CALL_TIMEOUT:-30}"
+CALL_TIMEOUT="${CALL_TIMEOUT:-90}"
 DTMF_TIMEOUT="${DTMF_TIMEOUT:-8}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
 # CALLERID(num) должен быть настоящим номером/добавочным - реальные
