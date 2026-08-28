@@ -55,7 +55,7 @@
                     <th width="150">Прогресс</th>
                     <th width="80">Конверсия</th>
                     <th width="120">Создана</th>
-                    <th width="180">Действия</th>
+                    <th width="260">Действия</th>
                 </tr>
             </thead>
             <tbody id="campaignsTableBody">
@@ -465,14 +465,25 @@
     }
     
     /* Actions Cell */
-    .actions-cell {
-        white-space: nowrap;
-    }
-    
     .action-buttons {
         display: flex;
         gap: var(--spacing-xs);
         flex-wrap: wrap;
+        align-items: center;
+    }
+
+    /* Кнопки теперь с текстовой подписью (не только эмодзи) - на узкой
+       колонке при 3-4 кнопках сразу это будет 2 строки, а не 1. Раньше
+       .actions-cell имел white-space: nowrap, что не мешает переносу
+       flex-элементов, но визуально "оторвавшаяся" последняя кнопка
+       (например 🗑️ Удалить) уходила на новую строку без выравнивания -
+       белый zero-margin делал её похожей на отдельный, сломанный элемент,
+       а не на вторую строку того же блока кнопок (подтверждено
+       скриншотом). nowrap здесь не нужен - убираем.
+       min-width на кнопках не даём им сжиматься до нечитаемой ширины
+       на маленьких экранах. */
+    .action-buttons .btn {
+        white-space: nowrap;
     }
     
     /* Form Sections */

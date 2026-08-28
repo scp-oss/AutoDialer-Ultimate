@@ -199,41 +199,41 @@ App.campaigns = {
                 <td class="actions-cell">
                     <div class="action-buttons">
                         <button class="btn btn-sm btn-outline" onclick="App.campaigns.viewCampaignDetail(${c.id})" title="Просмотр">
-                            👁️
+                            👁️ Просмотр
                         </button>
                         ${c.status === 'draft' ? `
                             <button class="btn btn-sm btn-success" onclick="App.campaigns.startCampaign(${c.id})" title="Запустить">
-                                ▶️
+                                ▶️ Запустить
                             </button>
                         ` : ''}
                         ${['completed', 'stopped', 'failed'].includes(c.status) ? `
                             <button class="btn btn-sm btn-success" onclick="App.campaigns.restartCampaign(${c.id})" title="Запустить снова (обзвонит всех заново)">
-                                🔁
+                                🔁 Заново
                             </button>
                         ` : ''}
                         ${c.status === 'running' ? `
                             <button class="btn btn-sm btn-warning" onclick="App.campaigns.pauseCampaign(${c.id})" title="Пауза">
-                                ⏸️
+                                ⏸️ Пауза
                             </button>
                             ${App.auth.isAdmin() ? `
                                 <button class="btn btn-sm btn-danger" onclick="App.campaigns.stopCampaign(${c.id})" title="Остановить">
-                                    ⏹️
+                                    ⏹️ Стоп
                                 </button>
                             ` : ''}
                         ` : ''}
                         ${c.status === 'paused' ? `
                             <button class="btn btn-sm btn-success" onclick="App.campaigns.resumeCampaign(${c.id})" title="Продолжить">
-                                ▶️
+                                ▶️ Продолжить
                             </button>
                         ` : ''}
                         ${App.auth.isOperator() && c.status !== 'running' ? `
                             <button class="btn btn-sm btn-outline" onclick="App.campaigns.editCampaign(${c.id})" title="Редактировать">
-                                ✏️
+                                ✏️ Изменить
                             </button>
                         ` : ''}
                         ${App.auth.isAdmin() && c.status !== 'running' ? `
                             <button class="btn btn-sm btn-outline-danger" onclick="App.campaigns.deleteCampaign(${c.id})" title="Удалить">
-                                🗑️
+                                🗑️ Удалить
                             </button>
                         ` : ''}
                     </div>
