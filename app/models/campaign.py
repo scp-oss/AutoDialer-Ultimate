@@ -211,7 +211,14 @@ class DialerSettingsSchema(BaseSchema):
     cps: int = Field(5, ge=1, le=100, description="Звонков в секунду (CPS)")
     dial_mode: DialMode = Field(DialMode.PREDICTIVE, description="Режим дозвона")
     
-    call_timeout: int = Field(30, ge=5, le=300, description="Таймаут звонка (сек)")
+    # Раньше 30, как и глобальный CALL_TIMEOUT (см. app/core/config.py) -
+    # это поле нигде не читалось при звонке (dialer.py брал только
+    # settings.CALL_TIMEOUT), так что значение 30 было безобидным мёртвым
+    # кодом. Теперь оно реально используется (см. _start_call), так что
+    # дефолт синхронизирован с глобальным - иначе после включения чтения
+    # каждая существующая кампания со старым значением 30 вернула бы
+    # тот самый баг с преждевременным обрывом звонка на 30-й секунде.
+    call_timeout: int = Field(90, ge=5, le=300, description="Таймаут звонка (сек)")
     answer_timeout: int = Field(60, ge=10, le=600, description="Таймаут ожидания ответа (сек)")
     
     caller_id: Optional[str] = Field(None, max_length=80, description="Caller ID")
@@ -235,7 +242,7 @@ class DialerSettingsSchema(BaseSchema):
                 "max_calls": 30,
                 "cps": 5,
                 "dial_mode": "predictive",
-                "call_timeout": 30,
+                "call_timeout": 90,
                 "answer_timeout": 60,
                 "caller_id": "AutoDialer Campaign",
                 "record_calls": True

@@ -296,7 +296,10 @@ same => n,GotoIf(\$["\${DTMF_DIGIT}"="9"]?9,1)
 same => n,GotoIf(\$["\${DTMF_DIGIT}"="0"]?0,1)
 same => n,Goto(s,announce_only)
 
-same => n(announce_only),NoOp(=== DTMF отключен для кампании \${CAMPAIGN_ID} - чистое объявление ===)
+; Общая метка для DTMF_ENABLED=0 и "дождались Read(), ввода не было" -
+; текст ниже теперь верно отличает эти два случая (раньше всегда говорил
+; "отключен", даже когда DTMF был включён - статус в БД не менялся).
+same => n(announce_only),NoOp(=== \${IF(\$["\${DTMF_ENABLED}"="0"]?DTMF отключен для кампании \${CAMPAIGN_ID} - чистое объявление:Кампания \${CAMPAIGN_ID} - дождались конца ожидания DTMF, ввода не было)} ===)
 same => n,UserEvent(DialerResult,Status: announced,Campaign: \${CAMPAIGN_ID},Phone: \${ORIGINAL_PHONE},RetryCount: \${RETRY_COUNT},LinkedID: \${CHANNEL(linkedid)},Duration: \$[\${EPOCH} - \${ANSWER_EPOCH}])
 same => n,Hangup()
 

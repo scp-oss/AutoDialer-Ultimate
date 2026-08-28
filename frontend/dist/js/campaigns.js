@@ -345,6 +345,7 @@ App.campaigns = {
             document.getElementById('campaignDescription').value = campaign.description || '';
             document.getElementById('campaignMaxCalls').value = campaign.dialer_settings?.max_calls || 10;
             document.getElementById('campaignCps').value = campaign.dialer_settings?.cps || 1;
+            document.getElementById('campaignCallTimeout').value = campaign.dialer_settings?.call_timeout || 90;
             document.getElementById('campaignCallerId').value = campaign.dialer_settings?.caller_id || '';
             document.getElementById('campaignAudioSelect').value = campaign.dialer_settings?.audio_id || '';
             document.getElementById('campaignDtmfEnabled').checked = campaign.dialer_settings?.dtmf_enabled !== false;
@@ -382,6 +383,7 @@ App.campaigns = {
             // Значения по умолчанию
             document.getElementById('campaignMaxCalls').value = 10;
             document.getElementById('campaignCps').value = 1;
+            document.getElementById('campaignCallTimeout').value = 90;
             document.getElementById('retryBusyMax').value = 2;
             document.getElementById('retryBusyDelay').value = 300;
             document.getElementById('retryNoanswerMax').value = 3;
@@ -444,6 +446,7 @@ App.campaigns = {
         const description = document.getElementById('campaignDescription')?.value?.trim();
         const maxCalls = parseInt(document.getElementById('campaignMaxCalls')?.value) || 10;
         const cps = parseInt(document.getElementById('campaignCps')?.value) || 1;
+        const callTimeout = parseInt(document.getElementById('campaignCallTimeout')?.value) || 90;
         const callerId = document.getElementById('campaignCallerId')?.value?.trim();
         const audioId = document.getElementById('campaignAudioSelect')?.value;
         const dtmfEnabled = document.getElementById('campaignDtmfEnabled')?.checked ?? true;
@@ -462,6 +465,11 @@ App.campaigns = {
         
         if (cps < 0.1 || cps > 50) {
             App.showToast('CPS должен быть от 0.1 до 50', 'warning');
+            return;
+        }
+
+        if (callTimeout < 5 || callTimeout > 300) {
+            App.showToast('Таймаут звонка должен быть от 5 до 300 секунд', 'warning');
             return;
         }
 
@@ -512,6 +520,7 @@ App.campaigns = {
             ...(this.state.selectedCampaign?.dialer_settings || {}),
             max_calls: maxCalls,
             cps,
+            call_timeout: callTimeout,
             caller_id: callerId || null,
             audio_id: audioId || null,
             dtmf_enabled: dtmfEnabled,

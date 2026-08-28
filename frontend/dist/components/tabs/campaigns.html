@@ -127,8 +127,19 @@
                                    value="1">
                             <small>Скорость набора</small>
                         </div>
+
+                        <div class="form-group">
+                            <label>Таймаут звонка (сек)</label>
+                            <input type="number"
+                                   id="campaignCallTimeout"
+                                   class="form-control"
+                                   min="5"
+                                   max="300"
+                                   value="90">
+                            <small>Сколько максимум длится попытка дозвона (от набора номера до ответа/меню), прежде чем считать звонок неудавшимся</small>
+                        </div>
                     </div>
-                    
+
                     <div class="form-row">
                         <div class="form-group">
                             <label>Caller ID</label>

@@ -1086,28 +1086,42 @@ class DialerManager:
         # NULL (кампания создана/отредактирована до этой правки) - тоже
         # используем глобальное значение по умолчанию в диалплане, просто
         # не переопределяем его вообще (см. Gosub-аргумент ниже).
+        # call_timeout - тем же путём. Раньше это поле в campaigns
+        # существовало и заполнялось через API, но нигде не читалось -
+        # dialer.py всегда брал только settings.CALL_TIMEOUT (глобальный) и
+        # для AMI Originate Timeout, и, через отсутствие __CALL_TIMEOUT,
+        # дальплан тоже падал на глобальный [globals] CALL_TIMEOUT. Именно
+        # этот Originate Timeout оказался настоящей причиной звонков,
+        # обрывавшихся Asterisk'ом изнутри без всякого BYE (см. историю
+        # починки CALL_TIMEOUT 30->90) - если кампания теперь задаёт свой
+        # call_timeout, он должен реально применяться к обоим местам.
         dtmf_enabled = True
         dtmf_timeout = None
+        call_timeout = None
         if campaign_id > 0:
             try:
                 async with self.db_pool.acquire() as conn:
                     row = await conn.fetchrow(
-                        "SELECT dtmf_enabled, dtmf_timeout FROM campaigns WHERE id = $1", campaign_id
+                        "SELECT dtmf_enabled, dtmf_timeout, call_timeout FROM campaigns WHERE id = $1", campaign_id
                     )
                     if row:
                         if row['dtmf_enabled'] is not None:
                             dtmf_enabled = row['dtmf_enabled']
                         if row['dtmf_timeout'] is not None:
                             dtmf_timeout = row['dtmf_timeout']
+                        if row['call_timeout'] is not None:
+                            call_timeout = row['call_timeout']
             except Exception as e:
-                logger.warning(f"Не удалось прочитать dtmf_enabled/dtmf_timeout для кампании {campaign_id}: {e}")
+                logger.warning(f"Не удалось прочитать dtmf_enabled/dtmf_timeout/call_timeout для кампании {campaign_id}: {e}")
 
         try:
             # Originate
-            timeout_ms = self.call_timeout * 1000
+            timeout_ms = (call_timeout if call_timeout else self.call_timeout) * 1000
             setvar = f'__CAMPAIGN_ID={campaign_id},__RETRY_COUNT={retry},__DTMF_ENABLED={1 if dtmf_enabled else 0}'
             if dtmf_timeout:
                 setvar += f',__DTMF_TIMEOUT={dtmf_timeout}'
+            if call_timeout:
+                setvar += f',__CALL_TIMEOUT={call_timeout}'
             if traceparent:
                 setvar += f',__TRACEPARENT={traceparent}'
 
