@@ -34,6 +34,11 @@ async def list_audit_logs(
     entity_id: Optional[int] = None,
     date_range: DateRangeParams = Depends(),
     search: Optional[str] = None,
+    # По умолчанию True: скрываем записи без user_id (входящий звонок,
+    # автоочистка, транскрибация и т.п. - никто их не инициировал) и
+    # оставляем только то, что реально сделал человек. Явно передать
+    # user_actions_only=false, чтобы увидеть системные события тоже.
+    user_actions_only: bool = True,
     admin: TokenData = Depends(require_admin)
 ):
     """Получить аудит логи"""
@@ -49,7 +54,8 @@ async def list_audit_logs(
         entity_id=entity_id,
         from_date=date_range.from_date.date() if date_range.from_date else None,
         to_date=date_range.to_date.date() if date_range.to_date else None,
-        search=search
+        search=search,
+        user_actions_only=user_actions_only
     )
 
     return await audit_service.list_audit_logs(

@@ -273,7 +273,15 @@ class AuditLogFilter(BaseSchema):
     user_id: Optional[int] = Field(None, description="ID пользователя")
     username: Optional[str] = Field(None, description="Имя пользователя")
     user_role: Optional[str] = Field(None, description="Роль")
-    
+
+    # Скрыть автоматические/системные записи (user_id IS NULL - никто их
+    # не инициировал: входящий звонок, автоочистка, транскрибация и т.п.)
+    # и оставить только то, что реально сделал человек - даже действия
+    # категории "система" (admin включил/выключил обзвон, сменил
+    # log-level) остаются видны, если у записи есть свой user_id.
+    user_actions_only: bool = Field(False, description="Только действия с привязкой к пользователю")
+
+
     # Действие
     action: Optional[List[AuditAction]] = Field(None, description="Действия")
     severity: Optional[List[AuditSeverity]] = Field(None, description="Важность")

@@ -384,7 +384,10 @@ class AuditService:
                     where_conditions.append(f"user_role = ${param_idx}")
                     params.append(filter_params.user_role)
                     param_idx += 1
-                
+
+                if filter_params.user_actions_only:
+                    where_conditions.append("user_id IS NOT NULL")
+
                 if filter_params.action:
                     placeholders = ','.join([f"${param_idx + i}" for i in range(len(filter_params.action))])
                     where_conditions.append(f"action IN ({placeholders})")

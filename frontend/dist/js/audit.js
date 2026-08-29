@@ -14,7 +14,12 @@ const AuditModule = {
         username: '',
         dateFrom: '',
         dateTo: '',
-        ipAddress: ''
+        ipAddress: '',
+        // false = бэкенд по умолчанию скрывает записи без user_id
+        // (входящие звонки, автоочистка и т.п. - системные события без
+        // привязки к конкретному человеку). Чекбокс "Показывать системные
+        // события" переключает это в true.
+        showSystem: false
     },
     
     // Инициализация модуля
@@ -263,7 +268,11 @@ const AuditModule = {
             // так что фильтр по датам просто никогда не применялся.
             if (this.filters.dateFrom) url += `&from_date=${this.filters.dateFrom}`;
             if (this.filters.dateTo) url += `&to_date=${this.filters.dateTo}`;
-            
+            // user_actions_only=true у бэкенда по умолчанию (см. app/api/audit.py) -
+            // передаём его явно только когда чекбокс "Показывать системные
+            // события" включён, чтобы отключить фильтрацию.
+            if (this.filters.showSystem) url += `&user_actions_only=false`;
+
             const response = await authFetch(url);
             if (response.ok) {
                 const data = await response.json();
@@ -689,7 +698,11 @@ const AuditModule = {
             // бэкенда вообще не зарегистрирован (405/404). filter здесь -
             // это AuditLogFilter: action - список (даже один выбранный
             // пункт нужно обернуть в массив), даты - from_date/to_date.
-            const filter = {};
+            // AuditLogFilter.user_actions_only по умолчанию false на уровне
+            // модели (в отличие от True на уровне роута GET /audit/) -
+            // передаём его явно, иначе экспорт всегда тянул бы системные
+            // события независимо от чекбокса "Показывать системные события".
+            const filter = { user_actions_only: !this.filters.showSystem };
             if (this.filters.action) filter.action = [this.filters.action];
             if (this.filters.username) filter.username = this.filters.username;
             if (this.filters.ipAddress) filter.ip_address = this.filters.ipAddress;
@@ -700,7 +713,7 @@ const AuditModule = {
                 method: 'POST',
                 body: JSON.stringify({
                     format: 'csv',
-                    filter: Object.keys(filter).length ? filter : null,
+                    filter,
                     max_records: 10000
                 })
             });
@@ -774,28 +787,32 @@ const AuditModule = {
             username: document.getElementById('auditFilterUsername')?.value || '',
             ipAddress: document.getElementById('auditFilterIp')?.value || '',
             dateFrom: document.getElementById('auditFilterDateFrom')?.value || '',
-            dateTo: document.getElementById('auditFilterDateTo')?.value || ''
+            dateTo: document.getElementById('auditFilterDateTo')?.value || '',
+            showSystem: document.getElementById('auditFilterShowSystem')?.checked || false
         };
-        
+
         this.currentPage = 1;
         this.loadAuditLog();
     },
-    
+
     resetFilters() {
         document.getElementById('auditFilterAction').value = '';
         document.getElementById('auditFilterUsername').value = '';
         document.getElementById('auditFilterIp').value = '';
         document.getElementById('auditFilterDateFrom').value = '';
         document.getElementById('auditFilterDateTo').value = '';
-        
+        const showSystemCheckbox = document.getElementById('auditFilterShowSystem');
+        if (showSystemCheckbox) showSystemCheckbox.checked = false;
+
         this.filters = {
             action: '',
             username: '',
             ipAddress: '',
             dateFrom: '',
-            dateTo: ''
+            dateTo: '',
+            showSystem: false
         };
-        
+
         this.currentPage = 1;
         this.loadAuditLog();
     },

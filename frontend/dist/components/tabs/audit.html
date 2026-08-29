@@ -76,6 +76,15 @@
                 </button>
             </div>
         </div>
+
+        <div class="filter-row">
+            <div class="filter-group filter-checkbox">
+                <label>
+                    <input type="checkbox" id="auditFilterShowSystem">
+                    Показывать системные события (входящие звонки, автоочистка, транскрибация и т.п. - без привязки к пользователю)
+                </label>
+            </div>
+        </div>
     </div>
     
     <!-- Статистика -->
@@ -229,7 +238,22 @@
         font-size: 0.8rem;
         color: var(--color-text-muted);
     }
-    
+
+    .filter-checkbox label {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+        cursor: pointer;
+    }
+
+    .filter-checkbox input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+
+
     .filter-actions {
         display: flex;
         gap: var(--spacing-sm);
