@@ -16,8 +16,17 @@ from app.core.database import get_db_pool
 
 async def cleanup_old_audio_files():
     """Очистка аудиофайлов старше N дней"""
-    retention_days = settings.AUDIO_RETENTION_DAYS
-    
+    # audio.retention_days (Настройки → Аудио) раньше сохранялся в БД, но
+    # этот воркер всегда брал settings.AUDIO_RETENTION_DAYS из .env -
+    # значение из веб-интерфейса ни на что не влияло.
+    try:
+        from app.services import get_settings_service
+        retention_days = await get_settings_service().get_setting_value("audio.retention_days")
+        if not retention_days:
+            retention_days = settings.AUDIO_RETENTION_DAYS
+    except Exception:
+        retention_days = settings.AUDIO_RETENTION_DAYS
+
     logger.info(f"Запуск очистки аудиофайлов старше {retention_days} дней")
     
     db_pool = get_db_pool()

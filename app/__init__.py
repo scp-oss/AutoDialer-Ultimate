@@ -174,6 +174,7 @@ from app.services import (
     get_transcription_service,
     get_system_service,
     get_settings_service,
+    get_auth_service,
 )
 
 
@@ -300,7 +301,24 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     
-    # Настраиваем CORS
+    # Настраиваем CORS.
+    #
+    # api.cors_origins (Настройки → API) сохраняется в БД, но НЕ применяется
+    # здесь и не может быть применено даже отложенно из lifespan(), в отличие
+    # от dialer.*/tts.*/transcription.* (см. шаги 5.5-5.9 в lifespan()):
+    # CORSMiddleware конструируется прямо здесь, при создании самого FastAPI-
+    # приложения (create_app()), ДО того как вообще существует подключение к
+    # БД (оно появляется только на шаге 1 внутри lifespan()) - настройки
+    # неоткуда прочитать. Более того, Starlette строит и кеширует финальный
+    # стек middleware (build_middleware_stack()) на первом же ASGI-вызове,
+    # которым является сам lifespan-startup - то есть даже мутация kwargs
+    # у уже добавленного middleware изнутри lifespan() приходит СТРОГО
+    # ПОЗЖЕ, чем стек уже собран, и не даёт эффекта. Единственный вариант
+    # приложить значение из БД - полный перезапуск процесса, ПОСЛЕ того как
+    # архитектура создания приложения станет асинхронной и сможет прочитать
+    # БД до создания CORSMiddleware - за рамками этого фикса. Настройка
+    # помечена requires_restart=True, но честно говоря не подключена вообще:
+    # значение из .env (CORS_ORIGINS) остаётся единственным работающим.
     _app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
@@ -438,10 +456,56 @@ async def lifespan(app: FastAPI):
         _app_state['transcription_service'] = transcription_service
         logger.info(f"✅ Транскрибация: {transcription_service.get_info()['engine']}")
         
+        # 3.5 asterisk.ami_host/ami_port/ami_user/ami_password (Настройки →
+        # Asterisk) сохранялись в БД, но никогда не читались обратно - даже
+        # DialerManager.__init__() (шаг 4 ниже) при каждом старте брал
+        # исключительно settings.AMI_HOST/PORT/USER/PASSWORD из .env, а
+        # panoramisk.Manager (само AMI-соединение) конструируется прямо в
+        # __init__ - в отличие от dialer.max_calls и прочих настроек выше,
+        # его нельзя "докрутить" уже ПОСЛЕ создания DialerManager, нужно
+        # подменить settings.AMI_* ДО вызова init_dialer(). SettingsService
+        # ещё не зарегистрирован глобально (это происходит на шаге 5) -
+        # используем отдельный временный экземпляр только для чтения этих
+        # четырёх ключей.
+        #
+        # Явный компромисс ради безопасности живой телефонии: подменяем
+        # settings.AMI_* только если ЗНАЧЕНИЕ РЕАЛЬНО СОХРАНЕНО В БД (админ
+        # хотя бы раз нажал "Сохранить" в этом разделе) - если раздел ни
+        # разу не трогали, в БД просто нет строки на этот ключ и
+        # get_setting_value() вернёт definition.default_value, который сам
+        # равен settings.AMI_HOST и т.д. на момент импорта settings.py, то
+        # есть тому же .env - поведение НЕ меняется для всех, кто никогда
+        # не открывал этот раздел настроек. Если же значение в БД
+        # действительно есть - расхождение всегда громко пишем в лог
+        # warning'ом (не info), чтобы после рестарта было сразу видно,
+        # что фактически используемые креды AMI подменены сохранённым в
+        # БД значением, а не тем, что в .env на этом сервере.
+        try:
+            from app.services.settings import SettingsService as _SettingsServiceForAmiBootstrap
+            _ami_settings_probe = _SettingsServiceForAmiBootstrap(db_pool, redis_client)
+            db_ami_host = await _ami_settings_probe.get_setting_value("asterisk.ami_host")
+            db_ami_port = await _ami_settings_probe.get_setting_value("asterisk.ami_port")
+            db_ami_user = await _ami_settings_probe.get_setting_value("asterisk.ami_user")
+            db_ami_password = await _ami_settings_probe.get_setting_value("asterisk.ami_password")
+            if db_ami_host and db_ami_host != settings.AMI_HOST:
+                logger.warning(f"asterisk.ami_host из БД ({db_ami_host}) отличается от .env ({settings.AMI_HOST}) - используется значение из БД")
+                settings.AMI_HOST = db_ami_host
+            if db_ami_port and db_ami_port != settings.AMI_PORT:
+                logger.warning(f"asterisk.ami_port из БД ({db_ami_port}) отличается от .env ({settings.AMI_PORT}) - используется значение из БД")
+                settings.AMI_PORT = db_ami_port
+            if db_ami_user and db_ami_user != settings.AMI_USER:
+                logger.warning(f"asterisk.ami_user из БД ({db_ami_user}) отличается от .env ({settings.AMI_USER}) - используется значение из БД")
+                settings.AMI_USER = db_ami_user
+            if db_ami_password and db_ami_password != settings.AMI_PASSWORD:
+                logger.warning("asterisk.ami_password из БД отличается от .env - используется значение из БД")
+                settings.AMI_PASSWORD = db_ami_password
+        except Exception as e:
+            logger.warning(f"Не удалось прочитать сохранённые настройки AMI из БД, использованы значения из .env: {e}")
+
         # 4. Инициализация дозвона (AMI)
         from app.services.dialer import init_dialer
         from app.services.call_result import CallResultService
-        
+
         logger.info("Инициализация сервиса дозвона...")
         call_result_service = CallResultService(db_pool, redis_client)
         dialer_manager = await init_dialer(db_pool, redis_client, call_result_service)
@@ -485,6 +549,117 @@ async def lifespan(app: FastAPI):
             )
         except Exception as e:
             logger.warning(f"Не удалось применить сохранённые настройки дозвона, использованы значения из .env: {e}")
+
+        # 5.6 То же самое для security.max_login_attempts/block_duration -
+        # LoginAttemptTracker живёт внутри AuthService, отдельным объектом
+        # на каждый gunicorn-воркер (WORKERS>1), так что без этого шага
+        # каждый новый воркер после рестарта опять брал бы захардкоженные
+        # max_attempts=5/block_duration=300 вместо сохранённых в БД -
+        # ровно та же проблема, что и с dialer_manager чуть выше.
+        # Отдельный try/except, чтобы сбой здесь ни при каких условиях не
+        # мог помешать уже отработавшему применению настроек дозвона.
+        try:
+            settings_service = get_settings_service()
+            auth_service = get_auth_service()
+            auth_service.login_tracker.max_attempts = await settings_service.get_setting_value("security.max_login_attempts")
+            auth_service.login_tracker.block_duration = await settings_service.get_setting_value("security.block_duration")
+            logger.info(
+                f"Настройки блокировки входа применены из БД: "
+                f"max_attempts={auth_service.login_tracker.max_attempts}, "
+                f"block_duration={auth_service.login_tracker.block_duration}"
+            )
+        except Exception as e:
+            logger.warning(f"Не удалось применить сохранённые настройки блокировки входа, использованы значения по умолчанию: {e}")
+
+        # 5.7 dialer.adaptive_cps - раньше единственным переключателем был
+        # ADAPTIVE_CPS_ENABLED из .env, читаемый только один раз в
+        # DialerManager.__init__() (до того, как SettingsService вообще
+        # существует) - сохранённое в БД значение этой настройки ни на что
+        # не влияло, даже после рестарта. Пересоздаём/убираем
+        # dialer_manager.adaptive_cps здесь теми же параметрами, что и
+        # исходная конструкция в dialer.py, если сохранённое значение
+        # расходится с тем, что уже решил .env.
+        try:
+            from app.core.config import settings as app_settings
+            from app.utils.rate_limiter import AdaptiveCPSLimiter
+            adaptive_enabled = await settings_service.get_setting_value("dialer.adaptive_cps")
+            if adaptive_enabled and not dialer_manager.adaptive_cps:
+                dialer_manager.adaptive_cps = AdaptiveCPSLimiter(
+                    base_rate=app_settings.DEFAULT_CPS,
+                    redis_client=dialer_manager.redis,
+                    max_calls=dialer_manager.max_calls,
+                    min_rate=app_settings.MIN_CPS,
+                    alpha=app_settings.ADAPTIVE_CPS_ALPHA
+                )
+            elif not adaptive_enabled and dialer_manager.adaptive_cps:
+                dialer_manager.adaptive_cps = None
+            logger.info(f"dialer.adaptive_cps применён из БД: {bool(dialer_manager.adaptive_cps)}")
+        except Exception as e:
+            logger.warning(f"Не удалось применить dialer.adaptive_cps, оставлено значение из .env: {e}")
+
+        # 5.8 tts.concurrent_limit - TTSService._tts_semaphore создаётся один
+        # раз из settings.TTS_MAX_CONCURRENT (.env) в конструкторе, а
+        # SettingsService на тот момент ещё не существует. asyncio.Semaphore
+        # нельзя безопасно "докрутить" на лету - просто заменяем сам объект
+        # семафора, пока ни один TTS-запрос ещё не запущен (это самое
+        # начало старта приложения).
+        try:
+            tts_service = get_tts_service()
+            tts_limit = await settings_service.get_setting_value("tts.concurrent_limit")
+            if tts_limit:
+                tts_service._tts_semaphore = asyncio.Semaphore(tts_limit)
+                logger.info(f"tts.concurrent_limit применён из БД: {tts_limit}")
+        except Exception as e:
+            logger.warning(f"Не удалось применить tts.concurrent_limit, оставлено значение из .env: {e}")
+
+        # 5.9 transcription.engine/whisper_model/concurrent_limit - та же
+        # история: TranscriptionService.__init__ читает
+        # settings.TRANSCRIPTION_ENGINE/WHISPER_MODEL/TRANSCRIPTION_CONCURRENT
+        # (.env) один раз, до того как SettingsService существует. self.engine/
+        # self.model - обычные атрибуты, читаемые заново при каждой ленивой
+        # загрузке модели (см. _init_whisper()) - можно просто переставить их
+        # здесь, пока транскрибация ещё ни разу не запускалась в этом воркере.
+        try:
+            transcription_service = get_transcription_service()
+            db_engine = await settings_service.get_setting_value("transcription.engine")
+            if db_engine and db_engine != "auto":
+                transcription_service.engine = transcription_service._detect_engine(db_engine)
+            db_whisper_model = await settings_service.get_setting_value("transcription.whisper_model")
+            if db_whisper_model:
+                transcription_service.model = db_whisper_model
+            db_concurrent = await settings_service.get_setting_value("transcription.concurrent_limit")
+            if db_concurrent:
+                transcription_service._semaphore = asyncio.Semaphore(db_concurrent)
+            logger.info(
+                f"Настройки транскрибации применены из БД: engine={transcription_service.engine.value}, "
+                f"model={transcription_service.model}"
+            )
+        except Exception as e:
+            logger.warning(f"Не удалось применить настройки транскрибации, использованы значения из .env: {e}")
+
+        # 5.10 logging.level/logging.format - та же история, что и с
+        # dialer.*/security.* выше: init_logging() (в create_app(), ещё до
+        # этого lifespan) читает settings.LOG_LEVEL/LOG_FORMAT только из
+        # .env, а колбеки update_log_level/update_log_format применяют
+        # изменение из веб-интерфейса только к тому воркеру, который
+        # обработал запрос - остальные воркеры и любой будущий рестарт
+        # снова берут значения из .env, пока не подхватят их здесь.
+        try:
+            from app.core.logger import LoggerFactory
+            db_log_level = await settings_service.get_setting_value("logging.level")
+            db_log_format = await settings_service.get_setting_value("logging.format")
+            LoggerFactory.configure(
+                level=db_log_level or LoggerFactory._current_level,
+                format_type=db_log_format or LoggerFactory._current_format_type,
+                log_file=LoggerFactory._current_log_file,
+                error_log_file=LoggerFactory._current_error_log_file,
+            )
+            logger.info(
+                f"Настройки логирования применены из БД: level={LoggerFactory._current_level}, "
+                f"format={LoggerFactory._current_format_type}"
+            )
+        except Exception as e:
+            logger.warning(f"Не удалось применить сохранённые настройки логирования, использованы значения из .env: {e}")
 
         # 6. Запуск системного сервиса
         system_service = get_system_service()

@@ -168,18 +168,37 @@ class AudioService:
         Returns:
             Информация о загруженном файле
         """
+        # audio.allowed_formats/audio.max_size_mb (Настройки → Аудио) раньше
+        # сохранялись в БД, но эта проверка всегда использовала
+        # захардкоженный список [WAV, MP3] и settings.AUDIO_MAX_SIZE (.env) -
+        # значения из веб-интерфейса ни на что не влияли. Читаем их здесь
+        # с тем же запасным вариантом на случай сбоя (сохраняет прежнее
+        # поведение, если SettingsService почему-то недоступен).
+        try:
+            from app.services import get_settings_service
+            allowed_raw = await get_settings_service().get_setting_value("audio.allowed_formats")
+            allowed_formats = {AudioFormat(f) for f in allowed_raw} if allowed_raw else {AudioFormat.WAV, AudioFormat.MP3}
+        except Exception:
+            allowed_formats = {AudioFormat.WAV, AudioFormat.MP3}
+
         # Проверяем формат
         original_format = self._get_format_from_filename(filename)
-        if original_format not in [AudioFormat.WAV, AudioFormat.MP3]:
+        if original_format not in allowed_formats:
             raise AudioValidationError(f"Неподдерживаемый формат: {original_format}")
-        
+
         # Проверяем размер
         file.seek(0, 2)
         file_size = file.tell()
         file.seek(0)
-        
-        if file_size > settings.AUDIO_MAX_SIZE:
-            max_mb = settings.AUDIO_MAX_SIZE // (1024 * 1024)
+
+        try:
+            max_size_mb = await get_settings_service().get_setting_value("audio.max_size_mb")
+            max_size_bytes = max_size_mb * 1024 * 1024 if max_size_mb else settings.AUDIO_MAX_SIZE
+        except Exception:
+            max_size_bytes = settings.AUDIO_MAX_SIZE
+
+        if file_size > max_size_bytes:
+            max_mb = max_size_bytes // (1024 * 1024)
             raise AudioValidationError(f"Файл слишком большой. Максимальный размер: {max_mb} МБ")
         
         # Генерируем имя файла
@@ -1111,6 +1130,16 @@ class TTSService:
         Returns:
             Информация о сгенерированном файле или задаче
         """
+        # tts.enabled (Настройки → TTS) раньше сохранялся в БД, но нигде
+        # не проверялся - генерация работала независимо от значения.
+        try:
+            from app.services import get_settings_service
+            tts_enabled = await get_settings_service().get_setting_value("tts.enabled")
+        except Exception:
+            tts_enabled = True
+        if not tts_enabled:
+            raise TTSGenerationError("TTS отключён администратором в настройках системы")
+
         if background:
             # Добавляем в очередь
             task_id = str(uuid.uuid4())
@@ -1143,21 +1172,44 @@ class TTSService:
     ) -> AudioGenerateResponse:
         """Синхронная генерация аудио"""
         start_time = datetime.utcnow()
-        
+
+        # request.model/request.speed - None, если клиент их не прислал
+        # (audio.js вообще не даёт их выбрать - см. комментарий в
+        # AudioGenerateRequest). Разворачиваем в tts.default_model/tts.speed
+        # (Настройки → TTS) - раньше эти настройки сохранялись в БД, но
+        # реальная генерация всегда брала захардкоженные TTSModel.MEDIUM/1.0
+        # из дефолта Pydantic-поля, не читая их вообще.
+        model = request.model
+        speed = request.speed
+        try:
+            from app.services import get_settings_service
+            if model is None:
+                default_model = await get_settings_service().get_setting_value("tts.default_model")
+                model = TTSModel(default_model) if default_model else TTSModel.MEDIUM
+            if speed is None:
+                default_speed = await get_settings_service().get_setting_value("tts.speed")
+                speed = default_speed if default_speed else 1.0
+        except Exception:
+            pass
+        if model is None:
+            model = TTSModel.MEDIUM
+        if speed is None:
+            speed = 1.0
+
         async with self._tts_semaphore:
             try:
                 # Генерируем имя файла
                 safe_name = re.sub(r'[^\w\-]', '_', request.name)
                 base_filename = f"tts_{int(datetime.utcnow().timestamp())}_{uuid.uuid4().hex[:8]}"
-                
+
                 # Путь к модели
-                model_path = self._get_model_path(request.voice, request.model)
+                model_path = self._get_model_path(request.voice, model)
                 if not model_path.exists():
                     raise TTSGenerationError(f"Модель не найдена: {model_path}")
-                
+
                 # Генерируем WAV
                 wav_path = self.tts_dir / f"{base_filename}.wav"
-                await self._run_piper(request.text, model_path, wav_path, request.speed)
+                await self._run_piper(request.text, model_path, wav_path, speed)
                 
                 # Конвертируем в целевой формат если нужно
                 final_path = wav_path
@@ -1208,8 +1260,8 @@ class TTSService:
                         request.is_public,
                         request.text,
                         request.voice,
-                        request.model,
-                        request.speed,
+                        model,
+                        speed,
                         user_id
                     )
 
@@ -1225,7 +1277,7 @@ class TTSService:
                 ).inc()
                 tts_generation_duration.labels(
                     voice=request.voice,
-                    model=request.model
+                    model=model
                 ).observe(generation_time)
                 
                 self._stats['generated'] += 1

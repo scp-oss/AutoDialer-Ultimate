@@ -96,9 +96,18 @@ class AudioGenerateRequest(BaseSchema):
     name: str = Field(..., min_length=1, max_length=255, description="Название файла")
     text: str = Field(..., min_length=10, max_length=1000, description="Текст для озвучивания")
     
+    # model/speed - Optional/None (не "жёсткий" дефолт) специально: frontend
+    # (audio.js) вообще не даёт их выбрать и никогда не передаёт в запросе -
+    # с обычным Field(TTSModel.MEDIUM, ...)/Field(1.0, ...) Pydantic
+    # заполнял бы их этим значением ДО того, как сервис успевал бы
+    # проверить tts.default_model/tts.speed (Настройки → TTS) - тот факт,
+    # что клиент вообще ничего не прислал, был бы неотличим от "явно выбрал
+    # среднюю модель/скорость 1.0". None здесь - специально оставленный
+    # сигнал "не указано", который _generate_audio_sync() разворачивает в
+    # настройку по умолчанию.
     voice: TTSVoice = Field(TTSVoice.DENIS, description="Голос")
-    model: TTSModel = Field(TTSModel.MEDIUM, description="Модель")
-    speed: float = Field(1.0, ge=0.5, le=2.0, description="Скорость речи")
+    model: Optional[TTSModel] = Field(None, description="Модель (не указано - берётся tts.default_model)")
+    speed: Optional[float] = Field(None, ge=0.5, le=2.0, description="Скорость речи (не указано - берётся tts.speed)")
     
     output_format: AudioFormat = Field(AudioFormat.SLN, description="Выходной формат")
     

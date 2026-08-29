@@ -279,7 +279,20 @@ class TranscriptionService:
         if not os.path.exists(audio_path):
             logger.error(f"Аудиофайл не найден: {audio_path}")
             raise TranscriptionFileNotFound(f"Файл не найден: {audio_path}")
-        
+
+        # transcription.enabled (Настройки → Транскрибация) раньше сохранялся
+        # в БД, но нигде не проверялся - транскрибация работала независимо
+        # от значения. None, а не исключение - тот же контракт, что и для
+        # TranscriptionEngine.NONE чуть ниже (см. комментарий там).
+        try:
+            from app.services import get_settings_service
+            transcription_enabled = await get_settings_service().get_setting_value("transcription.enabled")
+        except Exception:
+            transcription_enabled = True
+        if not transcription_enabled:
+            logger.info("Транскрибация отключена администратором в настройках системы")
+            return None
+
         if self.engine == TranscriptionEngine.NONE:
             logger.warning("Нет доступного движка транскрибации")
             # None, а не "" - _transcribe_call (incoming.py) считает

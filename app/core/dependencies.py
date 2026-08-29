@@ -615,9 +615,29 @@ async def check_rate_limit(
     Автоматическая проверка rate limit для API запросов.
     Используется в middleware.
     """
-    if not settings.RATE_LIMIT_ENABLED:
+    # api.rate_limit_enabled/api.rate_limit_requests (Настройки → API) раньше
+    # сохранялись в БД, но эта проверка всегда использовала только
+    # settings.RATE_LIMIT_ENABLED/RATE_LIMIT_API из .env - значения из
+    # веб-интерфейса ни на что не влияли. Читаем их заново на каждый запрос
+    # (без кеша в памяти - SettingsService сам кеширует в Redis), с тем же
+    # запасным вариантом на .env при любом сбое, чтобы уже работающий
+    # rate-limiting никогда не сломался из-за недоступности SettingsService.
+    try:
+        from app.services import get_settings_service
+        settings_service = get_settings_service()
+        rate_limit_enabled = await settings_service.get_setting_value("api.rate_limit_enabled")
+        rate_limit_requests = await settings_service.get_setting_value("api.rate_limit_requests")
+        if rate_limit_enabled is None:
+            rate_limit_enabled = settings.RATE_LIMIT_ENABLED
+        if not rate_limit_requests:
+            rate_limit_requests = settings.RATE_LIMIT_API
+    except Exception:
+        rate_limit_enabled = settings.RATE_LIMIT_ENABLED
+        rate_limit_requests = settings.RATE_LIMIT_API
+
+    if not rate_limit_enabled:
         return
-    
+
     # Определяем идентификатор
     if user:
         identifier = f"user:{user.user_id}"
@@ -626,14 +646,17 @@ async def check_rate_limit(
         if not client_ip:
             client_ip = request.headers.get("X-Real-IP", request.client.host if request.client else "unknown")
         identifier = f"ip:{client_ip}"
-    
-    # Определяем лимит в зависимости от эндпоинта
+
+    # Определяем лимит в зависимости от эндпоинта. /api/auth/* сохраняет
+    # отдельный, более строгий .env-лимит (RATE_LIMIT_AUTH) - настройка
+    # api.rate_limit_requests относится к общему API, как и написано в её
+    # описании, и подменяет только settings.RATE_LIMIT_API.
     path = request.url.path
-    
+
     if path.startswith("/api/auth"):
         limit = settings.RATE_LIMIT_AUTH
     else:
-        limit = settings.RATE_LIMIT_API
+        limit = rate_limit_requests
     
     redis_client = _get_redis_client()
     limiter = SlidingWindowRateLimiter(redis_client)

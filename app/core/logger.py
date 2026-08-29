@@ -338,6 +338,14 @@ class LoggerFactory:
     _loggers: Dict[str, StructuredLogger] = {}
     _configured = False
     _current_level: str = "INFO"
+    # Запоминаем format_type/log_file/error_log_file отдельно от уровня,
+    # чтобы SystemService.set_log_level() и колбек logging.format могли
+    # менять только "свой" параметр, не вызывая configure() с умолчаниями
+    # по остальным - иначе (см. историю бага ниже) каждая смена одного
+    # параметра тихо сбрасывала все прочие.
+    _current_format_type: str = "console"
+    _current_log_file: Optional[str] = None
+    _current_error_log_file: Optional[str] = None
 
     @classmethod
     def get_logger(cls, name: str = "autodialer") -> StructuredLogger:
@@ -406,6 +414,9 @@ class LoggerFactory:
             named_logger._logger.setLevel(level_value)
 
         cls._configured = True
+        cls._current_format_type = format_type
+        cls._current_log_file = log_file
+        cls._current_error_log_file = error_log_file
 
     @classmethod
     def is_configured(cls) -> bool:

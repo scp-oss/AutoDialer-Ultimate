@@ -18,7 +18,7 @@ from typing import Optional, List, Dict, Any, Union
 from dataclasses import dataclass, field
 
 from app.core.config import settings as app_settings
-from app.core.logger import logger
+from app.core.logger import logger, LoggerFactory
 from app.core.database import ConnectionPool
 from app.core.redis import RedisClient
 from app.models.settings import (
@@ -86,13 +86,32 @@ class SettingDefinition:
 
 # Предопределённые настройки системы
 SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
-    # Общие настройки
+    # Общие настройки. system.name/timezone/language сознательно оставлены
+    # только хранящимися в БД, без применения где-либо в коде:
+    #  - system.name - фигурировал бы в <title>/шапке фронтенда, включая
+    #    страницу логина (до авторизации) - применить это потребовало бы
+    #    нового ПУБЛИЧНОГО (без токена) API-эндпоинта, чего сейчас в
+    #    проекте нет ни для одной настройки; ради переименования шапки
+    #    заводить новую незащищённую поверхность API не оправдано.
+    #  - system.timezone - весь фронтенд уже показывает время сервера в
+    #    ЛОКАЛЬНОМ часовом поясе БРАУЗЕРА (App.parseServerDate(), см. фикс
+    #    бага с "неверным временем" в audit.js/apiTokens.js/audio.js/
+    #    blacklist.js/campaigns.js/dashboard.js/users.js/webhooks.js) - это
+    #    корректно работает для админов из разных часовых поясов сразу;
+    #    единый глобальный "часовой пояс системы" не только не читается
+    #    нигде в коде, но и противоречил бы уже работающему подходу
+    #    "показывать время в поясе того, кто смотрит".
+    #  - system.language - реального i18n-слоя (переключаемых текстовых
+    #    ресурсов) в проекте нет: все подписи на бэкенде и фронтенде -
+    #    захардкоженные русские строки. Подключить эту настройку означало
+    #    бы с нуля построить инфраструктуру интернационализации - выходит
+    #    далеко за рамки "оживить существующую настройку".
     "system.name": SettingDefinition(
         key="system.name",
         value_type="string",
         default_value="AutoDialer Ultimate",
         category=SettingCategory.GENERAL,
-        description="Название системы",
+        description="Название системы (сохраняется, но нигде не отображается - см. комментарий выше)",
         is_public=True
     ),
     "system.timezone": SettingDefinition(
@@ -100,7 +119,7 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         value_type="string",
         default_value="UTC",
         category=SettingCategory.GENERAL,
-        description="Часовой пояс",
+        description="Часовой пояс (не используется - время везде показывается в часовом поясе браузера, см. комментарий выше)",
         allowed_values=["UTC", "Europe/Moscow", "Europe/London", "America/New_York"]
     ),
     "system.language": SettingDefinition(
@@ -108,7 +127,7 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         value_type="string",
         default_value="ru",
         category=SettingCategory.GENERAL,
-        description="Язык интерфейса",
+        description="Язык интерфейса (не используется - в проекте нет инфраструктуры i18n, см. комментарий выше)",
         allowed_values=["ru", "en"]
     ),
     
@@ -249,12 +268,20 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         description="Caller ID по умолчанию",
         requires_restart=True
     ),
+    # Раньше единственным переключателем был ADAPTIVE_CPS_ENABLED из .env,
+    # читаемый один раз при создании DialerManager - эта настройка
+    # сохранялась в БД, но ни на что не влияла, даже после рестарта.
+    # Теперь применяется при старте воркера (app/__init__.py, шаг 5.7) -
+    # requires_restart=True, т.к. живого on_change для неё нет (в отличие
+    # от max_calls/cps, адаптивный лимитер - это целый отдельный объект,
+    # а не число).
     "dialer.adaptive_cps": SettingDefinition(
         key="dialer.adaptive_cps",
         value_type="bool",
         default_value=True,
         category=SettingCategory.DIALER,
-        description="Использовать адаптивный CPS"
+        description="Использовать адаптивный CPS",
+        requires_restart=True
     ),
     # Фраза "нажмите 1/2/4", которую [sub-media] проигрывает после питча
     # кампании (см. комментарий у Background(tts/default) в
@@ -335,6 +362,12 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         min_value=0.5,
         max_value=2.0
     ),
+    # Раньше settings.TTS_MAX_CONCURRENT (.env) - единственный источник
+    # семафора генерации, читаемый один раз при создании TTSService, до
+    # того как SettingsService вообще существует. Применяется при старте
+    # воркера (app/__init__.py, шаг 5.8) - requires_restart=True, т.к.
+    # asyncio.Semaphore нельзя безопасно перенастроить на лету без
+    # рестарта воркера.
     "tts.concurrent_limit": SettingDefinition(
         key="tts.concurrent_limit",
         value_type="int",
@@ -342,7 +375,8 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         category=SettingCategory.TTS,
         description="Максимум одновременных генераций TTS",
         min_value=1,
-        max_value=10
+        max_value=10,
+        requires_restart=True
     ),
     
     # Настройки транскрибации
@@ -353,13 +387,19 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         category=SettingCategory.TRANSCRIPTION,
         description="Включить транскрибацию"
     ),
+    # engine/whisper_model/concurrent_limit применяются при старте воркера
+    # (app/__init__.py, шаг 5.9) - раньше settings.TRANSCRIPTION_ENGINE/
+    # WHISPER_MODEL/TRANSCRIPTION_CONCURRENT (.env) были единственным
+    # источником, читаемым один раз в TranscriptionService.__init__() до
+    # того, как SettingsService вообще существует.
     "transcription.engine": SettingDefinition(
         key="transcription.engine",
         value_type="string",
         default_value="auto",
         category=SettingCategory.TRANSCRIPTION,
         description="Движок транскрибации",
-        allowed_values=["auto", "whisper", "vosk", "google", "none"]
+        allowed_values=["auto", "whisper", "vosk", "google", "none"],
+        requires_restart=True
     ),
     "transcription.whisper_model": SettingDefinition(
         key="transcription.whisper_model",
@@ -367,7 +407,8 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         default_value="small",
         category=SettingCategory.TRANSCRIPTION,
         description="Модель Whisper",
-        allowed_values=["tiny", "base", "small", "medium", "large"]
+        allowed_values=["tiny", "base", "small", "medium", "large"],
+        requires_restart=True
     ),
     "transcription.language": SettingDefinition(
         key="transcription.language",
@@ -383,7 +424,8 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         category=SettingCategory.TRANSCRIPTION,
         description="Максимум одновременных транскрибаций",
         min_value=1,
-        max_value=4
+        max_value=4,
+        requires_restart=True
     ),
     
     # Настройки безопасности
@@ -406,6 +448,12 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         min_value=300,
         max_value=86400
     ),
+    # on_change: LoginAttemptTracker (app/core/security.py), используемый
+    # AuthService.login() для блокировки после неудачных попыток, раньше
+    # ВСЕГДА создавался с захардкоженными max_attempts=5/block_duration=300
+    # - эти два ключа сохранялись в БД, но AuthService их никогда не
+    # читал. Оба применяются мгновенно (не requires_restart) - callback
+    # прямо мутирует уже живой LoginAttemptTracker через get_auth_service().
     "security.max_login_attempts": SettingDefinition(
         key="security.max_login_attempts",
         value_type="int",
@@ -413,7 +461,8 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         category=SettingCategory.SECURITY,
         description="Максимум попыток входа",
         min_value=3,
-        max_value=10
+        max_value=10,
+        on_change="update_max_login_attempts"
     ),
     "security.block_duration": SettingDefinition(
         key="security.block_duration",
@@ -422,7 +471,8 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         category=SettingCategory.SECURITY,
         description="Длительность блокировки (секунд)",
         min_value=60,
-        max_value=3600
+        max_value=3600,
+        on_change="update_block_duration"
     ),
     "security.totp_enabled": SettingDefinition(
         key="security.totp_enabled",
@@ -497,7 +547,8 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         value_type="list",
         default_value=["*"],
         category=SettingCategory.API,
-        description="Разрешённые CORS origins"
+        description="Разрешённые CORS origins (требуется полный перезапуск процесса - см. комментарий у CORSMiddleware в app/__init__.py)",
+        requires_restart=True
     ),
     
     # Настройки логирования
@@ -516,7 +567,8 @@ SYSTEM_SETTINGS: Dict[str, SettingDefinition] = {
         default_value="console",
         category=SettingCategory.LOGGING,
         description="Формат логов",
-        allowed_values=["console", "json"]
+        allowed_values=["console", "json"],
+        on_change="update_log_format"
     ),
     "logging.retention_days": SettingDefinition(
         key="logging.retention_days",
@@ -565,8 +617,11 @@ class SettingsService:
             "update_dialer_max_calls": self._apply_dialer_max_calls,
             "update_dialer_cps": self._apply_dialer_cps,
             "update_log_level": self._apply_log_level,
+            "update_log_format": self._apply_log_format,
             "update_incoming_greeting": self._apply_incoming_greeting,
             "update_menu_prompt": self._apply_menu_prompt,
+            "update_max_login_attempts": self._apply_max_login_attempts,
+            "update_block_duration": self._apply_block_duration,
         }
         
         logger.info("SettingsService инициализирован")
@@ -957,6 +1012,28 @@ class SettingsService:
         if self.dialer_manager:
             self.dialer_manager.max_calls = value
             logger.info(f"Dialer max_calls обновлён: {value}")
+
+    async def _apply_max_login_attempts(self, value: int) -> None:
+        """Применить изменение максимума попыток входа"""
+        from app.services import get_auth_service
+        try:
+            get_auth_service().login_tracker.max_attempts = value
+            logger.info(f"Максимум попыток входа обновлён: {value}")
+        except RuntimeError:
+            # AuthService ещё не инициализирован (например, применяем
+            # настройки до полного старта приложения) - не критично,
+            # get_auth_service()'s собственный запуск подхватит текущее
+            # значение при инициализации.
+            pass
+
+    async def _apply_block_duration(self, value: int) -> None:
+        """Применить изменение длительности блокировки после превышения попыток"""
+        from app.services import get_auth_service
+        try:
+            get_auth_service().login_tracker.block_duration = value
+            logger.info(f"Длительность блокировки входа обновлена: {value}")
+        except RuntimeError:
+            pass
     
     async def _apply_dialer_cps(self, value: int) -> None:
         """Применить изменение CPS"""
@@ -969,6 +1046,22 @@ class SettingsService:
         if self.system_service:
             from app.models.system import LogLevel
             await self.system_service.set_log_level(LogLevel(value))
+
+    async def _apply_log_format(self, value: str) -> None:
+        """
+        Применить изменение формата логов (console/json). logging.format
+        сохранялся в БД, но ни на что не влиял - init_logging() читает
+        settings.LOG_FORMAT (.env) только один раз при старте процесса.
+        Меняем только формат, явно сохраняя текущие уровень и файлы логов -
+        см. комментарий у аналогичного фикса в SystemService.set_log_level().
+        """
+        LoggerFactory.configure(
+            level=LoggerFactory._current_level,
+            format_type=value,
+            log_file=LoggerFactory._current_log_file,
+            error_log_file=LoggerFactory._current_error_log_file,
+        )
+        logger.info(f"Формат логов обновлён: {value}")
 
     async def _apply_incoming_greeting(self, value) -> None:
         """

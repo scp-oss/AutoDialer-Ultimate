@@ -1113,8 +1113,19 @@ class AuthService:
                 "role": user['role'],
                 "permissions": [p.value for p in permissions]
             }
-            
-            access_token = create_access_token(token_data)
+
+            # security.session_timeout (Настройки → Безопасность) раньше
+            # нигде не читался - реальное время жизни access-токена всегда
+            # брало settings.ACCESS_TOKEN_EXPIRE_MINUTES из .env, значение
+            # из этой настройки просто хранилось в БД и ни на что не
+            # влияло. Читаем её здесь и передаём как expires_delta -
+            # применяется сразу на следующий вход, без рестарта.
+            from app.services import get_settings_service
+            session_timeout = await get_settings_service().get_setting_value("security.session_timeout")
+            if not session_timeout:
+                session_timeout = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+
+            access_token = create_access_token(token_data, expires_delta=session_timeout)
             refresh_token = create_refresh_token(token_data)
             
             # Сохраняем refresh токен в Redis
@@ -1151,9 +1162,9 @@ class AuthService:
                 full_name=user['full_name'],
                 email=user['email'],
                 permissions=[p.value for p in permissions],
-                expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+                expires_in=session_timeout
             )
-    
+
     async def refresh(self, refresh_token: str) -> RefreshTokenResponse:
         """
         Обновить access токен.
@@ -1200,13 +1211,19 @@ class AuthService:
                 "role": user['role'],
                 "permissions": [p.value for p in permissions]
             }
-            
-            access_token = create_access_token(token_data)
-            
+
+            # См. подробный комментарий в login() - тот же security.session_timeout.
+            from app.services import get_settings_service
+            session_timeout = await get_settings_service().get_setting_value("security.session_timeout")
+            if not session_timeout:
+                session_timeout = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+
+            access_token = create_access_token(token_data, expires_delta=session_timeout)
+
             return RefreshTokenResponse(
                 access_token=access_token,
                 token_type="bearer",
-                expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+                expires_in=session_timeout
             )
     
     async def logout(self, user_data) -> bool:
@@ -1371,14 +1388,28 @@ class AuthService:
         Returns:
             Данные для настройки TOTP
         """
+        # security.totp_enabled - системный переключатель "разрешить 2FA
+        # вообще" (Настройки → Безопасность) - раньше нигде не читался:
+        # каждый totp_enabled в этом файле - колонка users.totp_enabled
+        # (включена ли 2FA у КОНКРЕТНОГО пользователя), не системная
+        # настройка. Гейтим только НОВОЕ подключение 2FA - если админ уже
+        # включил 2FA себе, а потом кто-то выключит этот переключатель,
+        # тем, у кого 2FA уже настроена, вход по-прежнему должен работать
+        # (иначе можно случайно заблокировать себе доступ), только
+        # НАСТРОИТЬ 2FA заново станет нельзя, пока переключатель выключен.
+        from app.services import get_settings_service
+        totp_allowed = await get_settings_service().get_setting_value("security.totp_enabled")
+        if not totp_allowed:
+            raise TOTPError("Двухфакторная аутентификация отключена администратором")
+
         async with self.db_pool.acquire() as conn:
             user = await conn.fetchrow("""
                 SELECT username, totp_enabled FROM users WHERE id = $1
             """, user_id)
-            
+
             if not user:
                 raise UserNotFoundError(f"Пользователь {user_id} не найден")
-            
+
             if user['totp_enabled']:
                 raise TOTPError("2FA уже настроена")
             

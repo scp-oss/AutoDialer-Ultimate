@@ -18,8 +18,19 @@ from app.core.logger import logger
 async def cleanup_old_logs():
     """Очистка и архивация старых логов"""
     log_dir = Path(settings.LOG_DIR)
-    retention_days = 30
-    
+
+    # logging.retention_days (Настройки → Логирование) раньше сохранялся в
+    # БД, но эта функция всегда использовала захардкоженные 30 дней -
+    # значение из веб-интерфейса ни на что не влияло (тот же паттерн, что
+    # и с audio.retention_days в cleanup_old_audio_files чуть выше в файле).
+    try:
+        from app.services import get_settings_service
+        retention_days = await get_settings_service().get_setting_value("logging.retention_days")
+        if not retention_days:
+            retention_days = 30
+    except Exception:
+        retention_days = 30
+
     if not log_dir.exists():
         return
     

@@ -901,9 +901,20 @@ class SystemService:
             Результат операции
         """
         old_level = settings.LOG_LEVEL
-        
-        # Обновляем настройки
-        LoggerFactory.configure(level=level.value)
+
+        # Обновляем настройки. Раньше здесь передавался только level -
+        # LoggerFactory.configure() всегда полностью пересобирает хендлеры
+        # (root.handlers.clear()) и без явных format_type/log_file/
+        # error_log_file подставляла их умолчания ("console", без файлов) -
+        # то есть любая смена уровня логирования через настройки молча
+        # переключала формат на console и ОТКЛЮЧАЛА запись в файл логов.
+        # Передаём текущие значения явно, чтобы менялся только уровень.
+        LoggerFactory.configure(
+            level=level.value,
+            format_type=LoggerFactory._current_format_type,
+            log_file=LoggerFactory._current_log_file,
+            error_log_file=LoggerFactory._current_error_log_file,
+        )
         
         # Сохраняем в БД
         async with self.db_pool.acquire() as conn:
