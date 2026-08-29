@@ -63,14 +63,24 @@ echo "==> Синхронизация backend: app/ -> $DEPLOY_ROOT/backend/app/"
 # живьём). --exclude='__pycache__': .pyc-кэш не из репозитория и не
 # должен быть предметом deploy - без исключения его создание/устаревание
 # между запусками тоже могло ложно засчитаться как изменение.
-backend_changes="$(rsync -a --no-owner --no-group --delete --exclude='__pycache__' -i "$REPO_DIR/app/" "$DEPLOY_ROOT/backend/app/")"
+# Директории (строки вида ".d..t......") тоже не считаем изменением: даже
+# no-op git checkout/pull трогает mtime директорий рабочего дерева, хотя
+# файлы внутри не менялись ни байтом - rsync с -a это честно подхватывает
+# и репортит как "изменение", хотя для кода это ничего не значит
+# (подтверждено живьём - "Уже актуально" от git, но скрипт всё равно видел
+# "изменения" и рестартовал). Реальным изменением считаем только сам факт
+# передачи файла (>f...) или его удаления (*deleting) - grep оставляет
+# только такие строки.
+backend_raw="$(rsync -a --no-owner --no-group --delete --exclude='__pycache__' -i "$REPO_DIR/app/" "$DEPLOY_ROOT/backend/app/")"
+backend_changes="$(printf '%s\n' "$backend_raw" | grep -E '^[<>]f|^\*deleting' || true)"
 if [ -n "$backend_changes" ]; then
     echo "$backend_changes"
 fi
 chown -R autodialer:autodialer "$DEPLOY_ROOT/backend/app"
 
 echo "==> Синхронизация frontend: frontend/dist/ -> $DEPLOY_ROOT/frontend/dist/"
-frontend_changes="$(rsync -a --no-owner --no-group --delete -i "$REPO_DIR/frontend/dist/" "$DEPLOY_ROOT/frontend/dist/")"
+frontend_raw="$(rsync -a --no-owner --no-group --delete -i "$REPO_DIR/frontend/dist/" "$DEPLOY_ROOT/frontend/dist/")"
+frontend_changes="$(printf '%s\n' "$frontend_raw" | grep -E '^[<>]f|^\*deleting' || true)"
 if [ -n "$frontend_changes" ]; then
     echo "$frontend_changes"
 fi
