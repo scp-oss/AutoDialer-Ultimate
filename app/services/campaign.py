@@ -30,7 +30,6 @@ from app.models.campaign import (
     CampaignStatsResponse, CampaignProgressResponse,
     RetryStrategySchema, CampaignScheduleSchema, DialerSettingsSchema
 )
-from app.utils.rate_limiter import TokenBucket
 from app.utils.task_registry import TaskRegistry, get_task_registry
 from prometheus_client import Counter
 
@@ -752,27 +751,36 @@ class CampaignService:
                 'run_id': run_id
             })
         
-        # max_calls НЕ применяется из campaign['max_calls'] здесь: это
-        # общий (не per-campaign) атрибут на dialer_manager, проверяемый
-        # против ГЛОБАЛЬНОГО счётчика активных каналов в Redis
-        # (см. _start_call() в dialer.py) - если бы кампания Б стартовала
-        # с другим max_calls, пока кампания А ещё дозванивает, это тихо
-        # подменяло бы единый потолок конкурентности для ВСЕХ активных
-        # звонков сразу (и А, и Б), а не только для Б. Единственный
-        # реальный источник этого значения - глобальная настройка admin'а
-        # dialer.max_calls (Настройки → Обзвон), которая уже применяется
+        # Ни max_calls, ни cps НЕ применяются из campaign[...] здесь: оба -
+        # общие (не per-campaign) атрибуты на dialer_manager. max_calls
+        # проверяется против ГЛОБАЛЬНОГО счётчика активных каналов в Redis,
+        # cps_limiter - тот же самый объект, который делит между собой ВСЕ
+        # одновременно запущенные кампании (см. _start_call() в dialer.py).
+        # Если бы кампания Б стартовала с другим значением, пока кампания А
+        # ещё дозванивает, это тихо подменяло бы единый лимит для ОБЕИХ
+        # сразу, а не только для Б. Единственный реальный источник обоих
+        # значений - глобальные настройки admin'а (Настройки → Обзвон:
+        # dialer.max_calls, dialer.default_cps), которые уже применяются
         # при старте воркера (app/__init__.py) и живьём при изменении
-        # (SettingsService._apply_dialer_max_calls) - только администратор
-        # знает реальный потолок одновременных каналов, который выдержит
-        # транк/сервер, так что per-campaign override сюда не пишем.
-        self.dialer_manager.cps_limiter.rate = campaign['cps']
-        
+        # (SettingsService._apply_dialer_max_calls/_apply_dialer_cps) -
+        # только администратор знает реальный потолок каналов и скорость
+        # набора, которые выдержит транк/сервер, так что per-campaign
+        # override сюда не пишем.
+
         # Запускаем задачу обзвона
         task_id = f"campaign_{campaign_id}"
-        
+
         async def dial_task():
             """Задача обзвона"""
-            bucket = TokenBucket(campaign['cps'])
+            # Раньше здесь создавался ОТДЕЛЬНЫЙ TokenBucket(campaign['cps']),
+            # так что при нескольких одновременных кампаниях каждая дозванивала
+            # на полной своей скорости независимо, и суммарный темп набора по
+            # системе мог кратно превышать то, что настроил администратор.
+            # dialer_manager.cps_limiter - один на все кампании сразу
+            # (тот же объект, что и в _start_call()) - acquire() здесь просто
+            # ждёт своей очереди в этом общем лимите, вместо того чтобы
+            # заводить параллельный, никак не связанный с остальными счётчик.
+            bucket = self.dialer_manager.cps_limiter
             processed = 0
             retry_strategy = json.loads(campaign['retry_strategy']) if campaign['retry_strategy'] else {}
             
