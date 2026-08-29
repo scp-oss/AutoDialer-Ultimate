@@ -320,15 +320,31 @@ def create_app() -> FastAPI:
         """Главный middleware приложения"""
         import time
         import uuid
-        from app.core.logger import correlation_id_var, request_id_var
-        
+        from app.core.logger import correlation_id_var, request_id_var, ip_address_var, user_agent_var
+
         # Correlation ID
         corr_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
         req_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
-        
+
         correlation_id_var.set(corr_id)
         request_id_var.set(req_id)
-        
+
+        # IP/User-Agent запроса - читаются всеми _log_audit() по сервисам
+        # (app/services/campaign.py, system.py, settings.py и т.д.) через
+        # эти же контекстные переменные, не как параметр функции: ни одна
+        # из них никогда не получала IP на вход, поэтому в audit_log эта
+        # колонка была NULL для абсолютно каждой записи, независимо от
+        # того, что реально сделал человек (подтверждено живьём -
+        # "IP адрес: -" на любом событии). X-Forwarded-For/X-Real-IP -
+        # та же логика, что уже используется для рейт-лимита
+        # (app/core/dependencies.py:625-627) - за обратным прокси
+        # request.client.host был бы адресом самого nginx, а не клиента.
+        client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        if not client_ip:
+            client_ip = request.headers.get("X-Real-IP") or (request.client.host if request.client else None)
+        ip_address_var.set(client_ip)
+        user_agent_var.set(request.headers.get("User-Agent"))
+
         start_time = time.monotonic()
         
         response = await call_next(request)

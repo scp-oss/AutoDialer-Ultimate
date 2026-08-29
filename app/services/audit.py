@@ -82,10 +82,34 @@ class AuditService:
     - Очистку старых записей
     """
     
+    # entity_name в audit_log - как и username - не заполняется ни одним
+    # из _log_audit(): все они пишут только entity_id. Без этого UI мог
+    # показать в лучшем случае "Обзвон №12", никогда настоящее имя -
+    # резолвим его по entity_type на чтении, тем же способом, что и
+    # username выше. Покрывает самые частые типы сущностей в журнале;
+    # для остальных (setting, api_key, system и т.п.) entity_id либо не
+    # имеет смысла, либо в details и так достаточно контекста.
+    # Без префикса audit_log./алиаса нарочно: entity_id внутри подзапросов
+    # ни одна из campaigns/contacts/users/blacklist не содержит сама по
+    # себе, так что Postgres однозначно резолвит его как коррелированную
+    # ссылку на внешний запрос - работает что с "FROM audit_log", что с
+    # "FROM audit_log a" без переписывания под конкретный алиас.
+    _ENTITY_NAME_SQL = """
+        COALESCE(
+            entity_name,
+            CASE entity_type
+                WHEN 'campaign' THEN (SELECT name FROM campaigns WHERE id = entity_id)
+                WHEN 'contact' THEN (SELECT phone FROM contacts WHERE id = entity_id)
+                WHEN 'user' THEN (SELECT username FROM users WHERE id = entity_id)
+                WHEN 'blacklist' THEN (SELECT phone FROM blacklist WHERE id = entity_id)
+            END
+        )
+    """
+
     def __init__(self, db_pool: ConnectionPool):
         self.db_pool = db_pool
         self.core_logger = CoreAuditLogger()
-        
+
         logger.info("AuditService инициализирован")
     
     # =============================================
@@ -291,12 +315,13 @@ class AuditService:
     async def get_audit_log(self, log_id: int) -> Optional[AuditLogDetailResponse]:
         """Получить запись аудита по ID"""
         async with self.db_pool.acquire() as conn:
-            row = await conn.fetchrow("""
+            row = await conn.fetchrow(f"""
                 SELECT
                     a.id, a.user_id,
                     COALESCE(a.username, u.username) as username,
                     COALESCE(a.user_role, u.role) as user_role,
-                    a.action, a.severity, a.entity_type, a.entity_id, a.entity_name,
+                    a.action, a.severity, a.entity_type, a.entity_id,
+                    {self._ENTITY_NAME_SQL} as entity_name,
                     a.details, a.changes, a.ip_address, a.user_agent,
                     a.request_method, a.request_path,
                     a.correlation_id, a.request_id, a.session_id,
@@ -316,12 +341,13 @@ class AuditService:
             # его тем же способом через подзапрос, раз тут нет JOIN.
             related_events = []
             if row['correlation_id']:
-                related_rows = await conn.fetch("""
+                related_rows = await conn.fetch(f"""
                     SELECT
                         id, user_id,
                         COALESCE(username, (SELECT username FROM users WHERE users.id = audit_log.user_id)) as username,
                         COALESCE(user_role, (SELECT role FROM users WHERE users.id = audit_log.user_id)) as user_role,
-                        action, severity, entity_type, entity_id, entity_name,
+                        action, severity, entity_type, entity_id,
+                        {self._ENTITY_NAME_SQL} as entity_name,
                         details, changes, ip_address, user_agent,
                         request_method, request_path,
                         correlation_id, request_id, session_id,
@@ -505,7 +531,8 @@ class AuditService:
                     id, user_id,
                     COALESCE(username, (SELECT username FROM users WHERE users.id = audit_log.user_id)) as username,
                     COALESCE(user_role, (SELECT role FROM users WHERE users.id = audit_log.user_id)) as user_role,
-                    action, severity, entity_type, entity_id, entity_name,
+                    action, severity, entity_type, entity_id,
+                    {self._ENTITY_NAME_SQL} as entity_name,
                     details, changes, ip_address, user_agent,
                     request_method, request_path,
                     correlation_id, request_id, session_id,

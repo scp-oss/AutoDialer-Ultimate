@@ -1568,10 +1568,27 @@ class CampaignService:
         details: Optional[Dict[str, Any]] = None
     ) -> None:
         """Записать аудит"""
+        # username/user_role снимаются В МОМЕНТ действия (не читаются позже
+        # по user_id) - переживают последующее удаление пользователя.
+        # ip_address/user_agent/correlation_id/request_id берутся из
+        # контекста запроса (app/core/logger.py, выставляется
+        # app_middleware() в app/__init__.py) - ни один _log_audit() по
+        # сервисам никогда не получал их как параметр, поэтому раньше эти
+        # колонки были NULL для абсолютно каждой записи независимо от
+        # того, что реально произошло (подтверждено живьём).
+        from app.core.logger import get_ip_address, get_user_agent, get_correlation_id, get_request_id
         await conn.execute("""
-            INSERT INTO audit_log (user_id, action, entity_type, entity_id, details)
-            VALUES ($1, $2, $3, $4, $5)
-        """, user_id, action, entity_type, entity_id, json.dumps(details) if details else None)
+            INSERT INTO audit_log (
+                user_id, username, user_role, action, entity_type, entity_id, details,
+                ip_address, user_agent, correlation_id, request_id
+            ) VALUES (
+                $1,
+                (SELECT username FROM users WHERE id = $1),
+                (SELECT role FROM users WHERE id = $1),
+                $2, $3, $4, $5, $6, $7, $8, $9
+            )
+        """, user_id, action, entity_type, entity_id, json.dumps(details) if details else None,
+             get_ip_address(), get_user_agent(), get_correlation_id(), get_request_id())
     
     # =============================================
     # Health check

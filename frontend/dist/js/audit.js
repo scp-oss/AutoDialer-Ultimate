@@ -324,7 +324,7 @@ const AuditModule = {
                 </td>
                 <td>
                     <div class="details-preview">
-                        ${this.formatDetails(log.details, log.action)}
+                        ${this.formatDetails(log)}
                     </div>
                 </td>
                 <td>
@@ -519,48 +519,148 @@ const AuditModule = {
         return 'default';
     },
     
-    formatDetails(details, action) {
-        if (!details) return '—';
-        
-        try {
-            const obj = typeof details === 'string' ? JSON.parse(details) : details;
-            
-            // Форматирование в зависимости от типа действия
-            if (action === 'login' || action === 'login_failed') {
-                return `Пользователь: ${obj.username || '—'}`;
+    // Метки типов сущностей для запасного варианта, когда у действия нет
+    // details вообще (campaign_updated, contact_deleted, user_enabled и
+    // т.п. реально логируются вообще без details - entity_id остаётся
+    // единственной зацепкой, какую именно кампанию/контакт/пользователя
+    // затронуло действие).
+    entityTypeLabel(entityType) {
+        const labels = {
+            campaign: 'Обзвон',
+            contact: 'Контакт',
+            contact_group: 'Группа контактов',
+            call: 'Звонок',
+            audio: 'Аудио',
+            blacklist: 'Запись ЧС',
+            setting: 'Настройка',
+            api_key: 'API-ключ',
+            incoming_call: 'Входящий звонок',
+            user: 'Пользователь',
+            system: 'Система',
+            webhook: 'Webhook',
+            report: 'Отчёт'
+        };
+        return labels[entityType] || entityType;
+    },
+
+    // Раньше эта функция искала в details ключи, которые реальный код
+    // никогда туда не кладёт (campaign_name/campaign_id для действий с
+    // обзвоном, target_username для действий с пользователем и т.д.) -
+    // сверено напрямую с каждым вызовом _log_audit() по всем сервисам
+    // (app/services/campaign.py, contact.py, blacklist.py, incoming.py,
+    // settings.py, system.py, user.py) и переписано под РЕАЛЬНЫЕ ключи,
+    // которые туда пишутся. Принимает весь log целиком, а не только
+    // log.details - entity_id/entity_type нужны как запасной вариант для
+    // действий, которые вообще не пишут details (таких большинство:
+    // campaign_updated, contact_deleted, user_enabled и т.п.).
+    formatDetails(log) {
+        const action = log.action;
+        const entityLabel = log.entity_type ? this.entityTypeLabel(log.entity_type) : null;
+        const entityRef = entityLabel
+            ? `${entityLabel}${log.entity_name ? ` «${log.entity_name}»` : (log.entity_id ? ` №${log.entity_id}` : '')}`
+            : null;
+
+        let obj = null;
+        if (log.details) {
+            try {
+                obj = typeof log.details === 'string' ? JSON.parse(log.details) : log.details;
+            } catch {
+                return String(log.details).substring(0, 100);
             }
-            
-            if (action.includes('campaign')) {
-                return `Обзвон: ${obj.campaign_name || obj.campaign_id || '—'}`;
+        }
+
+        switch (action) {
+            case 'login':
+                return 'Успешный вход';
+            case 'login_failed':
+                return obj?.username ? `Попытка входа: ${obj.username}` : 'Неудачная попытка входа';
+            case 'password_changed':
+            case 'password_reset':
+            case 'totp_enabled':
+            case 'totp_disabled':
+                return entityRef || '—';
+
+            case 'campaign_created':
+                return `${entityRef || 'Обзвон'}: «${obj?.name || '—'}», контактов: ${obj?.contacts_count ?? '—'}`;
+            case 'campaign_started':
+                return `${entityRef || 'Обзвон'}: контактов ${obj?.contacts_count ?? '—'}`;
+            case 'campaign_stopped':
+                return `${entityRef || 'Обзвон'}${obj?.reason ? `: ${obj.reason}` : ''}`;
+            case 'campaign_contacts_assigned':
+                return `${entityRef || 'Обзвон'}: назначено ${obj?.added ?? '—'} из ${obj?.total ?? '—'} контактов${obj?.replace ? ' (замена списка)' : ''}`;
+            case 'campaign_updated':
+            case 'campaign_deleted':
+            case 'campaign_paused':
+            case 'campaign_resumed':
+            case 'campaign_cloned':
+                return entityRef || '—';
+
+            case 'user_created':
+                return `Логин: ${obj?.username || '—'}, роль: ${obj?.role || '—'}`;
+            case 'user_updated':
+            case 'user_deleted':
+            case 'user_enabled':
+            case 'user_disabled':
+            case 'user_restored':
+                return entityRef || '—';
+
+            case 'contacts_merged':
+                return `Телефон ${obj?.phone || '—'}: объединено в №${obj?.kept ?? '—'}, удалено: ${(obj?.removed || []).join(', ') || '—'}`;
+            case 'contact_blacklisted':
+            case 'contact_unblacklisted':
+                return `${entityRef || 'Контакт'}${obj?.reason ? `: ${obj.reason}` : ''}`;
+            case 'contact_deleted':
+            case 'contact_permanently_deleted':
+            case 'contact_restored':
+                return entityRef || '—';
+
+            case 'blacklist_added':
+            case 'blacklist_removed':
+                return `Номер ${obj?.phone || '—'}${obj?.reason ? `: ${obj.reason}` : ''}`;
+
+            case 'incoming_call_received':
+                return `С номера ${obj?.caller_number || '—'}${obj?.duration ? `, ${obj.duration} сек` : ''}`;
+            case 'incoming_calls_cleanup':
+                return `Удалено ${obj?.deleted ?? '—'} записей старше ${obj?.older_than_days ?? '—'} дней`;
+            case 'incoming_call_updated':
+            case 'incoming_call_deleted':
+                return entityRef || '—';
+
+            case 'setting_updated': {
+                // Тот же справочник понятных названий настроек, что и на
+                // вкладке "Настройки" (App.settings.formatKey) - те же
+                // ключи (dialer.max_calls и т.п.), не дублируем список.
+                const label = (typeof App !== 'undefined' && App.settings?.formatKey)
+                    ? App.settings.formatKey(obj?.key)
+                    : (obj?.key || '—');
+                return `${label}: ${obj?.value ?? '—'}`;
             }
-            
-            if (action.includes('user')) {
-                return `Пользователь: ${obj.target_username || obj.user_id || '—'}`;
-            }
-            
-            if (action.includes('contact')) {
-                return `Контакт: ${obj.phone || obj.contact_id || '—'}`;
-            }
-            
-            if (action.includes('blacklist')) {
-                return `Номер: ${obj.phone || '—'}`;
-            }
-            
-            if (action.includes('audio')) {
-                return `Файл: ${obj.filename || obj.audio_id || '—'}`;
-            }
-            
-            if (action.includes('settings')) {
-                return `Настройка: ${obj.key || '—'}`;
-            }
-            
-            // Общее форматирование
+
+            case 'system_disabled':
+                return `${obj?.reason ? obj.reason : 'без причины'}${obj?.killed_calls ? `, сброшено звонков: ${obj.killed_calls}` : ''}`;
+            case 'system_mode_changed':
+                return `${obj?.old_mode || '—'} → ${obj?.new_mode || '—'}${obj?.reason ? `: ${obj.reason}` : ''}`;
+            case 'log_level_changed':
+                return `${obj?.old_level || '—'} → ${obj?.new_level || '—'}`;
+            case 'system_enabled':
+            case 'workers_restart_requested':
+                return '—';
+
+            case 'api_key_created':
+                return `Название: ${obj?.name || '—'}`;
+            case 'api_key_revoked':
+                return entityRef || '—';
+
+            case 'recording_deleted':
+            case 'call_deleted':
+                return entityRef || '—';
+        }
+
+        if (obj) {
             const preview = JSON.stringify(obj);
             return preview.length > 100 ? preview.substring(0, 97) + '...' : preview;
-            
-        } catch {
-            return String(details).substring(0, 100);
         }
+        return entityRef || '—';
     },
     
     getBrowserIcon(userAgent) {
@@ -757,7 +857,7 @@ const AuditModule = {
                 this.formatDateTime(log.created_at),
                 log.username || 'system',
                 this.formatActionName(log.action),
-                this.formatDetails(log.details, log.action).replace(/,/g, ';'),
+                this.formatDetails(log).replace(/,/g, ';'),
                 log.ip_address || ''
             ]);
             

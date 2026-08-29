@@ -91,6 +91,17 @@ action_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
 session_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "session_id", default=None
 )
+# IP/User-Agent текущего HTTP-запроса - устанавливается app_middleware()
+# (app/__init__.py) на каждый запрос. Ни один из ~8 отдельных _log_audit()
+# по сервисам никогда не получал request/IP через параметры - только
+# отсюда, через контекст, без изменения сигнатур этих функций и всех их
+# вызывающих кода, разбросанного по всему проекту.
+ip_address_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "ip_address", default=None
+)
+user_agent_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "user_agent", default=None
+)
 
 
 def generate_correlation_id() -> str:
@@ -153,11 +164,28 @@ def set_session_id(value: Optional[str]) -> None:
     session_id_var.set(value)
 
 
+def get_ip_address() -> Optional[str]:
+    return ip_address_var.get()
+
+
+def get_user_agent() -> Optional[str]:
+    return user_agent_var.get()
+
+
+def set_ip_address(value: Optional[str]) -> None:
+    ip_address_var.set(value)
+
+
+def set_user_agent(value: Optional[str]) -> None:
+    user_agent_var.set(value)
+
+
 def clear_context() -> None:
     """Сбросить весь контекст текущей задачи (используется в тестах / между запросами)"""
     for var in (
         correlation_id_var, request_id_var, user_id_var,
         campaign_id_var, action_id_var, session_id_var,
+        ip_address_var, user_agent_var,
     ):
         var.set(None)
 

@@ -1028,13 +1028,26 @@ class SystemService:
         """Записать аудит"""
         if not self.db_pool:
             return
-        
+
+        # См. подробный комментарий в campaign.py::_log_audit() - тот же
+        # фикс: снимок username/role на момент действия + IP/UA/correlation
+        # из контекста запроса вместо вечного NULL.
+        from app.core.logger import get_ip_address, get_user_agent, get_correlation_id, get_request_id
+
         try:
             async with self.db_pool.acquire() as conn:
                 await conn.execute("""
-                    INSERT INTO audit_log (user_id, action, entity_type, details)
-                    VALUES ($1, $2, $3, $4)
-                """, user_id, action, 'system', json.dumps(details) if details else None)
+                    INSERT INTO audit_log (
+                        user_id, username, user_role, action, entity_type, details,
+                        ip_address, user_agent, correlation_id, request_id
+                    ) VALUES (
+                        $1,
+                        (SELECT username FROM users WHERE id = $1),
+                        (SELECT role FROM users WHERE id = $1),
+                        $2, $3, $4, $5, $6, $7, $8
+                    )
+                """, user_id, action, 'system', json.dumps(details) if details else None,
+                     get_ip_address(), get_user_agent(), get_correlation_id(), get_request_id())
         except Exception as e:
             logger.error(f"Ошибка записи аудита: {e}")
     
