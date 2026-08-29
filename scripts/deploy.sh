@@ -52,14 +52,25 @@ echo "==> Синхронизация backend: app/ -> $DEPLOY_ROOT/backend/app/"
 # Раньше скрипт рестартовал сервис безусловно на каждый запуск, даже когда
 # git говорил "уже актуально" - на живом дозвоне это лишний раз рвёт все
 # активные звонки без всякой причины.
-backend_changes="$(rsync -a --delete -i "$REPO_DIR/app/" "$DEPLOY_ROOT/backend/app/")"
+# --no-owner --no-group: обычный rsync -a копирует ещё и владельца/группу
+# С ИСТОЧНИКА (репозиторий, принадлежит root), а строкой ниже мы сами
+# выставляем autodialer:autodialer НА ПРИЁМНИКЕ - без этих флагов rsync на
+# каждом запуске видел расхождение владельца (root в источнике vs
+# autodialer в приёмнике от прошлого запуска), считал файл "изменившимся"
+# и откатывал владельца на root, а chown ниже тут же возвращал его
+# обратно - вечная перетасовка, ложно определявшаяся как реальное
+# изменение кода и запускавшая рестарт на пустом месте (подтверждено
+# живьём). --exclude='__pycache__': .pyc-кэш не из репозитория и не
+# должен быть предметом deploy - без исключения его создание/устаревание
+# между запусками тоже могло ложно засчитаться как изменение.
+backend_changes="$(rsync -a --no-owner --no-group --delete --exclude='__pycache__' -i "$REPO_DIR/app/" "$DEPLOY_ROOT/backend/app/")"
 if [ -n "$backend_changes" ]; then
     echo "$backend_changes"
 fi
 chown -R autodialer:autodialer "$DEPLOY_ROOT/backend/app"
 
 echo "==> Синхронизация frontend: frontend/dist/ -> $DEPLOY_ROOT/frontend/dist/"
-frontend_changes="$(rsync -a --delete -i "$REPO_DIR/frontend/dist/" "$DEPLOY_ROOT/frontend/dist/")"
+frontend_changes="$(rsync -a --no-owner --no-group --delete -i "$REPO_DIR/frontend/dist/" "$DEPLOY_ROOT/frontend/dist/")"
 if [ -n "$frontend_changes" ]; then
     echo "$frontend_changes"
 fi
