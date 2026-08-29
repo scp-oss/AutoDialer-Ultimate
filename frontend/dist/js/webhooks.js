@@ -987,7 +987,10 @@ const WebhooksModule = {
     
     formatDateTime(dateStr) {
         if (!dateStr) return '—';
-        const date = new Date(dateStr);
+        // См. подробный комментарий в audit.js::formatDateTime() - тот же
+        // баг: без App.parseServerDate() время показывалось на 3 часа
+        // (разница UTC/Europe-Moscow) раньше реального.
+        const date = App.parseServerDate(dateStr);
         return date.toLocaleString('ru-RU', {
             day: '2-digit',
             month: '2-digit',

@@ -936,15 +936,27 @@ const BlacklistModule = {
         btn.addEventListener('click', () => this.removeSelected());
         
         toolbar.insertBefore(btn, document.getElementById('blacklistClearAllBtn'));
-        
-        // Обновление видимости при изменении выбора
-        document.addEventListener('change', (e) => {
-            if (e.target.classList.contains('blacklist-checkbox') || e.target.id === 'blacklistSelectAll') {
-                const selectedCount = document.querySelectorAll('.blacklist-checkbox:checked').length;
-                btn.style.display = selectedCount > 0 ? 'inline-block' : 'none';
-                btn.innerHTML = `🗑️ Удалить выбранные (${selectedCount})`;
-            }
-        });
+
+        // Обновление видимости при изменении выбора. document переживает
+        // уход со вкладки и возврат на неё, а attachEventListeners()
+        // вызывается заново на каждый visit (см. init()) - без защиты
+        // каждый повторный заход добавлял ЕЩЁ ОДИН такой обработчик поверх
+        // уже висящих (тот же баг, что нашли и исправили в settings.js).
+        // Здесь эффект был тихий (просто N раз пересчитывался тот же
+        // текст кнопки), но раз нашли класс бага - чинить надо и здесь.
+        if (!BlacklistModule._delegatedListenersAttached) {
+            BlacklistModule._delegatedListenersAttached = true;
+            document.addEventListener('change', (e) => {
+                if (e.target.classList.contains('blacklist-checkbox') || e.target.id === 'blacklistSelectAll') {
+                    const selectedCount = document.querySelectorAll('.blacklist-checkbox:checked').length;
+                    const deleteBtn = document.getElementById('blacklistDeleteSelectedBtn');
+                    if (deleteBtn) {
+                        deleteBtn.style.display = selectedCount > 0 ? 'inline-block' : 'none';
+                        deleteBtn.innerHTML = `🗑️ Удалить выбранные (${selectedCount})`;
+                    }
+                }
+            });
+        }
     },
     
     // ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
@@ -955,7 +967,10 @@ const BlacklistModule = {
     
     formatDateTime(dateStr) {
         if (!dateStr) return '—';
-        const date = new Date(dateStr);
+        // См. подробный комментарий в audit.js::formatDateTime() - тот же
+        // баг: без App.parseServerDate() время показывалось на 3 часа
+        // (разница UTC/Europe-Moscow) раньше реального.
+        const date = App.parseServerDate(dateStr);
         return date.toLocaleString('ru-RU', {
             day: '2-digit',
             month: '2-digit',

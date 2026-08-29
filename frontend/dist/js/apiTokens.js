@@ -689,12 +689,15 @@ const ApiTokensModule = {
     
     isExpired(expiresAt) {
         if (!expiresAt) return false;
-        return new Date(expiresAt) < new Date();
+        // См. подробный комментарий в audit.js::formatDateTime() - без
+        // App.parseServerDate() эта проверка ошибалась на 3 часа около
+        // границы истечения токена (UTC/Europe-Moscow).
+        return App.parseServerDate(expiresAt) < new Date();
     },
-    
+
     formatDate(dateStr) {
         if (!dateStr) return '—';
-        const date = new Date(dateStr);
+        const date = App.parseServerDate(dateStr);
         return date.toLocaleDateString('ru-RU', {
             day: '2-digit',
             month: '2-digit',
@@ -704,7 +707,10 @@ const ApiTokensModule = {
     
     formatDateTime(dateStr) {
         if (!dateStr) return '—';
-        const date = new Date(dateStr);
+        // См. подробный комментарий в audit.js::formatDateTime() - тот же
+        // баг: без App.parseServerDate() время показывалось на 3 часа
+        // (разница UTC/Europe-Moscow) раньше реального.
+        const date = App.parseServerDate(dateStr);
         return date.toLocaleString('ru-RU', {
             day: '2-digit',
             month: '2-digit',

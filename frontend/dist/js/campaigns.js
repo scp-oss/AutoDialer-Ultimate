@@ -1007,7 +1007,10 @@ App.campaigns = {
 
     formatDate(isoString) {
         if (!isoString) return '—';
-        const date = new Date(isoString);
+        // См. подробный комментарий в audit.js::formatDateTime() - без
+        // App.parseServerDate() дата могла даже сместиться на соседний
+        // день около полуночи (разница UTC/Europe-Moscow - 3 часа).
+        const date = App.parseServerDate(isoString);
         return date.toLocaleDateString('ru-RU');
     },
 

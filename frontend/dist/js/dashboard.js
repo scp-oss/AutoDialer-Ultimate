@@ -505,7 +505,10 @@ App.dashboard = {
     },
 
     formatChartDate(dateStr) {
-        const date = new Date(dateStr);
+        // См. подробный комментарий в audit.js::formatDateTime() - без
+        // App.parseServerDate() точки графика могли сместиться в соседний
+        // день/месяц (разница UTC/Europe-Moscow - 3 часа).
+        const date = App.parseServerDate(dateStr);
         if (this.state.chartPeriod === 'month') {
             return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
         } else if (this.state.chartPeriod === 'year') {

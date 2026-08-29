@@ -743,27 +743,43 @@ const SettingsModule = {
             });
         });
         
-        // Делегирование для кнопок сохранения категорий
-        document.addEventListener('click', (e) => {
-            if (e.target.classList.contains('save-category')) {
-                const category = e.target.dataset.category;
-                this.saveCategory(category);
-            }
-            
-            if (e.target.classList.contains('edit-json')) {
-                const key = e.target.dataset.key;
-                this.openJsonEditor(key);
-            }
-        });
-        
-        // Делегирование для чекбоксов
-        document.addEventListener('change', (e) => {
-            if (e.target.classList.contains('setting-checkbox')) {
-                const key = e.target.dataset.key;
-                const value = e.target.checked;
-                this.saveSetting(key, value);
-            }
-        });
+        // Делегирование на document (клики/чекбоксы настроек) - в отличие
+        // от всего выше (кнопки по id, .settings-tab, .modal), document
+        // НЕ пересоздаётся при уходе с вкладки и возврате на неё - а
+        // attachEventListeners() вызывается заново на каждый visit (см.
+        // init()). Без этой защиты каждый повторный заход на "Настройки"
+        // добавлял ЕЩЁ ОДИН такой обработчик поверх уже висящих - ни один
+        // никогда не снимался - так что на N-й визит одно нажатие
+        // "Сохранить категорию" реально сохраняло (и писало в аудит) один
+        // и тот же результат N раз подряд. Подтверждено живьём: два
+        // идентичных "Изменение настройки" с одной секундой в журнале
+        // аудита на одно изменение "Максимум попыток входа". Вешаем эти
+        // два обработчика ровно один раз за всё время жизни страницы.
+        if (!SettingsModule._delegatedListenersAttached) {
+            SettingsModule._delegatedListenersAttached = true;
+
+            // Делегирование для кнопок сохранения категорий
+            document.addEventListener('click', (e) => {
+                if (e.target.classList.contains('save-category')) {
+                    const category = e.target.dataset.category;
+                    SettingsModule.saveCategory(category);
+                }
+
+                if (e.target.classList.contains('edit-json')) {
+                    const key = e.target.dataset.key;
+                    SettingsModule.openJsonEditor(key);
+                }
+            });
+
+            // Делегирование для чекбоксов
+            document.addEventListener('change', (e) => {
+                if (e.target.classList.contains('setting-checkbox')) {
+                    const key = e.target.dataset.key;
+                    const value = e.target.checked;
+                    SettingsModule.saveSetting(key, value);
+                }
+            });
+        }
     },
     
     attachSettingEvents() {

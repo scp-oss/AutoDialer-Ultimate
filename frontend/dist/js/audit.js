@@ -411,7 +411,18 @@ const AuditModule = {
     
     formatDateTime(dateStr) {
         if (!dateStr) return '—';
-        const date = new Date(dateStr);
+        // App.parseServerDate() normalizes a timezone-less ISO string
+        // (asyncpg/Pydantic serialize naive UTC timestamps with no "Z" -
+        // app/core/database.py sets the DB session timezone to UTC) by
+        // appending "Z" before parsing. Plain `new Date(dateStr)` on that
+        // same string is parsed by the SPEC as browser-LOCAL time, not
+        // UTC - the raw UTC clock reading got relabeled as if it were
+        // already local, showing a time short by the browser's UTC
+        // offset (3 hours for Moscow) instead of the real time the
+        // action happened. incoming.js already uses parseServerDate()
+        // correctly - this file (and apiTokens.js/blacklist.js/users.js/
+        // webhooks.js) never got that same fix.
+        const date = App.parseServerDate(dateStr);
         return date.toLocaleString('ru-RU', {
             day: '2-digit',
             month: '2-digit',
