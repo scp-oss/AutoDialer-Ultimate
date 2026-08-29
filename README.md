@@ -1,34 +1,41 @@
 # AutoDialer Ultimate v3.0
 
-Enterprise-grade автоматический обзвонщик на базе Asterisk + FastAPI.
+Enterprise-grade система автоматического обзвона на базе Asterisk + FastAPI — массовый исходящий обзвон, IVR с DTMF-меню, TTS/STT, веб-панель управления и REST API.
 
 ## 📋 Содержание
 
 - [Возможности](#-возможности)
 - [Системные требования](#-системные-требования)
 - [Быстрая установка](#-быстрая-установка)
-- [Архитектура](#️-архитектура)
+- [Установка через Docker](#-альтернативная-установка-через-docker)
 - [После установки](#-после-установки)
+- [Архитектура](#️-архитектура)
+- [Управление сервисами](#-управление-сервисами)
 - [Безопасность](#-безопасность)
 - [Мониторинг](#-мониторинг)
 - [Документация API](#-документация-api)
 - [Структура проекта](#-структура-проекта)
 - [Удаление](#-удаление)
+- [Решение проблем](#-решение-проблем)
 - [Лицензия](#-лицензия)
 
 ## 🚀 Возможности
 
-- **Массовый обзвон** — до 50+ одновременных каналов
-- **Гибкий CPS** — настраиваемая скорость дозвона (calls per second)
-- **Интеллектуальные повторы** — настраиваемые стратегии для BUSY, NOANSWER, FAILED
-- **TTS (Text-to-Speech)** — генерация голосовых сообщений через Piper (русские голоса)
-- **IVR с DTMF** — обработка нажатий клавиш (1-согласие, 2-отказ, 3-повтор, 4-оператор)
-- **Web-интерфейс** — админ-панель (vanilla JS/HTML/CSS, без сборки; миграция на React — см. ROADMAP.md)
-- **REST API** — полный доступ через FastAPI
-- **Мульти-пользовательский режим** — роли admin/operator/viewer
-- **Real-time мониторинг** — WebSocket для live-статистики
-- **Отказоустойчивость** — Circuit Breaker, Rate Limiting, Graceful Shutdown
-- **Масштабирование** — поддержка Redis Sentinel/Cluster, горизонтальное масштабирование
+- **Массовый обзвон** — десятки одновременных каналов, настраиваемая скорость (CPS), в т.ч. адаптивный CPS с обратной связью по отказам
+- **Интеллектуальные повторы** — отдельные стратегии и задержки для BUSY, NOANSWER, FAILED, автоответчика
+- **TTS (Text-to-Speech)** — генерация голосовых сообщений через Piper (русские голоса), с очередью и ограничением параллелизма
+- **STT (Speech-to-Text)** — распознавание записей звонков (Whisper/Vosk)
+- **Полноценный IVR с DTMF** — 1 (согласие), 2 (отказ), 3 (повтор сообщения), 4 (запрос оператора), 0/5–9/`*`/`#` (произвольные действия кампании), таймаут и некорректный ввод — каждый исход сохраняется отдельным статусом в истории звонков
+- **Входящие звонки** — приветствие, запись, транскрибация
+- **Чёрный список** — с автоматической проверкой при дозвоне и импорте контактов
+- **Полноценный аудит действий** — кто, когда, с какого IP и что изменил (настройки, кампании, пользователи, чёрный список), с человекочитаемой расшифровкой каждого события
+- **Гибкая система настроек** — 46 параметров в 11 категориях (безопасность, дозвон, аудио, TTS, транскрибация, уведомления/SMTP, API, логирование, Asterisk), применяются из БД без правки `.env`
+- **Web-интерфейс** — админ-панель (vanilla JS/HTML/CSS, без сборки)
+- **REST API** — полный доступ через FastAPI, автогенерируемая документация (Swagger/ReDoc)
+- **Мульти-пользовательский режим** — роли admin/operator/viewer, JWT с rotation, опциональный TOTP
+- **Real-time мониторинг** — WebSocket для live-статистики звонков и кампаний
+- **Отказоустойчивость** — Circuit Breaker, Rate Limiting, Graceful Shutdown, degraded-режим при недоступности AMI
+- **Масштабирование** — поддержка Redis Sentinel/Cluster, несколько gunicorn-воркеров с leader election для фоновых задач
 
 ## 📋 Системные требования
 
@@ -42,150 +49,99 @@ Enterprise-grade автоматический обзвонщик на базе A
 
 **Требования к FreePBX (Server-1):**
 - Создан SIP extension (любой номер, по умолчанию 291)
-- Открыты порты: 5060/udp (SIP), 10000-20000/udp (RTP)
+- Открыты порты: 5060/udp (SIP), 10000–20000/udp (RTP)
 
 **Порты, открываемые на сервере AutoDialer:**
-- 80/tcp (HTTP)
-- 443/tcp (HTTPS)
+- 80/tcp (HTTP), 443/tcp (HTTPS)
 - 5060/udp (SIP — только от FreePBX)
-- 10000-20000/udp (RTP — только от FreePBX)
+- 10000–20000/udp (RTP — только от FreePBX)
 
 ## 🚀 Быстрая установка
+
 ```bash
-# Клонирование репозитория
-git clone https://github.com/naumenis-code/AutoDialer-Ultimate.git
+git clone https://github.com/scp-oss/AutoDialer-Ultimate.git
 cd AutoDialer-Ultimate
 
-# Копирование и настройка конфигурации
+# Конфигурация
 cp .env.example .env
-nano .env  # Укажите FREEPBX_IP, FREEPBX_EXTENSION, EXTENSION_PASSWORD
+nano .env  # укажите FREEPBX_IP, FREEPBX_EXTENSION, EXTENSION_PASSWORD
 
-# Запуск установки
+# Установка (интерактивная)
 sudo ./install.sh
 
-# Неинтерактивный режим
-sudo ./install.sh --yes
-
-# Пропустить определённые компоненты
+# Неинтерактивный режим / пропуск отдельных компонентов
+sudo ./install.sh --force
 sudo ./install.sh --skip-firewall --skip-tts
 ```
-Быстрая установка:
-```bash
+
 ## 🐳 Альтернативная установка через Docker
 
-Если вы хотите быстро развернуть систему для тестирования или разработки, используйте Docker Compose.
+Для быстрого развёртывания в целях тестирования/разработки. Asterisk в контейнер не входит — либо ставится отдельно через `install.sh --skip-postgres --skip-redis --skip-nginx --skip-tts`, либо используется уже существующий сервер.
 
-### Что входит в Docker-установку:
-- ✅ PostgreSQL 15
-- ✅ Redis 7
-- ✅ Бэкенд (FastAPI)
-- ✅ Nginx (прокси и статика)
-- ❌ Asterisk (должен быть установлен отдельно на хосте или другом сервере)
-```
-### Быстрый старт с Docker
+| Компонент | install.sh | Docker Compose |
+|---|---|---|
+| Asterisk | ✅ из исходников | ❌ отдельно |
+| PostgreSQL / Redis / Nginx | ✅ | ✅ (в контейнерах) |
+| Изоляция | нет | полная |
+| Подходит для | production | разработка / тестирование |
+| Права root | нужны | не нужны |
+
 ```bash
-# Клонирование репозитория
-git clone https://github.com/naumenis-code/AutoDialer-Ultimate.git
+git clone https://github.com/scp-oss/AutoDialer-Ultimate.git
 cd AutoDialer-Ultimate
-
-# Создание .env файла из примера
 cp .env.example .env
-
-# Редактирование .env (обязательно укажите AMI_HOST и AMI_PASSWORD)
 nano .env
-
-Настройки `AMI_HOST` для Docker
-Пример для `.env.example`:
-```bash
-# =============================================
-# Asterisk AMI Configuration
-# =============================================
-# Для локальной установки (install.sh):
-AMI_HOST=127.0.0.1
-
-# Для Docker-установки (если Asterisk на хосте):
-# AMI_HOST=172.17.0.1
-# AMI_HOST=host.docker.internal  # macOS/Windows
-
-AMI_PORT=5038
-AMI_USER=autodialer
-AMI_PASSWORD=
-
 ```
-Минимальные настройки в .env для Docker:
+
+Ключевые переменные `.env` для Docker (Asterisk на хосте или другом сервере):
+
 ```bash
-# Asterisk AMI (должен быть доступен по сети)
-AMI_HOST=192.168.1.100      # IP сервера с Asterisk
+# Для локальной установки (install.sh): AMI_HOST=127.0.0.1
+# Для Docker, если Asterisk на хосте:
+# AMI_HOST=172.17.0.1
+# AMI_HOST=host.docker.internal   # macOS/Windows
+AMI_HOST=192.168.1.100
 AMI_PORT=5038
 AMI_USER=autodialer
 AMI_PASSWORD=your_ami_password
 
-# FreePBX (если используется)
 FREEPBX_EXTENSION=291
 
-# Секреты (будут сгенерированы автоматически, если пустые)
+# Оставьте пустыми — сгенерируются автоматически при первом запуске
 DB_PASSWORD=
 JWT_SECRET=
+```
 
-# Запуск всех контейнеров
-docker-compose up -d
-
-# Проверка статуса
-docker-compose ps
-
-# Просмотр логов
+```bash
+docker-compose up -d          # запуск
+docker-compose ps             # статус
 docker-compose logs -f backend
-
-# Остановка
-docker-compose down
-
-# Остановка с удалением всех данных (осторожно!)
-docker-compose down -v
-```
-Полная установка (Asterisk на хосте + контейнеры):
-```bash
-# 1. Установить ТОЛЬКО Asterisk через install.sh
-sudo ./install.sh --skip-postgres --skip-redis --skip-nginx --skip-tts
-
-# 2. Запустить контейнеры с БД, Redis, бэкендом и Nginx
-docker-compose up -d
+docker-compose down           # остановка
+docker-compose down -v        # остановка с удалением данных (осторожно!)
 ```
 
-📊 Сравнение способов установки
-```bash
-Критерий              install.sh                  Docker Compose
-Установка Asterisk    ✅ Да (из исходников)      ❌ Нет (требуется отдельно)
-Установка PostgreSQL  ✅ Да                      ✅ Да (в контейнере)
-Установка Redis       ✅ Да                      ✅ Да (в контейнере)
-Установка Nginx       ✅ Да                      ✅ Да (в контейнере)
-Изоляция              Нет (всё в системе)         Полная (контейнеры)
-Производительность    Максимальная                Чуть ниже
-Сложность установки   5-10 минут                  1-2 минуты
-Подходит для          Production                  Разработка / Тестирование
-Требует прав root     ✅ Да                      ❌ Нет
+## 📊 После установки
+
 ```
+Веб-интерфейс:    http://<IP-сервера>/
+Логин:            admin
+Пароль:           см. /opt/autodialer/.admin_credentials (сменить при первом входе)
 
-
-После установки:
-```bash
-Веб-интерфейс: http://<IP-сервера>/
-Логин: admin / Пароль: admin (смените при первом входе!)
-
-Доступ после запуска:
 API документация: http://<IP-сервера>/docs
-Health check: http://<IP-сервера>/api/health
+Health check:     http://<IP-сервера>/api/health
+```
+
+## 🏗️ Архитектура
 
 ```
-🏗️ Архитектура
-```bash
 ┌─────────────────────────────────────────────────────────────┐
-│                    Server-2: AutoDialer Ultimate            │
+│                 Server-2: AutoDialer Ultimate                │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
-│  │   Nginx     │→ │  FastAPI    │→ │    Asterisk + PJSIP │  │
-│  │   :80/443   │  │  :8000      │  │         :5060       │  │
+│  │   Nginx     │→ │  FastAPI    │→ │  Asterisk + PJSIP   │  │
+│  │  :80/443    │  │  :8000      │  │       :5060 (AMI)   │  │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘  │
-│                          ↓                    ↓             │
+│                          ↓                    ↓              │
 │                   ┌─────────────┐  ┌─────────────────────┐  │
 │                   │ PostgreSQL  │  │       Redis         │  │
 │                   │   :5432     │  │       :6379         │  │
@@ -193,308 +149,192 @@ Health check: http://<IP-сервера>/api/health
 └─────────────────────────────────────────────────────────────┘
                               ↓ SIP (PJSIP)
 ┌─────────────────────────────────────────────────────────────┐
-│                    Server-1: FreePBX                        │
-│                      Extension: ${FREEPBX_EXTENSION}        │
+│                     Server-1: FreePBX                        │
+│                    Extension: ${FREEPBX_EXTENSION}            │
 └─────────────────────────────────────────────────────────────┘
                               ↓ Trunk
-┌─────────────────────────────────────────────────────────────┐
-│                    Оператор связи                           │
-└─────────────────────────────────────────────────────────────┘
-                              ↓
-                        Абоненты
+                        Оператор связи → Абоненты
 ```
-📊 После установки
-Проверка статуса
+
+FastAPI-бэкенд подключается к Asterisk по AMI (Asterisk Manager Interface) — не по SIP напрямую; сами вызовы идут через PJSIP-транк на FreePBX. Недоступность AMI при старте не блокирует веб-интерфейс: система уходит в degraded-режим и переподключается в фоне.
+
+## 🔧 Управление сервисами
+
 ```bash
-# Статус всех сервисов
-autodialer-all-status
-
-# Статус бэкенда
-autodialer-status
-
-# Статус Fail2ban
+# Статус
+autodialer-all-status            # все сервисы
+autodialer-status                # только бэкенд
 autodialer-fail2ban-status
-
-# Статус файрвола
 autodialer-firewall-status
-
-# Статус Redis
 autodialer-redis-status
-
-# Статус ротации логов
 autodialer-logrotate-status
-```
-Управление сервисами
-```bash
-# Перезапуск бэкенда
-autodialer-restart
 
-# Перезапуск всех сервисов
-autodialer-all-restart
-
-# Просмотр логов в реальном времени
-autodialer-logs
-
-# Принудительная ротация логов
+# Управление
+autodialer-restart               # перезапуск бэкенда
+autodialer-all-restart           # перезапуск всех сервисов
+autodialer-logs                  # логи в реальном времени
 autodialer-logrotate-force
-
-# Очистка старых логов
 autodialer-logs-cleanup
-```
-Управление файрволом
-```bash
-# Разрешить IP
+
+# Файрвол
 autodialer-firewall-allow 192.168.1.100 "Офис"
+autodialer-firewall-ban 192.168.1.200 3600     # временный бан
+autodialer-firewall-deny 192.168.1.200          # постоянный бан
 
-# Заблокировать IP (временно)
-autodialer-firewall-ban 192.168.1.200 3600
-
-# Заблокировать IP (навсегда)
-autodialer-firewall-deny 192.168.1.200
-```
-Управление Fail2ban
-```bash
-# Разбанить IP
+# Fail2ban
 autodialer-fail2ban-unban asterisk 192.168.1.100
-
-# Забанить IP вручную
 autodialer-fail2ban-ban asterisk 192.168.1.200
-```
-Полезные команды Asterisk
-```bash
-# Консоль Asterisk
-asterisk -rvvv
 
-# Проверка SIP регистрации
+# Asterisk
+asterisk -rvvv                              # консоль
 asterisk -rx 'pjsip show registrations'
-
-# Проверка PJSIP endpoints
 asterisk -rx 'pjsip show endpoints'
-
-# Проверка активных каналов
 asterisk -rx 'core show channels'
-
-# Проверка версии
-asterisk -rx 'core show version'
-
-# Перезагрузка конфигурации
 asterisk -rx 'core reload'
-```
-Управление Redis
-```bash
-# Проверка статуса очередей
-autodialer-redis-status
 
-# Экстренная очистка очереди дозвона
-autodialer-redis-flush-queue
-
-# Подключение к Redis CLI
-redis-cli
-
-# Просмотр ключей
+# Redis
+autodialer-redis-flush-queue     # экстренная очистка очереди дозвона
 redis-cli --scan --pattern '*'
-```
-Генерация TTS
-```bash
-# Генерация аудиофайла
-autodialer-tts -o welcome -v denis "Здравствуйте! У нас есть для вас предложение."
 
-# Генерация для конкретной кампании
+# TTS
+autodialer-tts -o welcome -v denis "Здравствуйте! У нас есть для вас предложение."
 autodialer-tts -c 5 -o campaign_5_msg "Текст для кампании 5"
 ```
-🔐 Безопасность
-```bash
-Функция                	                Описание
-JWT                        Access + Refresh токены с rotation
-RBAC                       Роли: admin, operator, viewer
-Rate Limiting              Sliding window, защита от DDoS
-Circuit Breaker            Защита внешних сервисов (Redis, AMI, DB)
-Fail2ban                   Защита SIP и SSH от брутфорса
-UFW + iptables             Файрвол с защитой от SYN flood и port scan
-HTTPS                      Lets Encrypt (автоматически при указании DOMAIN_NAME)
-Security Headers           X-Frame-Options, X-Content-Type, HSTS
-```
-📊 Мониторинг
-```bash
-Endpoint          Назначение              Доступ
-/metrics          Prometheus метрики      LAN only
-/api/health       Health check            Публичный
-/docs             Swagger UI              Публичный
-/redoc            ReDoc                   Публичный
-```
 
+Большинство параметров дозвона, безопасности, TTS/STT, логирования и уведомлений можно менять прямо из веб-интерфейса (вкладка «Настройки») без правки `.env` и без перезапуска — исключения (например, учётные данные AMI) явно помечены и требуют перезапуска сервиса.
 
-Метрики Prometheus:
-```bash
-autodialer_active_calls — активные звонки
-autodialer_calls_total — всего звонков (по статусам)
-autodialer_cps — calls per second
-autodialer_http_requests — HTTP запросы
+## 🔐 Безопасность
+
+| Функция | Описание |
+|---|---|
+| JWT | Access + Refresh токены с rotation |
+| TOTP | Опциональная двухфакторная аутентификация |
+| RBAC | Роли: admin, operator, viewer |
+| Rate Limiting | Sliding window, отдельные лимиты для `/api/auth/*` |
+| Блокировка входа | Настраиваемый лимит попыток и длительность блокировки |
+| Circuit Breaker | Защита внешних сервисов (Redis, AMI, DB) |
+| Аудит-лог | Полная история действий пользователей с IP/User-Agent |
+| Fail2ban | Защита SIP и SSH от брутфорса |
+| UFW + iptables | Файрвол с защитой от SYN flood и port scan |
+| HTTPS | Let's Encrypt (автоматически при указании `DOMAIN_NAME`) |
+| Security Headers | X-Frame-Options, X-Content-Type-Options, HSTS |
+
+## 📊 Мониторинг
+
+| Endpoint | Назначение | Доступ |
+|---|---|---|
+| `/metrics` | Prometheus метрики | LAN only |
+| `/api/health` | Health check | Публичный |
+| `/docs` | Swagger UI | Публичный |
+| `/redoc` | ReDoc | Публичный |
+
+Ключевые метрики: `autodialer_active_calls`, `autodialer_calls_total` (по статусам), `autodialer_cps`, `autodialer_http_requests`.
+
+Логи: бэкенд — `/opt/autodialer/logs/`, Asterisk — `/var/log/asterisk/full`, Nginx — `/var/log/nginx/`, PostgreSQL — `/var/log/postgresql/`, Redis — `/var/log/redis/`.
+
+## 📚 Документация API
+
+Полная интерактивная документация доступна после запуска: Swagger UI — `http://<IP-сервера>/docs`, ReDoc — `http://<IP-сервера>/redoc`.
+
+| Раздел API | Префикс |
+|---|---|
+| Аутентификация | `/api/auth` |
+| Кампании | `/api/campaigns` |
+| Контакты / группы контактов | `/api/contacts`, `/api/contact-groups` |
+| Звонки и история | `/api/calls` |
+| Статистика | `/api/stats` |
+| Аудио / TTS | `/api/audio` |
+| Чёрный список | `/api/blacklist` |
+| Пользователи | `/api/users` |
+| Настройки | `/api/settings` |
+| Аудит-лог | `/api/audit` |
+| Входящие звонки | `/api/incoming-calls` |
+| Система | `/api/system` |
+| WebSocket | `/api/ws` |
+
+## 📁 Структура проекта
+
 ```
-Логи:
-```bash
-Бэкенд: /opt/autodialer/logs/autodialer.log
-Asterisk: /var/log/asterisk/full
-Nginx: /var/log/nginx/access.log, /var/log/nginx/error.log
-PostgreSQL: /var/log/postgresql/
-Redis: /var/log/redis/
-```
-📚 Документация API
-```bash
-После запуска документация доступна по адресам:
-Swagger UI: http://<IP-сервера>/docs
-ReDoc: http://<IP-сервера>/redoc
-```
-Основные эндпоинты:
-```bash
-Метод    Путь	                        Назначение
-POST     /api/auth/login              Вход в систему
-POST     /api/auth/refresh            Обновление токена
-GET      /api/campaigns               Список кампаний
-POST     /api/campaigns               Создание кампании
-POST     /api/campaigns/{id}/start    Запуск кампании
-POST     /api/campaigns/{id}/stop     Остановка кампании
-GET      /api/contacts                Список контактов
-POST     /api/contacts/import         Импорт контактов
-GET      /api/stats                   Статистика
-GET      /api/history                 История звонков
-POST     /api/audio/generate          Генерация TTS
-GET      /api/system/status           Статус системы
-POST     /api/system/disable          Аварийная остановка
-```
-📁 Структура проекта
-```bash
-autodialer-ultimate/
-├── .env.example                    # Пример конфигурации
-├── .gitignore                      # Игнорируемые файлы
-├── LICENSE                         # MIT License
-├── README.md                       # Этот файл
-├── ROADMAP.md                      # Статус проекта и план дальнейшей разработки
-├── install.sh                      # Главный установщик
-├── uninstall.sh                    # Скрипт удаления
-├── docker-compose.yml              # Docker Compose
-├── Dockerfile                      # Dockerfile бэкенда
-├── pyproject.toml                  # Метаданные Python-пакета
-├── alembic.ini, alembic/           # Миграции БД
-├── scripts/                        # Скрипты установки (14 шт)
-│   ├── 01_system_setup.sh
-│   ├── 02_asterisk_install.sh
-│   ├── 03_asterisk_config.sh
-│   ├── 04_pjsip_config.sh
-│   ├── 05_dialplan_config.sh
-│   ├── 06_tts_install.sh
-│   ├── 07_postgresql_setup.sh
-│   ├── 08_redis_setup.sh
-│   ├── 09_python_backend.sh
-│   ├── 10_nginx_setup.sh
-│   ├── 11_firewall_setup.sh
-│   ├── 12_start_services.sh
-│   ├── 13_fail2ban_setup.sh
-│   └── 14_logrotate_setup.sh
-├── app/                             # Python-бэкенд (FastAPI) — единственное ядро приложения
-│   ├── main.py                     # Точка входа (uvicorn app.main:app)
-│   ├── core/                       # config, logger, database, redis, security, dependencies
-│   ├── models/                     # Pydantic-схемы запросов/ответов
-│   ├── api/                        # REST-роутеры (по одному на домен) + WebSocket
-│   ├── services/                   # Бизнес-логика (кампании, дозвон, TTS, STT, ...)
-│   ├── workers/                    # Фоновые asyncio-задачи (retry, transcription, health)
-│   ├── utils/                      # AMI/rate limiter/circuit breaker/leader election
-│   └── requirements/                # base.txt, dev.txt, prod.txt, tts.txt, stt.txt
-├── docker/                          # Dockerfile + entrypoint для Asterisk-образа
-├── tests/                          # pytest набор (boot/security/health/websocket/dialer)
-├── frontend/dist/                  # Веб-интерфейс (vanilla JS, без сборки)
+AutoDialer-Ultimate/
+├── .env.example                 # Пример конфигурации
+├── LICENSE                      # MIT License
+├── README.md                    # Этот файл
+├── ROADMAP.md                   # История разработки и технические решения
+├── install.sh                   # Главный установщик
+├── uninstall.sh                 # Скрипт удаления
+├── docker-compose.yml, Dockerfile
+├── pyproject.toml
+├── alembic.ini, alembic/        # Миграции БД
+├── scripts/                     # Пошаговые скрипты установки (14 шт)
+├── app/                         # Python-бэкенд (FastAPI) — единственное ядро приложения
+│   ├── main.py                  # Точка входа (uvicorn/gunicorn app.main:app)
+│   ├── core/                    # config, logger, database, redis, security, dependencies
+│   ├── models/                  # Pydantic-схемы запросов/ответов
+│   ├── api/                     # REST-роутеры (по одному на домен) + WebSocket
+│   ├── services/                # Бизнес-логика (кампании, дозвон, TTS, STT, настройки, аудит, ...)
+│   ├── workers/                 # Фоновые asyncio-задачи (retry, транскрибация, health, очистка)
+│   ├── utils/                   # AMI-хелперы, rate limiter, circuit breaker, leader election
+│   └── requirements/             # base.txt, dev.txt, prod.txt, tts.txt, stt.txt
+├── docker/                      # Dockerfile + entrypoint для Asterisk-образа
+├── tests/                       # pytest-набор (health, security, websocket, дозвон, ...)
+├── frontend/dist/                # Веб-интерфейс (vanilla JS, без сборки)
 │   ├── index.html
+│   ├── components/tabs/          # HTML-фрагменты вкладок
 │   ├── css/style.css
 │   └── js/*.js
-├── asterisk/                       # Конфиги Asterisk (9 файлов)
-│   ├── asterisk.conf
-│   ├── rtp.conf
-│   ├── pjsip.conf.template
-│   ├── extensions.conf
-│   ├── manager.conf.template
-│   ├── logger.conf
-│   ├── cdr.conf
-│   ├── indications.conf
-│   └── modules.conf
-├── systemd/                        # Systemd сервисы
-│   ├── autodialer.service
-│   └── asterisk.service.d/
-│       └── limits.conf
-├── nginx/                          # Nginx конфиг
-│   └── autodialer.conf
-├── sql/                            # База данных
-│   ├── schema.sql                  # Полная схема (23 таблицы)
-│   └── migrations/                 # Историческая последовательность (уже в schema.sql)
-├── fail2ban/                       # Fail2ban конфиги
-│   ├── jail.local
-│   └── filter.d/
-│       └── asterisk.conf
-├── logrotate/                      # Logrotate конфиг
-│   └── autodialer
-├── docs/                           # Документация
-└── .github/workflows/              # GitHub Actions
-    └── tests.yml
-```
-🔧 Удаление
-```bash
-bash
-# Полное удаление системы
-sudo /opt/autodialer/uninstall.sh
-Внимание: Будут удалены все файлы в /opt/autodialer, база данных autodialer, системные сервисы.
+├── asterisk/                     # Конфиги Asterisk (asterisk.conf, extensions.conf, pjsip.conf.template, ...)
+├── systemd/                      # systemd-юнит бэкенда
+├── nginx/                        # Nginx-конфиг
+├── sql/schema.sql                # Полная схема БД (40 таблиц)
+├── fail2ban/                     # Fail2ban конфиги
+├── logrotate/                    # Logrotate конфиг
+├── docs/                         # Документация
+└── .github/workflows/            # GitHub Actions (CI)
 ```
 
-🐛 Решение проблем
+## 🗑️ Удаление
+
 ```bash
-1. Не регистрируется SIP extension
-bash
-# Проверить статус регистрации
+sudo /opt/autodialer/uninstall.sh
+```
+
+Внимание: будут удалены все файлы в `/opt/autodialer`, база данных `autodialer` и системные сервисы.
+
+## 🐛 Решение проблем
+
+**Не регистрируется SIP extension**
+```bash
 asterisk -rx 'pjsip show registrations'
-```
-# Проверить логи
-```bash
 tail -f /var/log/asterisk/full | grep -i register
-Возможные причины:
-Неверный FREEPBX_IP в .env
-Неверный EXTENSION_PASSWORD
-Extension не создан на FreePBX
-Блокировка порта 5060 файрволом
 ```
-2. Не проигрывается аудио / нет звука
+Частые причины: неверный `FREEPBX_IP`/`EXTENSION_PASSWORD` в `.env`, extension не создан на FreePBX, порт 5060 заблокирован файрволом.
+
+**Не проигрывается аудио**
 ```bash
-bash
-# Проверить RTP порты
 ufw status | grep 10000
-# Проверить наличие аудиофайлов
 ls -la /var/lib/asterisk/sounds/tts/
 ```
-3. Бэкенд не запускается
-```bash
-bash
-# Проверить статус
-systemctl status autodialer
 
-# Проверить логи
+**Бэкенд не запускается**
+```bash
+systemctl status autodialer
 journalctl -u autodialer -n 50
 ```
-4. Redis недоступен
-```bash
-bash
-# Проверить статус
-systemctl status redis-server
 
-# Проверить подключение
+**Redis недоступен**
+```bash
+systemctl status redis-server
 redis-cli ping
 ```
-🤝 Вклад в проект
-```bash
-Pull requests приветствуются! Для крупных изменений, пожалуйста, сначала создайте issue для обсуждения.
-```
-📄 Лицензия
-```bash
-MIT License — см. файл LICENSE
-```
-👤 Автор
-```bash
-Илья — naumenis-code
-```
+
+## 🤝 Вклад в проект
+
+Pull requests приветствуются! Для крупных изменений сначала создайте issue для обсуждения.
+
+## 📄 Лицензия
+
+MIT License — см. файл [LICENSE](LICENSE).
+
+---
+
 ⭐ Если проект оказался полезным, поставьте звезду на GitHub!
