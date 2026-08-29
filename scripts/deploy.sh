@@ -46,19 +46,40 @@ git checkout "$BRANCH"
 git pull origin "$BRANCH"
 
 echo "==> Синхронизация backend: app/ -> $DEPLOY_ROOT/backend/app/"
-rsync -a --delete "$REPO_DIR/app/" "$DEPLOY_ROOT/backend/app/"
+# -i/--itemize-changes печатает ровно одну строку на каждый реально
+# скопированный/удалённый файл и молчит, если различий нет - по пустому
+# выводу узнаём, изменилось ли что-то, и решаем, нужен ли рестарт.
+# Раньше скрипт рестартовал сервис безусловно на каждый запуск, даже когда
+# git говорил "уже актуально" - на живом дозвоне это лишний раз рвёт все
+# активные звонки без всякой причины.
+backend_changes="$(rsync -a --delete -i "$REPO_DIR/app/" "$DEPLOY_ROOT/backend/app/")"
+if [ -n "$backend_changes" ]; then
+    echo "$backend_changes"
+fi
 chown -R autodialer:autodialer "$DEPLOY_ROOT/backend/app"
 
 echo "==> Синхронизация frontend: frontend/dist/ -> $DEPLOY_ROOT/frontend/dist/"
-rsync -a --delete "$REPO_DIR/frontend/dist/" "$DEPLOY_ROOT/frontend/dist/"
+frontend_changes="$(rsync -a --delete -i "$REPO_DIR/frontend/dist/" "$DEPLOY_ROOT/frontend/dist/")"
+if [ -n "$frontend_changes" ]; then
+    echo "$frontend_changes"
+fi
 chown -R www-data:www-data "$DEPLOY_ROOT/frontend/dist"
 
-echo "==> Перезапуск $SERVICE_NAME"
-systemctl restart "$SERVICE_NAME"
-sleep 1
-systemctl status "$SERVICE_NAME" --no-pager -l || true
+if [ -n "$backend_changes" ]; then
+    echo "==> Backend изменился - перезапуск $SERVICE_NAME"
+    systemctl restart "$SERVICE_NAME"
+    sleep 1
+    systemctl status "$SERVICE_NAME" --no-pager -l || true
+    echo "==> Последние строки журнала:"
+    journalctl -u "$SERVICE_NAME" -n 20 --no-pager
+else
+    echo "==> Backend не менялся - рестарт $SERVICE_NAME пропущен (активные звонки не тронуты)"
+fi
 
-echo "==> Последние строки журнала:"
-journalctl -u "$SERVICE_NAME" -n 20 --no-pager
+if [ -n "$frontend_changes" ]; then
+    echo "==> Фронтенд обновлён - сделай Ctrl+Shift+R в браузере, рестарт сервиса для этого не нужен"
+else
+    echo "==> Фронтенд не менялся"
+fi
 
-echo "==> Готово. Не забудь Ctrl+Shift+R в браузере - фронтенд закэширован."
+echo "==> Готово."
