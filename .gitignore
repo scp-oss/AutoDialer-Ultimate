@@ -589,3 +589,10 @@ System Volume Information/
 .com.apple.timemachine.donotpresent
 .com.apple.timemachine.supported
 .AppleDB
+
+# =============================================
+# Claude Code local tooling state
+# =============================================
+# Background-agent worktrees and other session-local state - not project
+# content, must never be committed.
+.claude/
