@@ -105,16 +105,16 @@ const AuditModule = {
                     <div class="filter-row">
                         <div class="filter-group">
                             <label>Дата с</label>
-                            <input type="datetime-local" 
-                                   id="auditFilterDateFrom" 
+                            <input type="date"
+                                   id="auditFilterDateFrom"
                                    class="form-control"
                                    value="${this.filters.dateFrom}">
                         </div>
-                        
+
                         <div class="filter-group">
                             <label>Дата по</label>
-                            <input type="datetime-local" 
-                                   id="auditFilterDateTo" 
+                            <input type="date"
+                                   id="auditFilterDateTo"
                                    class="form-control"
                                    value="${this.filters.dateTo}">
                         </div>
@@ -256,8 +256,13 @@ const AuditModule = {
             if (this.filters.action) url += `&action=${encodeURIComponent(this.filters.action)}`;
             if (this.filters.username) url += `&username=${encodeURIComponent(this.filters.username)}`;
             if (this.filters.ipAddress) url += `&ip_address=${encodeURIComponent(this.filters.ipAddress)}`;
-            if (this.filters.dateFrom) url += `&date_from=${this.filters.dateFrom}`;
-            if (this.filters.dateTo) url += `&date_to=${this.filters.dateTo}`;
+            // Бэкенд (DateRangeParams в app/core/dependencies.py) принимает
+            // именно from_date/to_date в формате YYYY-MM-DD, а не
+            // date_from/date_to - при неверном имени параметр тихо
+            // игнорировался FastAPI (лишний query-параметр не ошибка),
+            // так что фильтр по датам просто никогда не применялся.
+            if (this.filters.dateFrom) url += `&from_date=${this.filters.dateFrom}`;
+            if (this.filters.dateTo) url += `&to_date=${this.filters.dateTo}`;
             
             const response = await authFetch(url);
             if (response.ok) {
@@ -409,41 +414,89 @@ const AuditModule = {
     },
     
     formatActionName(action) {
+        // Раньше почти ни один ключ здесь не совпадал с тем, что реально
+        // пишет бэкенд (AuditAction в app/models/audit.py) - там
+        // 'campaign_started'/'user_created'/'blacklist_added'/... (причастие
+        // прошедшего времени), а тут были 'campaign_start'/'user_create'/
+        // 'blacklist_add' (глагол) - карта не срабатывала практически
+        // никогда, и любое действие показывалось как сырой fallback
+        // ("campaign started" вместо "Запуск обзвона"). Ключи ниже
+        // приведены в точное соответствие со значениями enum AuditAction.
         const actions = {
             'login': 'Вход в систему',
             'logout': 'Выход из системы',
             'login_failed': 'Неудачный вход',
-            'password_change': 'Смена пароля',
-            'user_create': 'Создание пользователя',
-            'user_update': 'Обновление пользователя',
-            'user_delete': 'Удаление пользователя',
-            'campaign_create': 'Создание обзвона',
-            'campaign_start': 'Запуск обзвона',
-            'campaign_stop': 'Остановка обзвона',
-            'campaign_pause': 'Пауза обзвона',
-            'campaign_resume': 'Возобновление обзвона',
-            'campaign_delete': 'Удаление обзвона',
-            'contact_create': 'Создание контакта',
-            'contact_update': 'Обновление контакта',
-            'contact_delete': 'Удаление контакта',
-            'contact_import': 'Импорт контактов',
-            'blacklist_add': 'Добавление в ЧС',
-            'blacklist_remove': 'Удаление из ЧС',
-            'blacklist_import': 'Импорт в ЧС',
-            'audio_upload': 'Загрузка аудио',
-            'audio_generate': 'Генерация TTS',
-            'audio_delete': 'Удаление аудио',
-            'settings_update': 'Изменение настроек',
-            'system_start': 'Запуск системы',
-            'system_stop': 'Остановка системы',
-            'system_restart': 'Перезагрузка системы',
-            'api_token_create': 'Создание API токена',
-            'api_token_delete': 'Удаление API токена',
-            'webhook_create': 'Создание Webhook',
-            'webhook_update': 'Обновление Webhook',
-            'webhook_delete': 'Удаление Webhook',
-            'incoming_call': 'Входящий звонок',
-            'transcription': 'Транскрибация'
+            'password_changed': 'Смена пароля',
+            'password_reset': 'Сброс пароля',
+            'totp_enabled': 'Включена 2FA',
+            'totp_disabled': 'Отключена 2FA',
+            'user_created': 'Создание пользователя',
+            'user_updated': 'Обновление пользователя',
+            'user_deleted': 'Удаление пользователя',
+            'user_enabled': 'Активация пользователя',
+            'user_disabled': 'Блокировка пользователя',
+            'user_restored': 'Восстановление пользователя',
+            'role_changed': 'Изменение роли',
+            'campaign_created': 'Создание обзвона',
+            'campaign_updated': 'Обновление обзвона',
+            'campaign_deleted': 'Удаление обзвона',
+            'campaign_started': 'Запуск обзвона',
+            'campaign_stopped': 'Остановка обзвона',
+            'campaign_paused': 'Пауза обзвона',
+            'campaign_resumed': 'Возобновление обзвона',
+            'campaign_cloned': 'Клонирование обзвона',
+            'campaign_contacts_assigned': 'Назначение контактов обзвону',
+            'contact_created': 'Создание контакта',
+            'contact_updated': 'Обновление контакта',
+            'contact_deleted': 'Удаление контакта',
+            'contact_permanently_deleted': 'Полное удаление контакта',
+            'contact_restored': 'Восстановление контакта',
+            'contacts_merged': 'Объединение контактов',
+            'contact_imported': 'Импорт контактов',
+            'contact_exported': 'Экспорт контактов',
+            'contact_blacklisted': 'Контакт добавлен в ЧС',
+            'contact_unblacklisted': 'Контакт удалён из ЧС',
+            'group_created': 'Создание группы контактов',
+            'group_updated': 'Обновление группы контактов',
+            'group_deleted': 'Удаление группы контактов',
+            'call_deleted': 'Удаление звонка',
+            'recording_deleted': 'Удаление записи разговора',
+            'call_recording_deleted': 'Удаление записи звонка',
+            'call_recording_downloaded': 'Скачивание записи звонка',
+            'audio_uploaded': 'Загрузка аудио',
+            'audio_generated': 'Генерация TTS',
+            'audio_deleted': 'Удаление аудио',
+            'audio_converted': 'Конвертация аудио',
+            'blacklist_added': 'Добавление в ЧС',
+            'blacklist_removed': 'Удаление из ЧС',
+            'blacklist_imported': 'Импорт в ЧС',
+            'blacklist_exported': 'Экспорт ЧС',
+            'setting_updated': 'Изменение настройки',
+            'settings_bulk_updated': 'Массовое изменение настроек',
+            'system_enabled': 'Система включена',
+            'system_disabled': 'Аварийная остановка системы',
+            'system_mode_changed': 'Изменение режима системы',
+            'system_config_changed': 'Изменение конфигурации системы',
+            'system_maintenance_started': 'Начало техобслуживания',
+            'system_maintenance_ended': 'Окончание техобслуживания',
+            'log_level_changed': 'Изменение уровня логирования',
+            'workers_restart_requested': 'Запрошен перезапуск воркеров',
+            'api_key_created': 'Создание API ключа',
+            'api_key_revoked': 'Отзыв API ключа',
+            'api_key_used': 'Использование API ключа',
+            'incoming_call_received': 'Входящий звонок',
+            'incoming_call_updated': 'Обновление входящего звонка',
+            'incoming_call_deleted': 'Удаление входящего звонка',
+            'incoming_calls_cleanup': 'Очистка входящих звонков',
+            'transcription_started': 'Начата транскрибация',
+            'transcription_completed': 'Транскрибация завершена',
+            'webhook_received': 'Webhook получен',
+            'webhook_failed': 'Ошибка Webhook',
+            'view': 'Просмотр',
+            'export': 'Экспорт',
+            'download': 'Скачивание',
+            'search': 'Поиск',
+            'other': 'Другое'
         };
         return actions[action] || action.replace(/_/g, ' ');
     },
@@ -599,11 +652,17 @@ const AuditModule = {
         btn.textContent = '⏳ Очистка...';
         
         try {
-            const response = await authFetch(`${API_BASE}/audit/clear`, {
-                method: 'POST',
-                body: JSON.stringify({ older_than_days: parseInt(days) })
-            });
-            
+            // Реальный роут - POST /audit/cleanup (не /clear), и
+            // older_than_days/dry_run у него обычные query-параметры
+            // функции, а не поля JSON body - раньше запрос улетал на
+            // несуществующий /audit/clear и падал 404. dry_run=false
+            // обязателен явно: у cleanup_old_logs() он по умолчанию True
+            // (только подсчёт, ничего не удаляет).
+            const response = await authFetch(
+                `${API_BASE}/audit/cleanup?older_than_days=${parseInt(days)}&dry_run=false`,
+                { method: 'POST' }
+            );
+
             if (response.ok) {
                 const data = await response.json();
                 showToast(`Удалено ${data.deleted} записей`, 'success');
@@ -623,17 +682,28 @@ const AuditModule = {
     
     async exportAudit() {
         showToast('Подготовка экспорта...', 'info');
-        
+
         try {
-            let url = `${API_BASE}/audit/export?`;
-            const params = [];
-            if (this.filters.action) params.push(`action=${encodeURIComponent(this.filters.action)}`);
-            if (this.filters.username) params.push(`username=${encodeURIComponent(this.filters.username)}`);
-            if (this.filters.dateFrom) params.push(`date_from=${this.filters.dateFrom}`);
-            if (this.filters.dateTo) params.push(`date_to=${this.filters.dateTo}`);
-            url += params.join('&');
-            
-            const response = await authFetch(url);
+            // Реальный роут - POST /audit/export с телом AuditExportRequest
+            // (JSON), а не GET со строкой запроса - GET на этот путь у
+            // бэкенда вообще не зарегистрирован (405/404). filter здесь -
+            // это AuditLogFilter: action - список (даже один выбранный
+            // пункт нужно обернуть в массив), даты - from_date/to_date.
+            const filter = {};
+            if (this.filters.action) filter.action = [this.filters.action];
+            if (this.filters.username) filter.username = this.filters.username;
+            if (this.filters.ipAddress) filter.ip_address = this.filters.ipAddress;
+            if (this.filters.dateFrom) filter.from_date = this.filters.dateFrom;
+            if (this.filters.dateTo) filter.to_date = this.filters.dateTo;
+
+            const response = await authFetch(`${API_BASE}/audit/export`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    format: 'csv',
+                    filter: Object.keys(filter).length ? filter : null,
+                    max_records: 10000
+                })
+            });
             if (response.ok) {
                 const blob = await response.blob();
                 const downloadUrl = window.URL.createObjectURL(blob);

@@ -322,9 +322,9 @@ class AuditService:
                 user_id=row['user_id'],
                 username=row['username'],
                 user_role=row['user_role'],
-                action=AuditAction(row['action']) if row['action'] else None,
-                severity=AuditSeverity(row['severity']) if row['severity'] else AuditSeverity.INFO,
-                entity_type=AuditEntityType(row['entity_type']) if row['entity_type'] else None,
+                action=self._safe_enum(AuditAction, row['action'], AuditAction.OTHER),
+                severity=self._safe_enum(AuditSeverity, row['severity'], AuditSeverity.INFO),
+                entity_type=self._safe_enum(AuditEntityType, row['entity_type']),
                 entity_id=row['entity_id'],
                 entity_name=row['entity_name'],
                 details=json.loads(row['details']) if row['details'] else None,
@@ -1001,6 +1001,36 @@ class AuditService:
     # =============================================
     # Вспомогательные методы
     # =============================================
+    @staticmethod
+    def _safe_enum(enum_cls, value, default=None):
+        """
+        Безопасно привести строку из БД к enum-значению.
+
+        action/entity_type в audit_log - обычные VARCHAR без FK/enum-
+        ограничения в БД (severity хотя бы прикрыт CHECK-констрейнтом),
+        так что ничто не мешает какому-нибудь вызову self._log_audit(...)
+        записать строку, которую забыли добавить в AuditAction/
+        AuditEntityType - что и произошло: 11 реальных action'ов
+        (contacts_merged, incoming_call_updated, recording_deleted и
+        т.д. - обычные повседневные операции, не редкий край) писались в
+        БД, но отсутствовали в enum. Один такой рядок делал
+        AuditAction(row['action']) необработанным ValueError - и это
+        валило ВЕСЬ список аудита для всех страниц и всех фильтров сразу
+        (не только эту одну запись), подтверждено воспроизведением на
+        реальной схеме. Недостающие значения добавлены в enum, но это
+        по-прежнему единственная линия обороны от следующего такого же
+        рассинхрона - падать из-за одной строки чтения умолчания
+        недопустимо для журнала аудита, поэтому теперь неизвестное
+        значение просто получает запасной ярлык вместо краха.
+        """
+        if not value:
+            return default
+        try:
+            return enum_cls(value)
+        except ValueError:
+            logger.warning(f"Неизвестное значение {value!r} для {enum_cls.__name__} в audit_log")
+            return default
+
     def _row_to_response(self, row) -> AuditLogResponse:
         """Преобразовать строку БД в ответ"""
         return AuditLogResponse(
@@ -1008,9 +1038,9 @@ class AuditService:
             user_id=row['user_id'],
             username=row['username'],
             user_role=row['user_role'],
-            action=AuditAction(row['action']) if row['action'] else None,
-            severity=AuditSeverity(row['severity']) if row['severity'] else AuditSeverity.INFO,
-            entity_type=AuditEntityType(row['entity_type']) if row['entity_type'] else None,
+            action=self._safe_enum(AuditAction, row['action'], AuditAction.OTHER),
+            severity=self._safe_enum(AuditSeverity, row['severity'], AuditSeverity.INFO),
+            entity_type=self._safe_enum(AuditEntityType, row['entity_type']),
             entity_id=row['entity_id'],
             entity_name=row['entity_name'],
             details=json.loads(row['details']) if row['details'] else None,

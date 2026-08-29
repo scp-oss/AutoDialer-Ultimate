@@ -26,9 +26,11 @@ router = APIRouter()
 async def list_audit_logs(
     pagination: PaginationParams = Depends(),
     user_id: Optional[int] = None,
+    username: Optional[str] = None,
+    ip_address: Optional[str] = None,
     action: Optional[List[AuditAction]] = None,
     severity: Optional[List[AuditSeverity]] = None,
-    entity_type: Optional[str] = None,
+    entity_type: Optional[List[str]] = None,
     entity_id: Optional[int] = None,
     date_range: DateRangeParams = Depends(),
     search: Optional[str] = None,
@@ -36,9 +38,11 @@ async def list_audit_logs(
 ):
     """Получить аудит логи"""
     audit_service = get_audit_service()
-    
+
     filter_params = AuditLogFilter(
         user_id=user_id,
+        username=username,
+        ip_address=ip_address,
         action=action,
         severity=severity,
         entity_type=entity_type,
@@ -47,7 +51,7 @@ async def list_audit_logs(
         to_date=date_range.to_date.date() if date_range.to_date else None,
         search=search
     )
-    
+
     return await audit_service.list_audit_logs(
         page=pagination.page,
         page_size=pagination.page_size,

@@ -38,6 +38,7 @@ class AuditAction(str, Enum):
     USER_DELETED = "user_deleted"
     USER_ENABLED = "user_enabled"
     USER_DISABLED = "user_disabled"
+    USER_RESTORED = "user_restored"
     ROLE_CHANGED = "role_changed"
     
     # Кампании
@@ -49,11 +50,15 @@ class AuditAction(str, Enum):
     CAMPAIGN_PAUSED = "campaign_paused"
     CAMPAIGN_RESUMED = "campaign_resumed"
     CAMPAIGN_CLONED = "campaign_cloned"
-    
+    CAMPAIGN_CONTACTS_ASSIGNED = "campaign_contacts_assigned"
+
     # Контакты
     CONTACT_CREATED = "contact_created"
     CONTACT_UPDATED = "contact_updated"
     CONTACT_DELETED = "contact_deleted"
+    CONTACT_PERMANENTLY_DELETED = "contact_permanently_deleted"
+    CONTACT_RESTORED = "contact_restored"
+    CONTACTS_MERGED = "contacts_merged"
     CONTACT_IMPORTED = "contact_imported"
     CONTACT_EXPORTED = "contact_exported"
     CONTACT_BLACKLISTED = "contact_blacklisted"
@@ -66,6 +71,7 @@ class AuditAction(str, Enum):
     
     # Звонки
     CALL_DELETED = "call_deleted"
+    RECORDING_DELETED = "recording_deleted"
     CALL_RECORDING_DELETED = "call_recording_deleted"
     CALL_RECORDING_DOWNLOADED = "call_recording_downloaded"
     
@@ -88,9 +94,12 @@ class AuditAction(str, Enum):
     # Система
     SYSTEM_ENABLED = "system_enabled"
     SYSTEM_DISABLED = "system_disabled"
+    SYSTEM_MODE_CHANGED = "system_mode_changed"
     SYSTEM_CONFIG_CHANGED = "system_config_changed"
     SYSTEM_MAINTENANCE_STARTED = "system_maintenance_started"
     SYSTEM_MAINTENANCE_ENDED = "system_maintenance_ended"
+    LOG_LEVEL_CHANGED = "log_level_changed"
+    WORKERS_RESTART_REQUESTED = "workers_restart_requested"
     
     # API ключи
     API_KEY_CREATED = "api_key_created"
@@ -99,7 +108,9 @@ class AuditAction(str, Enum):
     
     # Входящие звонки
     INCOMING_CALL_RECEIVED = "incoming_call_received"
+    INCOMING_CALL_UPDATED = "incoming_call_updated"
     INCOMING_CALL_DELETED = "incoming_call_deleted"
+    INCOMING_CALLS_CLEANUP = "incoming_calls_cleanup"
     TRANSCRIPTION_STARTED = "transcription_started"
     TRANSCRIPTION_COMPLETED = "transcription_completed"
     
