@@ -246,7 +246,15 @@ CREATE TABLE IF NOT EXISTS contacts (
     deleted_at TIMESTAMP
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_phone_active ON contacts(phone) WHERE NOT blacklisted;
+-- deleted_at IS NULL добавлен в предикат: без него soft-deleted (не
+-- blacklisted) контакт навсегда занимал номер - ни create_contact(), ни
+-- bulk_import_contacts() не могли создать новый контакт с тем же
+-- телефоном, а restore_contact() ни на один API-роут не был подключён,
+-- то есть освободить номер было в принципе невозможно. Все ON CONFLICT
+-- (phone) WHERE ... на этот индекс (dialer.py, call_result.py) обновлены
+-- под тот же предикат - иначе Postgres перестал бы находить его как
+-- arbiter ("no unique or exclusion constraint matching").
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_phone_active ON contacts(phone) WHERE NOT blacklisted AND deleted_at IS NULL;
 
 -- Многие-ко-многим контакт-группа (app/services/contact.py:
 -- _add_contact_to_groups/_get_contact_groups/list_contacts) - отдельно от

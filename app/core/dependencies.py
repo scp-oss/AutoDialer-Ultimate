@@ -315,20 +315,31 @@ async def _verify_api_key(api_key: str) -> Optional[TokenData]:
             row['id']
         )
         
+        # asyncpg не декодирует JSONB само по себе (в этом проекте нигде
+        # не зарегистрирован set_type_codec для jsonb, см. app/core/
+        # database.py) - row['permissions'] здесь всегда сырая JSON-строка
+        # вида '["campaigns:write"]', а не список. TokenData.permissions
+        # типизирован как List[str], а has_permission() делает
+        # `permission in self.permissions` - для строки это выродилось бы
+        # в substring-проверку вместо проверки элемента списка. Тот же
+        # паттерн json.loads(...) уже используется для permissions в
+        # app/services/user.py.
+        permissions = json.loads(row['permissions']) if row['permissions'] else []
+
         # Возвращаем данные
         if row['user_id']:
             return TokenData(
                 user_id=row['user_id'],
                 username=row['username'] or f"api_key_{row['id']}",
                 role=row['role'] or "api",
-                permissions=row['permissions'] or [],
+                permissions=permissions,
             )
         else:
             return TokenData(
                 user_id=0,
                 username=f"api_key_{row['id']}",
                 role="api",
-                permissions=row['permissions'] or [],
+                permissions=permissions,
             )
 
 

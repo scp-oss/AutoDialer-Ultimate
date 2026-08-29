@@ -134,9 +134,17 @@ class ContactService:
             raise ContactValidationError(f"Неверный формат номера: {request.phone}")
         
         async with self.db_pool.acquire() as conn:
-            # Проверяем существование
+            # Проверяем существование. deleted_at IS NULL обязателен - без
+            # него soft-deleted контакт (см. delete_contact()/
+            # restore_contact()) навсегда блокировал повторное создание
+            # с тем же номером, хотя нигде в списках/поиске не виден (там
+            # везде фильтр deleted_at IS NULL уже стоит - см.
+            # find_duplicates() выше). Подтверждено аудитом: единственный
+            # способ освободить номер - восстановить контакт, а
+            # restore_contact() ни на один API-роут, ни на кнопку в
+            # интерфейсе до сих пор не был подключён.
             existing = await conn.fetchrow(
-                "SELECT id, phone FROM contacts WHERE phone = $1",
+                "SELECT id, phone FROM contacts WHERE phone = $1 AND deleted_at IS NULL",
                 phone
             )
             if existing:
@@ -766,9 +774,10 @@ class ContactService:
                             result.blacklisted += 1
                             continue
                     
-                    # Проверяем существование
+                    # Проверяем существование (soft-deleted не считается -
+                    # см. комментарий у того же чека в create_contact() выше)
                     existing = await conn.fetchrow(
-                        "SELECT id FROM contacts WHERE phone = $1",
+                        "SELECT id FROM contacts WHERE phone = $1 AND deleted_at IS NULL",
                         normalized
                     )
                     

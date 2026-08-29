@@ -643,16 +643,21 @@ class CampaignService:
         self,
         campaign_id: int,
         user_id: int,
-        force: bool = False
+        force: bool = False,
+        is_resume: bool = False
     ) -> Dict[str, Any]:
         """
         Запустить кампанию.
-        
+
         Args:
             campaign_id: ID кампании
             user_id: ID пользователя
             force: Принудительный запуск (игнорировать расписание)
-        
+            is_resume: Вызвано из resume_campaign() - продолжаем
+                приостановленную кампанию с того же места, а не
+                перезапускаем с нуля (см. комментарий у сброса
+                campaign_contacts ниже)
+
         Returns:
             Информация о запуске
         """
@@ -685,7 +690,16 @@ class CampaignService:
             # обзвон по той же группе сколько угодно раз - каждый повторный
             # запуск обзванивает ВСЕХ заново, а не только тех, кто ещё не
             # был обработан в прошлый раз.
-            if campaign['status'] != CampaignStatus.DRAFT.value:
+            #
+            # is_resume=True (вызов из resume_campaign() для ранее
+            # приостановленной кампании) - это НЕ повторный запуск с нуля,
+            # а продолжение того же прогона: сброс здесь стирал бы отметку
+            # 'completed' у уже обработанных (agreed/declined) контактов и
+            # звонил бы им повторно. SELECT ниже и так уже фильтрует
+            # "cc.status != 'completed'", так что continuing-режим сам по
+            # себе корректно подхватывает только тех, кто не был обработан
+            # до паузы, без какого-либо сброса.
+            if campaign['status'] != CampaignStatus.DRAFT.value and not is_resume:
                 await conn.execute("""
                     UPDATE campaign_contacts
                     SET status = 'pending', retry_count = 0, next_retry_at = NULL
@@ -839,31 +853,67 @@ class CampaignService:
                     if processed % 5 == 0:
                         await self._publish_campaign_event(campaign_id)
 
-                # Завершаем кампанию
+                # Завершаем кампанию. pause_campaign()/stop_campaign() уже
+                # успевают выставить campaigns.status в 'paused'/'stopped' и
+                # ЗАКОММИТИТЬ это ДО того, как cancel() задачи вообще
+                # что-либо даёт - цикл выше на каждой итерации перечитывает
+                # статус из БД и почти всегда успевает сам выйти через
+                # обычный break ДО реальной отмены (CancelledError ниже -
+                # редкий случай, когда отмена всё же застаёт задачу
+                # посреди await). Раньше здесь БЕЗ УСЛОВИЙ писался
+                # 'completed' - "Пауза" почти сразу тихо превращалась в
+                # "Завершена" в БД, и resume_campaign() после этого
+                # закономерно отказывал "Кампания не приостановлена" -
+                # пауза/возобновление кампании были полностью нерабочими.
+                # Перечитываем статус ещё раз и трогаем его, только если
+                # он всё ещё 'running' (значит, дошли до конца списка
+                # контактов сами, либо остановлен dialer/система - именно
+                # это и должно превращаться в "Завершена").
                 async with self.db_pool.acquire() as conn:
-                    await conn.execute("""
-                        UPDATE campaigns
-                        SET status = $1, completed_at = NOW(), updated_at = NOW()
-                        WHERE id = $2
-                    """, CampaignStatus.COMPLETED.value, campaign_id)
-                    await conn.execute("""
-                        UPDATE campaign_runs
-                        SET status = 'completed', completed_at = NOW(), processed_contacts = $1
-                        WHERE id = $2
-                    """, processed, run_id)
-
-                campaign_completed_counter.inc()
-                logger.info(f"Кампания {campaign_id} завершена, обработано {processed} контактов")
+                    final_status = await conn.fetchval(
+                        "SELECT status FROM campaigns WHERE id = $1", campaign_id
+                    )
+                    if final_status == CampaignStatus.RUNNING.value:
+                        await conn.execute("""
+                            UPDATE campaigns
+                            SET status = $1, completed_at = NOW(), updated_at = NOW()
+                            WHERE id = $2
+                        """, CampaignStatus.COMPLETED.value, campaign_id)
+                        await conn.execute("""
+                            UPDATE campaign_runs
+                            SET status = 'completed', completed_at = NOW(), processed_contacts = $1
+                            WHERE id = $2
+                        """, processed, run_id)
+                        campaign_completed_counter.inc()
+                        logger.info(f"Кампания {campaign_id} завершена, обработано {processed} контактов")
+                    else:
+                        # Статус уже выставлен извне (пауза/остановка) -
+                        # campaigns.status не трогаем, фиксируем только
+                        # сам прогон как незавершённый.
+                        await conn.execute("""
+                            UPDATE campaign_runs
+                            SET status = 'stopped', completed_at = NOW(), processed_contacts = $1
+                            WHERE id = $2
+                        """, processed, run_id)
+                        logger.info(f"Кампания {campaign_id}: дозвон остановлен (статус: {final_status}), обработано {processed} контактов")
                 await self._publish_campaign_event(campaign_id)
 
             except asyncio.CancelledError:
                 logger.info(f"Кампания {campaign_id} отменена")
                 async with self.db_pool.acquire() as conn:
-                    await conn.execute("""
-                        UPDATE campaigns
-                        SET status = $1, stopped_at = NOW(), updated_at = NOW()
-                        WHERE id = $2
-                    """, CampaignStatus.STOPPED.value, campaign_id)
+                    # Та же логика, что и в обычном завершении цикла выше -
+                    # не перезаписываем уже выставленный pause_campaign()
+                    # статус 'paused' тем же 'stopped', если отмена
+                    # реально настигла задачу посреди await.
+                    final_status = await conn.fetchval(
+                        "SELECT status FROM campaigns WHERE id = $1", campaign_id
+                    )
+                    if final_status == CampaignStatus.RUNNING.value:
+                        await conn.execute("""
+                            UPDATE campaigns
+                            SET status = $1, stopped_at = NOW(), updated_at = NOW()
+                            WHERE id = $2
+                        """, CampaignStatus.STOPPED.value, campaign_id)
                     await conn.execute("""
                         UPDATE campaign_runs
                         SET status = 'stopped', completed_at = NOW(), processed_contacts = $1
@@ -1002,7 +1052,7 @@ class CampaignService:
                 raise CampaignError("Кампания не приостановлена")
         
         # Запускаем заново
-        return await self.start_campaign(campaign_id, user_id, force=True)
+        return await self.start_campaign(campaign_id, user_id, force=True, is_resume=True)
     
     # =============================================
     # Управление контактами кампании

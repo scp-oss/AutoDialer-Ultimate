@@ -177,6 +177,23 @@ async def unblacklist_contact(
     return {"status": "unblacklisted"}
 
 
+@router.post("/{contact_id}/restore", response_model=ContactResponse)
+async def restore_contact(
+    contact_id: int,
+    user: TokenData = Depends(get_current_user)
+):
+    """
+    Восстановить удалённый контакт (снять deleted_at).
+
+    ContactService.restore_contact() существовал давно, но не был подключён
+    ни к одному API-роуту - удалённый контакт нельзя было вернуть иначе как
+    прямым запросом в БД, даже с учётом того, что его номер теперь снова
+    можно занять новым контактом (idx_contacts_phone_active, см. schema.sql).
+    """
+    contact_service = get_contact_service()
+    return await contact_service.restore_contact(contact_id, user.user_id)
+
+
 # =============================================
 # Группы контактов
 # =============================================

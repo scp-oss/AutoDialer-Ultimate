@@ -124,13 +124,16 @@ class CallResultService:
                 # оба пытаются INSERT), падая с
                 # `duplicate key value violates unique constraint
                 # "idx_contacts_phone_active"` - подтверждено живьём.
-                # Индекс частичный (`WHERE NOT blacklisted`), поэтому
-                # предикат ON CONFLICT должен точно ему соответствовать,
-                # иначе Postgres не примет его как arbiter вообще.
+                # Индекс частичный (`WHERE NOT blacklisted AND deleted_at
+                # IS NULL`), поэтому предикат ON CONFLICT должен точно ему
+                # соответствовать, иначе Postgres не примет его как arbiter
+                # вообще. deleted_at IS NULL - конфликт с soft-deleted
+                # контактом не считается, вместо этого создаётся новая
+                # (не удалённая) запись под тем же номером.
                 contact_id = await conn.fetchval("""
                     INSERT INTO contacts (phone, source, status, created_at, updated_at)
                     VALUES ($1, 'incoming', 'active', NOW(), NOW())
-                    ON CONFLICT (phone) WHERE NOT blacklisted
+                    ON CONFLICT (phone) WHERE NOT blacklisted AND deleted_at IS NULL
                     DO UPDATE SET updated_at = NOW()
                     RETURNING id
                 """, request.phone)

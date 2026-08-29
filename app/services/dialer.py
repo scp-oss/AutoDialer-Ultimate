@@ -1769,15 +1769,19 @@ class DialerManager:
 
                 async with self.db_pool.acquire() as conn:
                     # idx_contacts_phone_active - единственный unique-индекс
-                    # на contacts.phone - частичный (`WHERE NOT
-                    # blacklisted`). Postgres принимает партиальный индекс
-                    # как arbiter для ON CONFLICT только если предикат
-                    # совпадает буквально; без него это падает с "there is
-                    # no unique or exclusion constraint matching the ON
-                    # CONFLICT specification" на любой конфликт по phone.
+                    # на contacts.phone - частичный (`WHERE NOT blacklisted
+                    # AND deleted_at IS NULL`). Postgres принимает
+                    # партиальный индекс как arbiter для ON CONFLICT только
+                    # если предикат совпадает буквально; без него это падает
+                    # с "there is no unique or exclusion constraint matching
+                    # the ON CONFLICT specification" на любой конфликт по
+                    # phone. deleted_at IS NULL в предикате - если под этим
+                    # номером есть только soft-deleted контакт, конфликта не
+                    # будет и создастся новая (не удалённая) запись, вместо
+                    # молчаливого "оживления" чужого удалённого контакта.
                     contact_id = await conn.fetchval("""
                         INSERT INTO contacts (phone) VALUES ($1)
-                        ON CONFLICT (phone) WHERE NOT blacklisted
+                        ON CONFLICT (phone) WHERE NOT blacklisted AND deleted_at IS NULL
                         DO UPDATE SET phone = EXCLUDED.phone
                         RETURNING id
                     """, normalized)
