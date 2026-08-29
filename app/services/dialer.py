@@ -1591,6 +1591,10 @@ class DialerManager:
             campaign_id = event.get('campaign', '0')
             phone = event.get('phone', '')
             retry_count = int(event.get('retrycount', '0'))
+            # DTMF: N - диалплан шлёт её вместе с operator/custom0-9/star/
+            # hash статусами (см. [sub-media] в asterisk/extensions.conf) -
+            # раньше нигде не читалась и не сохранялась.
+            dtmf_digit = event.get('dtmf')
 
             # Тот же dialplan-контекст выполняется дважды на звонок (по разу
             # на каждую половину Local-канала из-за флага /n - см. комментарий
@@ -1639,7 +1643,8 @@ class DialerManager:
                 linked_id,
                 None,
                 retry_count,
-                duration=duration
+                duration=duration,
+                dtmf=dtmf_digit
             )
 
             if status in ['noanswer', 'busy', 'failed', 'machine']:
@@ -1733,7 +1738,8 @@ class DialerManager:
         linked_id: Optional[str],
         unique_id: Optional[str],
         retry: int,
-        duration: Optional[int] = None
+        duration: Optional[int] = None,
+        dtmf: Optional[str] = None
     ):
         """Сохранение результата звонка"""
         if self.call_result_service:
@@ -1747,7 +1753,8 @@ class DialerManager:
                     unique_id=unique_id,
                     linked_id=linked_id,
                     retry_count=retry,
-                    duration=duration
+                    duration=duration,
+                    dtmf_result=dtmf
                 )
 
                 await self.call_result_service.save_call_result(request)

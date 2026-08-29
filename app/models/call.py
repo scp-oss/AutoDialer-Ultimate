@@ -39,6 +39,23 @@ class CallResultStatus(str, Enum):
     UNKNOWN = "unknown"         # Неизвестно
     ANNOUNCED = "announced"     # Объявление проиграно (DTMF-меню отключено для кампании)
 
+    # DTMF 4/5-9/0/*/# - диалплан (asterisk/extensions.conf, [sub-media])
+    # шлёт эти статусы в UserEvent(DialerResult,...) уже давно, но этого
+    # enum'а они никогда не покрывали - dialer.py:_save_call_result()
+    # молча подменял любой status не из этого списка на FAILED, то есть
+    # "абонент нажал 5" в истории неотличимо выглядело как "Ошибка".
+    # Подтверждено живьём на тестовом сервере.
+    OPERATOR = "operator"       # DTMF 4 - запрос оператора
+    CUSTOM_0 = "custom0"        # DTMF 0 - произвольное действие кампании
+    CUSTOM_5 = "custom5"        # DTMF 5 - произвольное действие кампании
+    CUSTOM_6 = "custom6"        # DTMF 6 - произвольное действие кампании
+    CUSTOM_7 = "custom7"        # DTMF 7 - произвольное действие кампании
+    CUSTOM_8 = "custom8"        # DTMF 8 - произвольное действие кампании
+    CUSTOM_9 = "custom9"        # DTMF 9 - произвольное действие кампании
+    STAR = "star"               # DTMF * - произвольное действие кампании
+    HASH = "hash"               # DTMF # - произвольное действие кампании
+    INVALID_DTMF = "invalid_dtmf"  # Введена цифра вне обработанного диапазона
+
 
 class CallDirection(str, Enum):
     """Направление звонка"""
