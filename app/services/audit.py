@@ -292,23 +292,41 @@ class AuditService:
         """Получить запись аудита по ID"""
         async with self.db_pool.acquire() as conn:
             row = await conn.fetchrow("""
-                SELECT 
-                    a.*,
+                SELECT
+                    a.id, a.user_id,
+                    COALESCE(a.username, u.username) as username,
+                    COALESCE(a.user_role, u.role) as user_role,
+                    a.action, a.severity, a.entity_type, a.entity_id, a.entity_name,
+                    a.details, a.changes, a.ip_address, a.user_agent,
+                    a.request_method, a.request_path,
+                    a.correlation_id, a.request_id, a.session_id,
+                    a.status, a.error_message, a.metadata, a.created_at,
                     u.email as user_email,
                     u.full_name as user_full_name
                 FROM audit_log a
                 LEFT JOIN users u ON a.user_id = u.id
                 WHERE a.id = $1
             """, log_id)
-            
+
             if not row:
                 return None
-            
-            # Получаем связанные события
+
+            # Получаем связанные события. Та же проблема с username, что и
+            # в основном запросе выше (см. list_audit_logs()) - подтягиваем
+            # его тем же способом через подзапрос, раз тут нет JOIN.
             related_events = []
             if row['correlation_id']:
                 related_rows = await conn.fetch("""
-                    SELECT * FROM audit_log 
+                    SELECT
+                        id, user_id,
+                        COALESCE(username, (SELECT username FROM users WHERE users.id = audit_log.user_id)) as username,
+                        COALESCE(user_role, (SELECT role FROM users WHERE users.id = audit_log.user_id)) as user_role,
+                        action, severity, entity_type, entity_id, entity_name,
+                        details, changes, ip_address, user_agent,
+                        request_method, request_path,
+                        correlation_id, request_id, session_id,
+                        status, error_message, metadata, created_at
+                    FROM audit_log
                     WHERE correlation_id = $1 AND id != $2
                     ORDER BY created_at
                     LIMIT 10
@@ -376,12 +394,27 @@ class AuditService:
                     param_idx += 1
                 
                 if filter_params.username:
-                    where_conditions.append(f"username ILIKE ${param_idx}")
+                    # Каждый из ~8 отдельных _log_audit() по сервисам
+                    # (campaign.py, system.py, settings.py, contact.py,
+                    # blacklist.py, call_result.py, incoming.py, user.py)
+                    # пишет в audit_log только user_id - username там
+                    # ВСЕГДА NULL, ни один из них не заполняет эту колонку.
+                    # Фильтр по чистому audit_log.username поэтому не находил
+                    # вообще ничего, ни для одной существующей записи -
+                    # подтянуть реальный логин можно только через сам
+                    # user_id, отдельным подзапросом к users.
+                    where_conditions.append(f"""
+                        COALESCE(username, (SELECT username FROM users WHERE users.id = audit_log.user_id))
+                        ILIKE ${param_idx}
+                    """)
                     params.append(f"%{filter_params.username}%")
                     param_idx += 1
-                
+
                 if filter_params.user_role:
-                    where_conditions.append(f"user_role = ${param_idx}")
+                    where_conditions.append(f"""
+                        COALESCE(user_role, (SELECT role FROM users WHERE users.id = audit_log.user_id))
+                        = ${param_idx}
+                    """)
                     params.append(filter_params.user_role)
                     param_idx += 1
 
@@ -458,9 +491,26 @@ class AuditService:
             sort_by = filter_params.sort_by if filter_params else "created_at"
             sort_order = filter_params.sort_order if filter_params else "DESC"
             
-            # Получаем данные
+            # Получаем данные. username/user_role явно перечислены с
+            # COALESCE вместо простого "*" - см. комментарий выше про
+            # _log_audit(): без этого КАЖДАЯ запись в журнале показывала бы
+            # "system" в UI (App.audit.js делает log.username || 'system'),
+            # даже когда это совершенно реальное действие живого админа с
+            # заполненным user_id - подтверждено живьём на скриншоте
+            # пользователя ("Запуск обзвона"/"Изменение настройки" от
+            # username=system, ID: 1 - хотя это тот же самый залогиненный
+            # админ).
             query = f"""
-                SELECT * FROM audit_log
+                SELECT
+                    id, user_id,
+                    COALESCE(username, (SELECT username FROM users WHERE users.id = audit_log.user_id)) as username,
+                    COALESCE(user_role, (SELECT role FROM users WHERE users.id = audit_log.user_id)) as user_role,
+                    action, severity, entity_type, entity_id, entity_name,
+                    details, changes, ip_address, user_agent,
+                    request_method, request_path,
+                    correlation_id, request_id, session_id,
+                    status, error_message, metadata, created_at
+                FROM audit_log
                 {where_clause}
                 ORDER BY {sort_by} {sort_order}
                 LIMIT ${param_idx} OFFSET ${param_idx + 1}
