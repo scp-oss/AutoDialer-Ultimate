@@ -317,6 +317,133 @@ App.contacts = {
         }
     },
 
+    // Разбор CSV в массив строк (каждая строка - массив ячеек), с
+    // поддержкой кавычек ("..." с запятыми/переносами строк/
+    // экранированными "" внутри) - простой split(',')/split('\n') ломался
+    // бы на любом значении вроде company="Иванов, Петров и Ко". Тот же
+    // формат, что отдаёт GET /contacts/export (utf-8-sig, запятая).
+    _parseCsv(text) {
+        // utf-8-sig BOM, который сам же экспорт и добавляет
+        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+
+        const rows = [];
+        let row = [];
+        let field = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < text.length; i++) {
+            const ch = text[i];
+            if (inQuotes) {
+                if (ch === '"') {
+                    if (text[i + 1] === '"') { field += '"'; i++; }
+                    else { inQuotes = false; }
+                } else {
+                    field += ch;
+                }
+            } else if (ch === '"') {
+                inQuotes = true;
+            } else if (ch === ',') {
+                row.push(field); field = '';
+            } else if (ch === '\r') {
+                // пропускаем, \n ниже завершит строку
+            } else if (ch === '\n') {
+                row.push(field); field = '';
+                rows.push(row); row = [];
+            } else {
+                field += ch;
+            }
+        }
+        if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
+
+        return rows.filter(r => r.length > 1 || (r.length === 1 && r[0].trim() !== ''));
+    },
+
+    // Заголовки могут быть на русском (как в подсказке под полем загрузки)
+    // или английском (как в файле, который отдаёт сам экспорт) - сводим
+    // оба варианта к именам полей, которые реально читает бэкенд
+    // (ContactService._create_contact_from_import/_update_contact_from_import
+    // в app/services/contact.py: phone/name/email/company).
+    _csvHeaderAliases: {
+        phone: 'phone', номер: 'phone', телефон: 'phone',
+        name: 'name', имя: 'name', фио: 'name',
+        email: 'email', почта: 'email',
+        company: 'company', компания: 'company', организация: 'company',
+    },
+
+    // =============================================
+    // Импорт контактов из CSV-файла
+    // =============================================
+    async importFromCsvFile() {
+        const fileInput = document.getElementById('contactsImportFile');
+        const file = fileInput?.files?.[0];
+        if (!file) {
+            App.showToast('Выберите CSV-файл', 'warning');
+            return;
+        }
+
+        let text;
+        try {
+            text = await App.readFileAsText(file);
+        } catch (error) {
+            App.showToast('Не удалось прочитать файл', 'error');
+            return;
+        }
+
+        const rows = this._parseCsv(text);
+        if (rows.length < 2) {
+            App.showToast('Файл пуст или содержит только заголовок', 'warning');
+            return;
+        }
+
+        const header = rows[0].map(h => h.trim().toLowerCase());
+        const fieldNames = header.map(h => this._csvHeaderAliases[h] || null);
+
+        if (!fieldNames.includes('phone')) {
+            App.showToast('В файле нет колонки с номером телефона (phone/номер/телефон)', 'error');
+            return;
+        }
+
+        const contacts = rows.slice(1).map(cells => {
+            const contact = {};
+            fieldNames.forEach((field, idx) => {
+                if (field && cells[idx] !== undefined && cells[idx] !== '') {
+                    contact[field] = cells[idx];
+                }
+            });
+            return contact;
+        }).filter(c => c.phone);
+
+        if (contacts.length === 0) {
+            App.showToast('Не найдено ни одной строки с номером телефона', 'warning');
+            return;
+        }
+
+        const groupSelect = document.getElementById('contactGroupSelect');
+        const updateExisting = document.getElementById('contactsCsvUpdateExisting')?.checked || false;
+
+        try {
+            const response = await App.apiPost('/contacts/import', {
+                group_id: groupSelect?.value || null,
+                contacts: contacts,
+                update_existing: updateExisting,
+                skip_duplicates: !updateExisting,
+            });
+
+            App.showToast(
+                `Импортировано: ${response.imported}, обновлено: ${response.updated}, ` +
+                `пропущено: ${response.skipped + response.duplicates + response.invalid}`,
+                'success'
+            );
+
+            fileInput.value = '';
+            this.loadContacts(1);
+            this.loadContactGroupsForSelect();
+
+        } catch (error) {
+            App.showToast(error.message || 'Ошибка импорта файла', 'error');
+        }
+    },
+
     // =============================================
     // Экспорт контактов
     // =============================================

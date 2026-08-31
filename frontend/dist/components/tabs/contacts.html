@@ -77,8 +77,8 @@
         <div class="import-content">
             <div class="form-group">
                 <label>Вставьте номера (по одному на строку или в формате "номер,имя")</label>
-                <textarea id="contactsImport" 
-                          class="form-control" 
+                <textarea id="contactsImport"
+                          class="form-control"
                           rows="5"
                           placeholder="+79161234567, Иван Иванов&#10;+79261234568, Петр Петров&#10;+79361234569"></textarea>
             </div>
@@ -103,6 +103,25 @@
                 </button>
                 <button class="btn btn-outline" onclick="document.getElementById('contactsImport').value = ''">
                     Очистить
+                </button>
+            </div>
+
+            <hr>
+
+            <div class="form-group">
+                <label>Или загрузите CSV-файл (первая строка — заголовки: номер/phone, имя/name, email, компания/company)</label>
+                <input type="file" id="contactsImportFile" class="form-control" accept=".csv,text/csv">
+                <small class="form-text">Тот же файл, что выгружает кнопка «Экспорт» на этой вкладке, загрузится без изменений. Группа берётся из поля «Группа» выше.</small>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="contactsCsvUpdateExisting">
+                    Обновлять существующие контакты (по номеру телефона) вместо пропуска дубликатов
+                </label>
+            </div>
+            <div class="import-actions">
+                <button class="btn btn-primary" onclick="App.contacts.importFromCsvFile()">
+                    📄 Загрузить файл
                 </button>
             </div>
         </div>
