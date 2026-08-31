@@ -322,18 +322,26 @@ App.contacts = {
     // =============================================
     async exportContacts() {
         try {
-            const data = await App.apiGet('/contacts/export');
-            
-            let csv = 'phone,name,email,group,tags,status\n';
-            for (const c of data.contacts || data) {
-                csv += `${c.phone},${c.name || ''},${c.email || ''},${c.group_name || ''},${(c.tags || []).join(';')},${c.status}\n`;
+            // GET /contacts/export возвращает не JSON, а готовый CSV-файл
+            // (StreamingResponse, media_type=text/csv) - App.apiGet() всегда
+            // делает response.json(), что на CSV-тексте валится с
+            // SyntaxError ещё до того, как этот код вообще успевал что-то
+            // собрать сам. Экспорт был полностью нерабочим - любое нажатие
+            // сразу показывало "Ошибка экспорта". Бэкенд уже формирует
+            // корректный CSV (с UTF-8 BOM для Excel) - здесь просто
+            // забираем его как текст и отдаём на скачивание как есть,
+            // вместо повторной (и менее полной) пересборки на клиенте.
+            const response = await App.apiFetch('/contacts/export?format=csv');
+            if (!response.ok) {
+                throw new Error(await App.extractApiError(response));
             }
-            
+            const csv = await response.text();
+
             App.downloadFile(csv, 'contacts.csv', 'text/csv');
             App.showToast('Экспорт завершён', 'success');
-            
+
         } catch (error) {
-            App.showToast('Ошибка экспорта', 'error');
+            App.showToast(error.message || 'Ошибка экспорта', 'error');
         }
     },
 
